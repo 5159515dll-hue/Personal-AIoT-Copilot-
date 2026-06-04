@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DASHBOARD_SESSION_COOKIE } from "@/lib/auth";
+import { DASHBOARD_SESSION_COOKIE, publicBaseUrl } from "@/lib/auth";
 
 export function GET(request: NextRequest) {
-  const response = NextResponse.redirect(new URL("/access?status=logged_out", request.url));
+  const response = NextResponse.redirect(new URL("/access?status=logged_out", publicBaseUrl(request.headers, request.url)));
   response.cookies.set({
     name: DASHBOARD_SESSION_COOKIE,
     value: "",

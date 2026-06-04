@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   DASHBOARD_SESSION_COOKIE,
   dashboardAccessCode,
+  publicBaseUrl,
   safeNextPath,
   sessionTokenFor
 } from "@/lib/auth";
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     return redirectToAccess(request, nextPath, "invalid");
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, request.url), { status: 303 });
+  const response = NextResponse.redirect(new URL(nextPath, publicBaseUrl(request.headers, request.url)), { status: 303 });
   response.cookies.set({
     name: DASHBOARD_SESSION_COOKIE,
     value: await sessionTokenFor(accessCode),
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
 }
 
 function redirectToAccess(request: NextRequest, nextPath: string, error: string) {
-  const url = new URL("/access", request.url);
+  const url = new URL("/access", publicBaseUrl(request.headers, request.url));
   url.searchParams.set("next", nextPath);
   url.searchParams.set("error", error);
   return NextResponse.redirect(url, { status: 303 });

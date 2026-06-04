@@ -32,6 +32,13 @@ export function safeNextPath(value: FormDataEntryValue | string | null | undefin
   return isProtectedDashboardPath(pathname) ? raw : "/dashboard";
 }
 
+export function publicBaseUrl(headers: Headers, fallbackUrl: string): string {
+  const fallback = new URL(fallbackUrl);
+  const host = headers.get("x-forwarded-host") ?? headers.get("host") ?? fallback.host;
+  const protocol = headers.get("x-forwarded-proto") ?? fallback.protocol.replace(":", "");
+  return `${protocol}://${host}`;
+}
+
 export async function sessionTokenFor(accessCode: string): Promise<string> {
   const secret = process.env.DASHBOARD_SESSION_SECRET?.trim() || "personal-aiot-copilot-dashboard";
   const bytes = new TextEncoder().encode(`aiot-copilot:${secret}:${accessCode}`);

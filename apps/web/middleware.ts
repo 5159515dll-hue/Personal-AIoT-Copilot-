@@ -3,6 +3,7 @@ import {
   DASHBOARD_SESSION_COOKIE,
   dashboardAccessCode,
   isProtectedDashboardPath,
+  publicBaseUrl,
   sessionTokenFor
 } from "./lib/auth";
 
@@ -23,9 +24,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const loginUrl = request.nextUrl.clone();
-  loginUrl.pathname = "/access";
-  loginUrl.search = "";
+  const loginUrl = new URL("/access", publicBaseUrl(request.headers, request.url));
   loginUrl.searchParams.set("next", `${pathname}${search}`);
   return NextResponse.redirect(loginUrl);
 }
