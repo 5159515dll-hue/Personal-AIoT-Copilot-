@@ -60,13 +60,14 @@ PROVIDERS: list[ModelProviderDefinition] = [
             ),
         ],
         models=[
-            "kimi-k2-0711-preview",
+            "kimi-k2.6",
+            "kimi-k2.5",
             "moonshot-v1-8k",
             "moonshot-v1-32k",
             "moonshot-v1-128k",
             "moonshot-v1-8k-vision-preview",
         ],
-        default_model="kimi-k2-0711-preview",
+        default_model="kimi-k2.6",
     ),
 ]
 
@@ -124,9 +125,10 @@ async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectio
     try:
         async with httpx.AsyncClient(timeout=12) as client:
             if request.protocol == ProviderProtocol.openai:
-                response = await client.get(
-                    urljoin(f"{base_url}/", "models"),
-                    headers={"Authorization": f"Bearer {api_key}"},
+                response = await client.post(
+                    urljoin(f"{base_url}/", "chat/completions"),
+                    headers=_openai_headers(request.provider_id, api_key),
+                    json=_openai_test_payload(request.provider_id, request.model),
                 )
             else:
                 response = await client.post(
@@ -190,3 +192,27 @@ def _preview(api_key: str | None) -> str | None:
     if len(api_key) <= 10:
         return "***"
     return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def _openai_headers(provider_id: str, api_key: str) -> dict[str, str]:
+    if provider_id == "xiaomi_mimo":
+        return {
+            "api-key": api_key,
+            "content-type": "application/json",
+        }
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "content-type": "application/json",
+    }
+
+
+def _openai_test_payload(provider_id: str, model: str) -> dict:
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "请只回复：连接正常"}],
+    }
+    if provider_id == "xiaomi_mimo":
+        payload["max_completion_tokens"] = 16
+    else:
+        payload["max_tokens"] = 16
+    return payload

@@ -45,6 +45,27 @@ class SensorReading(BaseModel):
     quality: Literal["ok", "stale", "anomaly"] = "ok"
 
 
+class SensorValueInput(BaseModel):
+    metric: Metric
+    value: float
+    unit: str | None = None
+    timestamp: datetime | None = None
+    quality: Literal["ok", "stale", "anomaly"] = "ok"
+
+
+class SensorIngestRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=80)
+    readings: list[SensorValueInput] = Field(min_length=1, max_length=64)
+    source: Literal["http", "mqtt", "test"] = "http"
+
+
+class SensorIngestResponse(BaseModel):
+    accepted: int
+    stored: int
+    source: str
+    message: str
+
+
 class RoomState(BaseModel):
     timestamp: datetime
     health_score: int = Field(ge=0, le=100)

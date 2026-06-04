@@ -1,4 +1,27 @@
 services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: aiot_copilot
+      POSTGRES_USER: aiot
+      POSTGRES_PASSWORD: aiot_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - aiot-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiot -d aiot_copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
   api:
     image: python:3.14-slim
     working_dir: /workspace/services/api
@@ -6,9 +29,36 @@ services:
       - ..:/workspace
     ports:
       - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://aiot:aiot_dev_password@db:5432/aiot_copilot
+      AIOT_DATA_DIR: /workspace/services/api/.local
     command: >
       sh -c "pip install -r requirements.txt &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  mqtt-ingestor:
+    image: python:3.14-slim
+    working_dir: /workspace/services/mqtt-ingestor
+    volumes:
+      - ..:/workspace
+    environment:
+      PYTHONPATH: /workspace/services/api
+      DATABASE_URL: postgresql://aiot:aiot_dev_password@db:5432/aiot_copilot
+      MQTT_BROKER_HOST: mqtt
+      MQTT_BROKER_PORT: 1883
+      MQTT_TOPIC: aiot/room/+/telemetry
+    command: >
+      sh -c "pip install -r /workspace/services/api/requirements.txt
+             -r /workspace/services/mqtt-ingestor/requirements.txt &&
+             python -m ingestor.main"
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
 
   web:
     image: node:22-slim
@@ -23,4 +73,7 @@ services:
       sh -c "npm install && npm --workspace apps/web run dev -- --hostname 0.0.0.0"
     depends_on:
       - api
+
+volumes:
+  aiot-db-data:
 

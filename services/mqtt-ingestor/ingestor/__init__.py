@@ -1,0 +1,2 @@
+"""MQTT telemetry ingestor."""
+

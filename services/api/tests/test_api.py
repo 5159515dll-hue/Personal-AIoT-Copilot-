@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.ingestion import parse_mqtt_payload
 from app.main import app
 from app.models import Metric, PolicyResult, RiskLevel
 from app.mock_data import query_history
@@ -26,11 +27,42 @@ def test_sensor_history_rejects_bad_bucket() -> None:
     assert "bucket" in response.json()["detail"]
 
 
+def test_database_history_requires_from_parameter() -> None:
+    response = client.get("/api/sensors/history", params={"metric": "co2", "source": "database"})
+    assert response.status_code == 400
+    assert "from" in response.json()["detail"]
+
+
 def test_mock_history_is_deterministic_for_window() -> None:
     end = now().replace(minute=0, second=0, microsecond=0)
     first = query_history(Metric.co2, end.replace(hour=max(0, end.hour - 1)), end, "15m")
     second = query_history(Metric.co2, end.replace(hour=max(0, end.hour - 1)), end, "15m")
     assert [item.value for item in first] == [item.value for item in second]
+
+
+def test_mqtt_batch_payload_inherits_top_level_timestamp() -> None:
+    request = parse_mqtt_payload(
+        """
+        {
+          "device_id": "room_node_01",
+          "timestamp": "2026-06-04T17:30:00+08:00",
+          "readings": [
+            {"metric": "temperature", "value": 25.4},
+            {"metric": "co2", "value": 1180, "unit": "ppm"}
+          ]
+        }
+        """
+    )
+    assert request.source == "mqtt"
+    assert len(request.readings) == 2
+    assert all(item.timestamp and item.timestamp.isoformat() == "2026-06-04T17:30:00+08:00" for item in request.readings)
+
+
+def test_mqtt_metric_map_payload_expands_readings() -> None:
+    request = parse_mqtt_payload(
+        '{"device_id":"room_node_01","timestamp":"2026-06-04T17:30:00+08:00","temperature":25.4,"humidity":48.2,"co2":1180}'
+    )
+    assert [item.metric for item in request.readings] == [Metric.temperature, Metric.humidity, Metric.co2]
 
 
 def test_policy_allows_low_risk_mock_device() -> None:
@@ -115,7 +147,7 @@ def test_model_provider_config_redacts_api_key() -> None:
             "endpoint_id": "kimi_cn_openai",
             "protocol": "openai",
             "base_url": "https://api.moonshot.cn/v1",
-            "model": "kimi-k2-0711-preview",
+            "model": "kimi-k2.6",
             "api_key": "sk-test-redacted-key",
         },
     )

@@ -1,0 +1,32 @@
+{
+  "device_id": "room_node_01",
+  "timestamp": "2026-06-04T17:30:00+08:00",
+  "readings": [
+    {
+      "metric": "temperature",
+      "value": 25.4,
+      "unit": "℃"
+    },
+    {
+      "metric": "humidity",
+      "value": 48.2,
+      "unit": "%"
+    },
+    {
+      "metric": "co2",
+      "value": 1180,
+      "unit": "ppm",
+      "quality": "ok"
+    },
+    {
+      "metric": "light",
+      "value": 620,
+      "unit": "lux"
+    },
+    {
+      "metric": "presence",
+      "value": 1,
+      "unit": "occupied"
+    }
+  ]
+}

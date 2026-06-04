@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "cd services/api && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:infra": "docker compose -f infra/docker-compose.yml up db mqtt",
+    "dev:ingestor": "cd services/mqtt-ingestor && PYTHONPATH=../api python -m ingestor.main",
     "dev:web": "npm --workspace apps/web run dev",
     "test": "npm run test:api && npm run test:web",
     "test:api": "cd services/api && python -m pytest",
@@ -17,4 +19,3 @@
     "concurrently": "^9.1.2"
   }
 }
-

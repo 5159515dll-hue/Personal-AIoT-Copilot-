@@ -15,3 +15,5 @@ __pycache__/
 *.tsbuildinfo
 services/api/.local/
 apps/web/.next/
+.playwright-cli/
+output/
