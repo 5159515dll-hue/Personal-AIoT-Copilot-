@@ -1,19 +1,32 @@
 import asyncio
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import audit as audit_module
+from app import database as database_module
 from app import model_providers as model_provider_module
 from app import rule_store as rule_store_module
 from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
 from app.ingestion import parse_mqtt_payload
 from app.main import app
-from app.models import AgentModelUsage, Metric, ModelConfigRequest, PolicyDecision, PolicyResult, ProviderProtocol, RiskLevel, ToolCall
+from app.models import (
+    AgentModelUsage,
+    AutomationRuleCreate,
+    Metric,
+    ModelConfigRequest,
+    PolicyDecision,
+    PolicyResult,
+    ProviderProtocol,
+    RiskLevel,
+    SensorReading,
+    ToolCall,
+)
 from app.mock_data import query_history
 from app.policy import assess_device_control, validate_rule
 from app.mock_data import get_device
-from app.models import AutomationRuleCreate
+from app.routes import sensors as sensors_route_module
 from app.time_utils import now
 
 client = TestClient(app)
@@ -80,6 +93,81 @@ def test_database_history_requires_from_parameter() -> None:
     response = client.get("/api/sensors/history", params={"metric": "co2", "source": "database"})
     assert response.status_code == 400
     assert "from" in response.json()["detail"]
+
+
+def test_database_history_rejects_bad_bucket_before_database_lookup() -> None:
+    response = client.get(
+        "/api/sensors/history",
+        params={
+            "metric": "co2",
+            "source": "database",
+            "bucket": "2m",
+            "from": now().isoformat(),
+        },
+    )
+    assert response.status_code == 400
+    assert "bucket" in response.json()["detail"]
+
+
+def test_database_history_passes_bucket_to_database_query(monkeypatch) -> None:
+    captured = {}
+
+    def fake_query(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        captured["metric"] = metric
+        captured["bucket"] = bucket
+        captured["start"] = start
+        captured["end"] = end
+        return []
+
+    monkeypatch.setattr(sensors_route_module, "query_sensor_history_db", fake_query)
+    response = client.get(
+        "/api/sensors/history",
+        params={
+            "metric": "co2",
+            "source": "database",
+            "bucket": "1h",
+            "from": (now() - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert response.status_code == 200
+    assert captured["metric"] == Metric.co2
+    assert captured["bucket"] == "1h"
+
+
+def test_database_bucket_sensor_readings_aggregates_values_and_quality() -> None:
+    base = now().replace(hour=10, minute=0, second=0, microsecond=0)
+    readings = [
+        SensorReading(
+            metric=Metric.co2,
+            value=1000,
+            unit="ppm",
+            timestamp=base + timedelta(minutes=1),
+            device_id="node_a",
+        ),
+        SensorReading(
+            metric=Metric.co2,
+            value=1300,
+            unit="ppm",
+            timestamp=base + timedelta(minutes=6),
+            device_id="node_a",
+            quality="anomaly",
+        ),
+        SensorReading(
+            metric=Metric.co2,
+            value=700,
+            unit="ppm",
+            timestamp=base + timedelta(minutes=16),
+            device_id="node_b",
+        ),
+    ]
+    bucketed = database_module.bucket_sensor_readings(readings, "15m")
+    assert len(bucketed) == 2
+    assert bucketed[0].timestamp.minute == 0
+    assert bucketed[0].value == 1150
+    assert bucketed[0].quality == "anomaly"
+    assert bucketed[0].device_id == "node_a"
+    assert bucketed[1].timestamp.minute == 15
+    assert bucketed[1].value == 700
 
 
 def test_mock_history_is_deterministic_for_window() -> None:

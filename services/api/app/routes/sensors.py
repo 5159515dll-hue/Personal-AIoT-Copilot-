@@ -24,9 +24,11 @@ def get_sensor_history(
         if from_ts is None:
             raise HTTPException(status_code=400, detail="使用 database 数据源时必须提供 from 参数。")
         try:
-            return query_sensor_history_db(metric, from_ts, end)
+            return query_sensor_history_db(metric, from_ts, end, bucket=bucket)
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         return query_history(metric, from_ts, to_ts, bucket)

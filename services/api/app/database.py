@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 
 from app.models import Metric, SensorReading
-from app.time_utils import ensure_tz, now
+from app.time_utils import bucket_to_delta, ensure_tz, floor_to_bucket, now
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sensor_readings (
@@ -86,9 +86,12 @@ def query_sensor_history_db(
     start: datetime,
     end: datetime,
     *,
+    bucket: str = "15m",
     url: str | None = None,
     limit: int = 5000,
 ) -> list[SensorReading]:
+    bucket_to_delta(bucket)
+
     import psycopg
     from psycopg.rows import dict_row
 
@@ -106,7 +109,7 @@ def query_sensor_history_db(
             """,
             (metric.value, ensure_tz(start), ensure_tz(end), limit),
         ).fetchall()
-    return [_row_to_reading(row) for row in rows]
+    return bucket_sensor_readings([_row_to_reading(row) for row in rows], bucket)
 
 
 def latest_sensor_readings_db(*, url: str | None = None) -> dict[Metric, SensorReading]:
@@ -136,6 +139,33 @@ def _row_to_reading(row: dict) -> SensorReading:
     )
 
 
+def bucket_sensor_readings(readings: list[SensorReading], bucket: str) -> list[SensorReading]:
+    bucket_to_delta(bucket)
+    grouped: dict[datetime, list[SensorReading]] = {}
+    for reading in readings:
+        grouped.setdefault(floor_to_bucket(reading.timestamp, bucket), []).append(reading)
+
+    result: list[SensorReading] = []
+    for timestamp in sorted(grouped):
+        items = grouped[timestamp]
+        first = items[0]
+        values = [item.value for item in items]
+        qualities = {item.quality for item in items}
+        device_ids = {item.device_id for item in items}
+        quality = "anomaly" if "anomaly" in qualities else "stale" if "stale" in qualities else "ok"
+        result.append(
+            SensorReading(
+                metric=first.metric,
+                value=round(sum(values) / len(values), 1),
+                unit=first.unit,
+                timestamp=timestamp,
+                device_id=first.device_id if len(device_ids) == 1 else "database_aggregate",
+                quality=quality,
+            )
+        )
+    return result
+
+
 def _require_url(url: str | None) -> str:
     db_url = url or database_url()
     if not db_url:
@@ -157,4 +187,3 @@ def _try_create_hypertable(conn) -> None:
         )
     except Exception:
         conn.rollback()
-

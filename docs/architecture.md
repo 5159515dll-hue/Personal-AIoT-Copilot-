@@ -44,7 +44,7 @@
 1. 传感器节点向 MQTT topic `aiot/room/+/telemetry` 发布 JSON 消息。
 2. `services/mqtt-ingestor` 解析 batch、单指标或 metric map payload。
 3. 入站服务将读数写入 `sensor_readings` 表。
-4. `GET /api/sensors/history?source=database&from=...` 从数据库读取历史曲线。
+4. `GET /api/sensors/history?source=database&bucket=15m&from=...` 从数据库读取并聚合历史曲线。
 5. 默认 dashboard 仍使用 mock 数据，避免公开演示依赖真实隐私数据。
 
 ## 下一阶段替换点

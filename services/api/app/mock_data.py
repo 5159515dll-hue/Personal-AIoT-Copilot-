@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timedelta
 
 from app.models import Device, DeviceState, Metric, RiskLevel, RoomState, SensorReading
-from app.time_utils import ensure_tz, now
+from app.time_utils import bucket_to_delta, ensure_tz, now
 
 UNITS = {
     Metric.temperature: "℃",
@@ -86,7 +86,7 @@ def query_history(
         start_ts = end_ts - timedelta(hours=24)
     else:
         start_ts = _round_bucket(start)
-    step = _bucket_to_delta(bucket)
+    step = bucket_to_delta(bucket)
     if start_ts >= end_ts:
         raise ValueError("from must be before to")
 
@@ -235,15 +235,3 @@ def get_device_catalog() -> list[Device]:
 
 def get_device(device_id: str) -> Device | None:
     return next((device for device in get_device_catalog() if device.id == device_id), None)
-
-
-def _bucket_to_delta(bucket: str) -> timedelta:
-    mapping = {
-        "5m": timedelta(minutes=5),
-        "15m": timedelta(minutes=15),
-        "1h": timedelta(hours=1),
-        "1d": timedelta(days=1),
-    }
-    if bucket not in mapping:
-        raise ValueError("bucket 必须是 5m、15m、1h 或 1d")
-    return mapping[bucket]
