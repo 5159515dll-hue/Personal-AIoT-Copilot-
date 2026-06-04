@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.audit import record_audit
 from app.model_providers import get_catalog, get_public_config, save_config, test_connection
@@ -25,7 +25,10 @@ def active_model_config() -> PublicModelConfig | None:
 
 @router.post("/active", response_model=PublicModelConfig)
 def update_model_config(request: ModelConfigRequest) -> PublicModelConfig:
-    saved = save_config(request)
+    try:
+        saved = save_config(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     record_audit(
         actor="user",
         action="update_model_provider",

@@ -1,24 +1,41 @@
 from __future__ import annotations
 
+import json
+from typing import Any, Literal
 from urllib.parse import urljoin
 
 import httpx
 
 from app.models import (
+    AgentModelUsage,
+    AutomationRuleCreate,
     ModelConfig,
     ModelConfigRequest,
     ModelConnectionTestRequest,
     ModelConnectionTestResponse,
     ModelProviderCatalog,
     ModelProviderDefinition,
+    PolicyDecision,
+    PolicyResult,
     ProviderEndpoint,
     ProviderProtocol,
     PublicModelConfig,
+    ToolCall,
 )
 from app.storage import JsonListStore
 from app.time_utils import now
 
 config_store = JsonListStore("model_config.json", ModelConfig)
+
+AGENT_SYSTEM_PROMPT = """你是“个人空间智能物联助手”的受约束分析层。你不能直接控制设备，也不能绕过策略引擎。
+
+回复规则：
+1. 只能基于工具结果、本地草案回复和策略判断进行解释，不要编造传感器数据、设备状态或审计结果。
+2. 如果工具结果显示需要用户确认，必须明确说明保存或执行前需要确认。
+3. 如果策略拒绝或阻止某事，必须维持拒绝，不要提供绕过办法。
+4. 用中文回复，保持专业、简洁、可执行，适合产品演示场景。
+5. 可以补充趋势判断、原因解释、风险提醒和下一步建议，但不要改变工具已经给出的结论。
+6. 不要使用 Markdown 标题、粗体、代码块或表格，直接输出适合界面展示的纯文本短段落。"""
 
 PROVIDERS: list[ModelProviderDefinition] = [
     ModelProviderDefinition(
@@ -88,13 +105,27 @@ def get_public_config() -> PublicModelConfig | None:
 
 
 def save_config(request: ModelConfigRequest) -> PublicModelConfig:
+    _, endpoint = validate_model_target(
+        request.provider_id,
+        request.endpoint_id,
+        request.protocol,
+        request.base_url,
+    )
+    base_url = endpoint.base_url.rstrip("/")
     existing = get_active_config()
-    api_key = request.api_key if request.api_key else existing.api_key if existing else None
+    requested_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
+    api_key = requested_key or _reusable_api_key(
+        existing,
+        provider_id=request.provider_id,
+        endpoint_id=request.endpoint_id,
+        protocol=request.protocol,
+        base_url=base_url,
+    )
     config = ModelConfig(
         provider_id=request.provider_id,
         endpoint_id=request.endpoint_id,
         protocol=request.protocol,
-        base_url=request.base_url.rstrip("/"),
+        base_url=base_url,
         model=request.model,
         api_key=api_key,
         updated_at=now(),
@@ -104,11 +135,36 @@ def save_config(request: ModelConfigRequest) -> PublicModelConfig:
 
 
 async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectionTestResponse:
+    try:
+        _, endpoint = validate_model_target(
+            request.provider_id,
+            request.endpoint_id,
+            request.protocol,
+            request.base_url,
+        )
+    except ValueError as exc:
+        return ModelConnectionTestResponse(
+            ok=False,
+            provider_id=request.provider_id,
+            protocol=request.protocol,
+            base_url=request.base_url.rstrip("/"),
+            model=request.model,
+            message=str(exc),
+        )
+
     active = get_active_config()
-    if request.api_key:
-        api_key = request.api_key
+    base_url = endpoint.base_url.rstrip("/")
+    requested_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
+    if requested_key:
+        api_key = requested_key
     elif active:
-        api_key = active.api_key
+        api_key = _reusable_api_key(
+            active,
+            provider_id=request.provider_id,
+            endpoint_id=request.endpoint_id,
+            protocol=request.protocol,
+            base_url=base_url,
+        )
     else:
         api_key = None
     if not api_key:
@@ -116,12 +172,11 @@ async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectio
             ok=False,
             provider_id=request.provider_id,
             protocol=request.protocol,
-            base_url=request.base_url,
+            base_url=base_url,
             model=request.model,
-            message="未配置 API Key，无法测试连接。",
+            message="当前选择未导入 API Key，无法测试连接。",
         )
 
-    base_url = request.base_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=12) as client:
             if request.protocol == ProviderProtocol.openai:
@@ -171,6 +226,101 @@ async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectio
     )
 
 
+def validate_model_target(
+    provider_id: str,
+    endpoint_id: str,
+    protocol: ProviderProtocol,
+    base_url: str,
+) -> tuple[ModelProviderDefinition, ProviderEndpoint]:
+    provider = next((item for item in PROVIDERS if item.id == provider_id), None)
+    if not provider:
+        raise ValueError("未知模型厂商。")
+    endpoint = next((item for item in provider.endpoints if item.id == endpoint_id), None)
+    if not endpoint:
+        raise ValueError("未知模型接口入口。")
+    if endpoint.protocol != protocol:
+        raise ValueError("协议与所选接口入口不匹配。")
+    if endpoint.base_url.rstrip("/") != base_url.rstrip("/"):
+        raise ValueError("V0 只允许使用预置中国区 Base URL，避免密钥被发送到未知地址。")
+    return provider, endpoint
+
+
+async def generate_agent_reply(
+    *,
+    user_message: str,
+    fallback_reply: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+    allow_model: bool,
+) -> tuple[str, AgentModelUsage]:
+    config = get_active_config()
+    if not allow_model or (policy and policy.result == PolicyResult.denied):
+        if config and config.api_key:
+            usage = _usage_from_config(
+                config,
+                status="blocked",
+                used=False,
+                reason="安全策略已阻止该请求，本次未调用外部大模型。",
+            )
+        else:
+            usage = AgentModelUsage(
+                status="blocked",
+                used=False,
+                reason="安全策略已阻止该请求，本次未调用外部大模型。",
+            )
+        return fallback_reply, usage
+
+    if not config or not config.api_key:
+        return fallback_reply, AgentModelUsage(
+            status="not_configured",
+            used=False,
+            reason="未配置当前大模型或密钥，已使用本地工具链回复。",
+        )
+
+    prompt = _agent_user_prompt(
+        user_message=user_message,
+        fallback_reply=fallback_reply,
+        used_data=used_data,
+        tool_calls=tool_calls,
+        needs_confirmation=needs_confirmation,
+        policy=policy,
+        rule_draft=rule_draft,
+    )
+    try:
+        content = await _call_agent_model(config, prompt)
+        if not content.strip():
+            content = await _call_agent_model(
+                config,
+                f"{prompt}\n\n上一次模型返回为空。请务必用 3 到 6 句中文给出最终分析，不要返回空内容。",
+            )
+    except (httpx.HTTPError, ValueError) as exc:
+        return fallback_reply, _usage_from_config(
+            config,
+            status="fallback",
+            used=False,
+            reason=f"大模型调用失败，已回退到本地工具链回复：{_error_summary(exc)}",
+        )
+
+    content = _sanitize_model_reply(content)
+    if not content:
+        return fallback_reply, _usage_from_config(
+            config,
+            status="fallback",
+            used=False,
+            reason="大模型未返回可用文本，已回退到本地工具链回复。",
+        )
+
+    return content, _usage_from_config(
+        config,
+        status="used",
+        used=True,
+        reason="已在工具调用和策略判断之后使用当前大模型生成增强分析。",
+    )
+
+
 def redact_config(config: ModelConfig | None) -> PublicModelConfig | None:
     if config is None:
         return None
@@ -192,6 +342,26 @@ def _preview(api_key: str | None) -> str | None:
     if len(api_key) <= 10:
         return "***"
     return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def _reusable_api_key(
+    config: ModelConfig | None,
+    *,
+    provider_id: str,
+    endpoint_id: str,
+    protocol: ProviderProtocol,
+    base_url: str,
+) -> str | None:
+    if not config or not config.api_key:
+        return None
+    if (
+        config.provider_id == provider_id
+        and config.endpoint_id == endpoint_id
+        and config.protocol == protocol
+        and config.base_url.rstrip("/") == base_url.rstrip("/")
+    ):
+        return config.api_key
+    return None
 
 
 def _openai_headers(provider_id: str, api_key: str) -> dict[str, str]:
@@ -216,3 +386,169 @@ def _openai_test_payload(provider_id: str, model: str) -> dict:
     else:
         payload["max_tokens"] = 16
     return payload
+
+
+async def _openai_agent_completion(client: httpx.AsyncClient, config: ModelConfig, prompt: str) -> str:
+    response = await client.post(
+        urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
+        headers=_openai_headers(config.provider_id, config.api_key or ""),
+        json=_openai_agent_payload(config.provider_id, config.model, prompt),
+    )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ValueError(f"服务返回 {response.status_code}：{response.text[:300]}")
+    payload = response.json()
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("响应缺少 choices")
+    message = choices[0].get("message", {})
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(item.get("text", "")) for item in content if isinstance(item, dict))
+    raise ValueError("响应缺少 message.content")
+
+
+async def _anthropic_agent_completion(client: httpx.AsyncClient, config: ModelConfig, prompt: str) -> str:
+    response = await client.post(
+        urljoin(f"{config.base_url.rstrip('/')}/", "v1/messages"),
+        headers={
+            "x-api-key": config.api_key or "",
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": config.model,
+            "max_tokens": 1000,
+            "system": AGENT_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+    )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ValueError(f"服务返回 {response.status_code}：{response.text[:300]}")
+    payload = response.json()
+    parts = payload.get("content")
+    if not isinstance(parts, list):
+        raise ValueError("响应缺少 content")
+    return "".join(str(item.get("text", "")) for item in parts if isinstance(item, dict) and item.get("type") == "text")
+
+
+def _openai_agent_payload(provider_id: str, model: str, prompt: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if provider_id == "xiaomi_mimo":
+        payload["max_completion_tokens"] = 1000
+    else:
+        payload["max_tokens"] = 1000
+    return payload
+
+
+async def _call_agent_model(config: ModelConfig, prompt: str) -> str:
+    async with httpx.AsyncClient(timeout=60) as client:
+        if config.protocol == ProviderProtocol.openai:
+            return await _openai_agent_completion(client, config, prompt)
+        return await _anthropic_agent_completion(client, config, prompt)
+
+
+def _agent_user_prompt(
+    *,
+    user_message: str,
+    fallback_reply: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> str:
+    payload = {
+        "用户问题": user_message,
+        "本地工具链草案回复": fallback_reply,
+        "使用的数据源": used_data,
+        "是否需要确认": needs_confirmation,
+        "策略判断": policy.model_dump(mode="json") if policy else None,
+        "规则草案": rule_draft.model_dump(mode="json") if rule_draft else None,
+        "工具调用": [
+            _tool_call_for_prompt(tool)
+            for tool in tool_calls
+        ],
+    }
+    return (
+        "请根据下面 JSON 生成智能体最终回复。不要输出 JSON，不要声称调用了不存在的工具。\n"
+        f"{_compact_json(payload)}"
+    )
+
+
+def _compact_json(payload: Any, limit: int = 9000) -> str:
+    text = json.dumps(payload, ensure_ascii=False, default=str, indent=2)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n...已截断，仅展示关键工具证据。"
+
+
+def _sanitize_model_reply(content: str) -> str:
+    return "\n".join(
+        line.lstrip("# ").replace("**", "").replace("__", "").rstrip()
+        for line in content.strip().splitlines()
+    ).strip()
+
+
+def _tool_call_for_prompt(tool: ToolCall) -> dict[str, Any]:
+    result = tool.result
+    if tool.name == "get_current_room_state":
+        result = {
+            "status": tool.result.get("status"),
+            "health_score": tool.result.get("health_score"),
+            "summary": tool.result.get("summary"),
+            "anomalies": tool.result.get("anomalies"),
+            "recommendation": tool.result.get("recommendation"),
+        }
+    elif tool.name == "query_sensor_history":
+        result = tool.result
+    elif tool.name in {"create_automation_rule", "control_device", "policy_check"}:
+        result = {
+            "status": tool.result.get("status"),
+            "execution_result": tool.result.get("execution_result"),
+            "decision": tool.result.get("decision"),
+            "policy": tool.result.get("policy"),
+        }
+    return {
+        "name": tool.name,
+        "parameters": tool.parameters,
+        "result": result,
+        "policy": tool.policy.model_dump(mode="json") if tool.policy else None,
+    }
+
+
+def _usage_from_config(
+    config: ModelConfig,
+    *,
+    status: Literal["not_configured", "used", "fallback", "blocked"],
+    used: bool,
+    reason: str,
+) -> AgentModelUsage:
+    return AgentModelUsage(
+        provider_id=config.provider_id,
+        provider_label=_provider_label(config.provider_id),
+        model=config.model,
+        protocol=config.protocol.value,
+        status=status,
+        used=used,
+        reason=reason,
+    )
+
+
+def _provider_label(provider_id: str) -> str:
+    for provider in PROVIDERS:
+        if provider.id == provider_id:
+            return provider.label
+    return provider_id
+
+
+def _error_summary(exc: Exception) -> str:
+    message = str(exc).strip()
+    return f"{exc.__class__.__name__}: {message}" if message else exc.__class__.__name__

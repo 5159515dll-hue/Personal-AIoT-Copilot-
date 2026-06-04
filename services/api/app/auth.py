@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 
 from fastapi import Request
@@ -44,8 +45,15 @@ def request_is_authorized(request: Request) -> bool:
 
     configured_internal_token = internal_api_token()
     submitted_internal_token = request.headers.get(INTERNAL_API_TOKEN_HEADER)
-    if configured_internal_token and submitted_internal_token == configured_internal_token:
+    if (
+        configured_internal_token
+        and submitted_internal_token
+        and hmac.compare_digest(submitted_internal_token, configured_internal_token)
+    ):
         return True
 
     submitted_session_token = request.cookies.get(DASHBOARD_SESSION_COOKIE)
-    return submitted_session_token == session_token_for(access_code)
+    return bool(submitted_session_token) and hmac.compare_digest(
+        submitted_session_token,
+        session_token_for(access_code),
+    )

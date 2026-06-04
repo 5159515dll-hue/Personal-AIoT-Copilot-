@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { CheckCircle2, ExternalLink, KeyRound, PlugZap, Save, TestTube2 } from "lucide-react";
+import { BrainCircuit, CheckCircle2, ExternalLink, KeyRound, PlugZap, Save, TestTube2 } from "lucide-react";
 import { saveModelConfig, testModelConnection } from "@/lib/api";
 import type {
   ModelConfigRequest,
@@ -36,6 +36,16 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     () => provider.endpoints.find((item) => item.id === endpointId) ?? provider.endpoints[0],
     [endpointId, provider]
   );
+  const activeProvider = useMemo(
+    () => catalog.providers.find((item) => item.id === activeConfig?.provider_id) ?? null,
+    [activeConfig?.provider_id, catalog.providers]
+  );
+  const canReuseActiveKey =
+    activeConfig?.api_key_set === true &&
+    activeConfig.provider_id === provider.id &&
+    activeConfig.endpoint_id === endpoint.id &&
+    activeConfig.protocol === endpoint.protocol &&
+    activeConfig.base_url.replace(/\/$/, "") === baseUrl.replace(/\/$/, "");
 
   function changeProvider(next: ModelProviderDefinition) {
     const nextEndpoint = next.endpoints[0];
@@ -101,7 +111,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
           </span>
           <div>
             <h2 className="text-base font-semibold">接入配置</h2>
-            <p className="text-sm text-muted">先选择厂商与协议，再导入对应平台的密钥。</p>
+            <p className="text-sm text-muted">保存后会成为智能体当前使用的大模型配置。</p>
           </div>
         </div>
 
@@ -177,14 +187,14 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
               onChange={(event) => setApiKey(event.target.value)}
               type="password"
               className="focus-ring h-11 min-w-0 flex-1 rounded-lg border border-line bg-white px-3 text-sm"
-              placeholder={activeConfig?.api_key_set ? "留空则继续使用已导入密钥" : "粘贴接口密钥"}
+              placeholder={canReuseActiveKey ? "留空则继续使用当前接口密钥" : "粘贴当前厂商接口密钥"}
               autoComplete="off"
             />
           </div>
           <span className="mt-2 block text-xs leading-5 text-muted">
-            {activeConfig?.api_key_set
-              ? `已导入密钥：${activeConfig.api_key_preview}`
-              : "尚未导入密钥。保存配置时可同时导入。"}
+            {canReuseActiveKey
+              ? `当前选择可复用已导入密钥：${activeConfig.api_key_preview}`
+              : "切换厂商、协议或 Base URL 时必须导入对应平台密钥。"}
           </span>
         </label>
 
@@ -225,6 +235,19 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
       </form>
 
       <aside className="space-y-5">
+        <section className="rounded-lg border border-teal-100 bg-teal-50 p-5">
+          <div className="flex items-center gap-2 text-teal-800">
+            <BrainCircuit size={18} aria-hidden />
+            <h2 className="text-base font-semibold">智能体当前模型</h2>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-teal-800/85">
+            智能体会先完成工具调用和策略判断，再用当前模型增强环境分析、规则说明和普通问答；被策略拒绝的请求不会发送给外部模型。
+          </p>
+          <p className="mt-3 break-all text-sm font-semibold text-teal-900">
+            {activeConfig ? `${activeProvider?.label ?? activeConfig.provider_id} · ${activeConfig.model}` : "尚未选择当前模型"}
+          </p>
+        </section>
+
         <section className="rounded-lg border border-line bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2">
             <KeyRound size={18} className="text-teal-700" aria-hidden />
@@ -232,7 +255,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
           </div>
           {activeConfig ? (
             <dl className="mt-4 space-y-3 text-sm">
-              <Info label="厂商" value={provider.label} />
+              <Info label="厂商" value={activeProvider?.label ?? activeConfig.provider_id} />
               <Info label="协议" value={activeConfig.protocol === "openai" ? "OpenAI 兼容" : "Anthropic 兼容"} />
               <Info label="模型" value={activeConfig.model} />
               <Info label="Base URL" value={activeConfig.base_url} />

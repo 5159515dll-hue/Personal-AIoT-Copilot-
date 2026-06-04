@@ -83,6 +83,15 @@ export type AgentChatResponse = {
   used_data: string[];
   tool_calls: ToolCall[];
   needs_confirmation: boolean;
+  model_usage: {
+    provider_id: string | null;
+    provider_label: string | null;
+    model: string | null;
+    protocol: string | null;
+    status: "not_configured" | "used" | "fallback" | "blocked";
+    used: boolean;
+    reason: string;
+  };
   policy: PolicyDecision | null;
   rule_draft: AutomationRuleCreate | null;
 };

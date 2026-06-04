@@ -7,6 +7,5 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
 @router.post("/chat", response_model=AgentChatResponse)
-def chat(request: AgentChatRequest) -> AgentChatResponse:
-    return handle_chat(request)
-
+async def chat(request: AgentChatRequest) -> AgentChatResponse:
+    return await handle_chat(request)

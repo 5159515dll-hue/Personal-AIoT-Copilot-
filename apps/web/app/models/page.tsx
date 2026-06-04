@@ -12,7 +12,7 @@ export default async function ModelsPage() {
     <AppShell>
       <PageHeader
         title="模型接入"
-        description="选择模型厂商、协议、基础地址、模型，并导入接口密钥。当前预置小米 MiMo 与 Kimi 中国区接口。"
+        description="选择当前智能体使用的大模型，导入接口密钥，并测试小米 MiMo 与 Kimi 中国区接口连通性。"
       />
       <ModelSettingsPanel catalog={catalog} />
     </AppShell>

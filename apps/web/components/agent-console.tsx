@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Bot, Send, ShieldCheck, Wrench } from "lucide-react";
+import { Bot, BrainCircuit, Send, ShieldCheck, Wrench } from "lucide-react";
 import { chat } from "@/lib/api";
 import type { AgentChatResponse } from "@/lib/types";
 
@@ -99,6 +99,7 @@ export function AgentConsole() {
           {responses.map((response) => (
             <article key={`${response.session_id}-${response.message.created_at}`} className="rounded-lg border border-line bg-slate-50 p-4">
               <p className="text-sm leading-6 text-ink">{response.message.content}</p>
+              <ModelUsage usage={response.model_usage} />
               {response.policy && (
                 <div className="mt-3 rounded-lg bg-white p-3 text-sm">
                   <p className="flex items-center gap-2 font-semibold text-ink">
@@ -142,6 +143,35 @@ export function AgentConsole() {
           )) ?? <p className="text-sm leading-6 text-muted">第一次智能体回复后会显示工具依据。</p>}
         </div>
       </aside>
+    </div>
+  );
+}
+
+function ModelUsage({ usage }: { usage: AgentChatResponse["model_usage"] }) {
+  const statusText =
+    usage.status === "used"
+      ? "已使用当前大模型"
+      : usage.status === "fallback"
+        ? "模型回退"
+        : usage.status === "blocked"
+          ? "未调用模型"
+          : "本地回复";
+  const tone =
+    usage.status === "used"
+      ? "border-teal-100 bg-teal-50 text-teal-800"
+      : usage.status === "fallback"
+        ? "border-amber-100 bg-amber-50 text-amber-800"
+        : "border-line bg-white text-slate-700";
+  const modelLabel = usage.provider_label && usage.model ? `${usage.provider_label} · ${usage.model}` : "未选择模型";
+
+  return (
+    <div className={`mt-3 rounded-lg border p-3 text-sm leading-6 ${tone}`}>
+      <p className="flex flex-wrap items-center gap-2 font-semibold">
+        <BrainCircuit size={16} aria-hidden />
+        {statusText}
+        <span className="break-all font-medium opacity-80">{modelLabel}</span>
+      </p>
+      <p className="mt-1 opacity-85">{usage.reason}</p>
     </div>
   );
 }

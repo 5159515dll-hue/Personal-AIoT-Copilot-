@@ -147,12 +147,23 @@ class AgentMessage(BaseModel):
     created_at: datetime
 
 
+class AgentModelUsage(BaseModel):
+    provider_id: str | None = None
+    provider_label: str | None = None
+    model: str | None = None
+    protocol: str | None = None
+    status: Literal["not_configured", "used", "fallback", "blocked"]
+    used: bool
+    reason: str
+
+
 class AgentChatResponse(BaseModel):
     session_id: str
     message: AgentMessage
     used_data: list[str]
     tool_calls: list[ToolCall]
     needs_confirmation: bool
+    model_usage: AgentModelUsage
     policy: PolicyDecision | None = None
     rule_draft: AutomationRuleCreate | None = None
 

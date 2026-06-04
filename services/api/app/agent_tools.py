@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.audit import record_audit
 from app.mock_data import current_room_state, get_device, query_history, summarize_metric
+from app.model_providers import generate_agent_reply
 from app.models import (
     AgentChatRequest,
     AgentChatResponse,
@@ -21,7 +22,7 @@ from app.policy import assess_device_control, detect_prompt_injection, validate_
 from app.time_utils import now
 
 
-def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
+async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
     message = request.message.strip()
     session_id = request.session_id or f"session_{uuid4().hex[:10]}"
     lowered = message.lower()
@@ -57,7 +58,17 @@ def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             )
         )
         reply = "我不能执行绕过安全策略的指令。该请求已被阻止，并写入审计日志。"
-        return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+            allow_model=False,
+        )
 
     if _mentions_forbidden_control(lowered):
         device_id = "smoke_alarm_01" if "smoke" in lowered or "烟雾" in lowered else "smart_plug_01"
@@ -65,14 +76,34 @@ def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         tool_calls.append(control)
         policy = control.policy
         reply = f"我不能执行该控制动作。{policy.reason if policy else '策略引擎已阻止。'}"
-        return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+            allow_model=False,
+        )
 
     if _mentions_lamp_control(lowered):
         control = _control_tool("desk_lamp_01", "on", True, message)
         tool_calls.append(control)
         policy = control.policy
         reply = "模拟桌面台灯已通过策略检查链路开启，该动作已写入审计日志。"
-        return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+            allow_model=False,
+        )
 
     if _mentions_rule(lowered):
         rule_draft = AutomationRuleCreate(
@@ -96,7 +127,16 @@ def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             "我起草了一条提醒规则：如果二氧化碳在房间有人时持续 15 分钟高于 1200 ppm，"
             "那么发送通风提醒。在你确认之前，我不会保存这条规则。"
         )
-        return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+        )
 
     if _mentions_co2_or_environment(lowered):
         room = current_room_state()
@@ -125,7 +165,16 @@ def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
         if room.anomalies:
             reply += f" 不确定性或警告：{'；'.join(room.anomalies)}"
-        return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+        )
 
     if "7" in lowered or "week" in lowered or "一周" in lowered:
         end_ts = now()
@@ -145,7 +194,16 @@ def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             )
         )
         reply = "一周模式显示，二氧化碳通常在下午和深夜有人时段上升。通风提醒应重点覆盖这些时间窗口。"
-        return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+        )
 
     room = current_room_state()
     used_data.append("current_room_state")
@@ -161,7 +219,16 @@ def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         "我可以回答模拟房间状态、二氧化碳趋势、设备、规则和审计日志相关问题。"
         f"当前建议：{room.recommendation}"
     )
-    return _response(session_id, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+    return await _response(
+        session_id,
+        message,
+        reply,
+        used_data,
+        tool_calls,
+        needs_confirmation,
+        policy,
+        rule_draft,
+    )
 
 
 def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> ToolCall:
@@ -190,29 +257,46 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> T
     )
 
 
-def _response(
+async def _response(
     session_id: str,
+    user_message: str,
     reply: str,
     used_data: list[str],
     tool_calls: list[ToolCall],
     needs_confirmation: bool,
     policy: PolicyDecision | None,
     rule_draft: AutomationRuleCreate | None,
+    allow_model: bool = True,
 ) -> AgentChatResponse:
+    final_reply, model_usage = await generate_agent_reply(
+        user_message=user_message,
+        fallback_reply=reply,
+        used_data=used_data,
+        tool_calls=tool_calls,
+        needs_confirmation=needs_confirmation,
+        policy=policy,
+        rule_draft=rule_draft,
+        allow_model=allow_model,
+    )
     record_audit(
         actor="agent",
         action="agent_chat",
         result="success",
-        details="智能体回复已通过受约束工具流程生成。",
-        parameters={"session_id": session_id, "tool_calls": [tool.name for tool in tool_calls]},
+        details=f"智能体回复已通过受约束工具流程生成。模型状态：{model_usage.status}。",
+        parameters={
+            "session_id": session_id,
+            "tool_calls": [tool.name for tool in tool_calls],
+            "model_usage": model_usage.model_dump(mode="json"),
+        },
         policy=policy,
     )
     return AgentChatResponse(
         session_id=session_id,
-        message=AgentMessage(role="assistant", content=reply, created_at=now()),
+        message=AgentMessage(role="assistant", content=final_reply, created_at=now()),
         used_data=used_data,
         tool_calls=tool_calls,
         needs_confirmation=needs_confirmation,
+        model_usage=model_usage,
         policy=policy,
         rule_draft=rule_draft,
     )
