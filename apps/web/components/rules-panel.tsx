@@ -1,12 +1,19 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { BellRing, Check, CircleDashed, Play, Plus, ShieldAlert } from "lucide-react";
 import { createRule, evaluateRules } from "@/lib/api";
-import type { AutomationRule, RuleEvaluation } from "@/lib/types";
+import { telemetrySourceLabel } from "@/lib/telemetry-source";
+import type { AutomationRule, RuleEvaluation, TelemetrySource } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 
-export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] }) {
+export function RulesPanel({
+  initialRules,
+  initialSource
+}: {
+  initialRules: AutomationRule[];
+  initialSource: TelemetrySource;
+}) {
   const [rules, setRules] = useState(initialRules);
   const [evaluations, setEvaluations] = useState<RuleEvaluation[]>([]);
   const [condition, setCondition] = useState("二氧化碳 > 1200 ppm 持续 15 分钟");
@@ -14,6 +21,12 @@ export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] })
   const [confirmed, setConfirmed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [evaluating, setEvaluating] = useState(false);
+  const sourceLabel = telemetrySourceLabel(initialSource);
+
+  useEffect(() => {
+    setEvaluations([]);
+    setMessage(null);
+  }, [initialSource]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,10 +44,14 @@ export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] })
     setEvaluating(true);
     setMessage(null);
     try {
-      const result = await evaluateRules();
+      const result = await evaluateRules(initialSource);
       setEvaluations(result);
       const triggered = result.filter((item) => item.status === "triggered").length;
-      setMessage(triggered > 0 ? `已触发 ${triggered} 条提醒规则，并写入审计日志。` : "当前没有规则被触发。");
+      setMessage(
+        triggered > 0
+          ? `已使用${sourceLabel}触发 ${triggered} 条提醒规则，并写入审计日志。`
+          : `已使用${sourceLabel}完成评估，当前没有规则被触发。`
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "规则评估失败");
     } finally {
@@ -87,7 +104,10 @@ export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] })
 
       <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-base font-semibold text-ink">自动化规则</h2>
+          <div>
+            <h2 className="text-base font-semibold text-ink">自动化规则</h2>
+            <p className="mt-1 text-xs text-muted">当前评估源：{sourceLabel}</p>
+          </div>
           <button
             type="button"
             onClick={onEvaluate}
@@ -126,6 +146,11 @@ export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] })
 }
 
 function RuleEvaluationStatus({ evaluation }: { evaluation: RuleEvaluation }) {
+  const observedSource = evaluation.observed.source === "database" ? "数据库遥测" : "模拟数据";
+  const metric = typeof evaluation.observed.metric === "string" ? evaluation.observed.metric : null;
+  const value = typeof evaluation.observed.value === "number" ? evaluation.observed.value : null;
+  const unit = typeof evaluation.observed.unit === "string" ? evaluation.observed.unit : "";
+  const threshold = typeof evaluation.observed.threshold === "number" ? evaluation.observed.threshold : null;
   const style =
     evaluation.status === "triggered"
       ? "border-teal-100 bg-teal-50 text-teal-800"
@@ -155,7 +180,17 @@ function RuleEvaluationStatus({ evaluation }: { evaluation: RuleEvaluation }) {
         <span className="font-medium opacity-80">{formatDateTime(evaluation.evaluated_at)}</span>
       </p>
       <p className="mt-1">{evaluation.reason}</p>
+      {metric && value !== null && (
+        <p className="mt-1 text-xs opacity-80">
+          依据：{observedSource} · {metric} {formatObservedNumber(value)} {unit}
+          {threshold !== null ? `，阈值 ${formatObservedNumber(threshold)}` : ""}
+        </p>
+      )}
       {evaluation.audit_log_id && <p className="mt-1 break-all text-xs opacity-80">审计编号：{evaluation.audit_log_id}</p>}
     </div>
   );
+}
+
+function formatObservedNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }

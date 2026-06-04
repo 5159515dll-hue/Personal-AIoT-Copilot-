@@ -12,6 +12,7 @@ from app import audit as audit_module
 from app import database as database_module
 from app import device_adapter as device_adapter_module
 from app import model_providers as model_provider_module
+from app import room_state as room_state_module
 from app import rule_store as rule_store_module
 from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
 from app.ingestion import parse_mqtt_payload
@@ -33,7 +34,6 @@ from app.mock_data import query_history
 from app.policy import assess_device_control, validate_rule
 from app.mock_data import get_device
 from app.routes import ingest as ingest_route_module
-from app.routes import room as room_route_module
 from app.routes import sensors as sensors_route_module
 from app.routes import telemetry as telemetry_route_module
 from app.time_utils import now
@@ -74,7 +74,7 @@ def test_room_current_database_source_uses_latest_readings(monkeypatch) -> None:
             ),
         }
 
-    monkeypatch.setattr(room_route_module, "latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    monkeypatch.setattr(room_state_module, "latest_sensor_readings_db", fake_latest_sensor_readings_db)
     response = client.get("/api/room/current", params={"source": "database"})
     assert response.status_code == 200
     payload = response.json()
@@ -85,7 +85,7 @@ def test_room_current_database_source_uses_latest_readings(monkeypatch) -> None:
 
 
 def test_room_current_database_source_reports_empty_database(monkeypatch) -> None:
-    monkeypatch.setattr(room_route_module, "latest_sensor_readings_db", lambda: {})
+    monkeypatch.setattr(room_state_module, "latest_sensor_readings_db", lambda: {})
     response = client.get("/api/room/current", params={"source": "database"})
     assert response.status_code == 200
     payload = response.json()
@@ -98,7 +98,7 @@ def test_room_current_database_source_reports_unavailable_database(monkeypatch) 
     def unavailable_latest_sensor_readings_db():
         raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
 
-    monkeypatch.setattr(room_route_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    monkeypatch.setattr(room_state_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
     response = client.get("/api/room/current", params={"source": "database"})
     assert response.status_code == 503
     assert "DATABASE_URL" in response.json()["detail"]
@@ -285,8 +285,9 @@ def test_database_bucket_sensor_readings_aggregates_values_and_quality() -> None
 
 def test_mock_history_is_deterministic_for_window() -> None:
     end = now().replace(minute=0, second=0, microsecond=0)
-    first = query_history(Metric.co2, end.replace(hour=max(0, end.hour - 1)), end, "15m")
-    second = query_history(Metric.co2, end.replace(hour=max(0, end.hour - 1)), end, "15m")
+    start = end - timedelta(hours=1)
+    first = query_history(Metric.co2, start, end, "15m")
+    second = query_history(Metric.co2, start, end, "15m")
     assert [item.value for item in first] == [item.value for item in second]
 
 
@@ -445,6 +446,7 @@ def test_rule_evaluation_triggers_reminder_and_audit_log() -> None:
     assert evaluations[0]["status"] == "triggered"
     assert evaluations[0]["matched"] is True
     assert evaluations[0]["audit_log_id"]
+    assert evaluations[0]["observed"]["source"] == "mock"
     assert evaluations[0]["observed"]["metric"] == "co2"
 
     audit_response = client.get("/api/audit-logs")
@@ -491,6 +493,51 @@ def test_rule_evaluation_marks_unsupported_conditions() -> None:
     assert evaluation["status"] == "unsupported"
     assert evaluation["matched"] is False
     assert evaluation["audit_log_id"] is None
+
+
+def test_rule_evaluation_database_source_uses_database_room_state(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.co2: SensorReading(
+                metric=Metric.co2,
+                value=930,
+                unit="ppm",
+                timestamp=base,
+                device_id="room_node_db",
+            )
+        }
+
+    monkeypatch.setattr(room_state_module, "latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 900 ppm",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate", params={"source": "database"})
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "triggered"
+    assert evaluation["matched"] is True
+    assert evaluation["observed"]["source"] == "database"
+    assert evaluation["observed"]["value"] == 930
+
+
+def test_rule_evaluation_database_source_reports_unavailable_database(monkeypatch) -> None:
+    def unavailable_latest_sensor_readings_db():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr(room_state_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    response = client.post("/api/rules/evaluate", params={"source": "database"})
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
 
 
 def test_agent_environment_uses_tools() -> None:
@@ -832,3 +879,23 @@ def test_model_provider_does_not_reuse_key_across_provider() -> None:
     payload = response.json()
     assert payload["ok"] is False
     assert "当前选择未导入 API Key" in payload["message"]
+
+
+def test_model_provider_openai_payloads_use_completion_tokens_and_disable_kimi_thinking() -> None:
+    kimi_payload = model_provider_module._openai_agent_payload("kimi", "kimi-k2.6", "测试提示")
+    mimo_payload = model_provider_module._openai_test_payload("xiaomi_mimo", "mimo-v2.5-pro")
+
+    assert kimi_payload["max_completion_tokens"] == 1200
+    assert "max_tokens" not in kimi_payload
+    assert kimi_payload["thinking"] == {"type": "disabled"}
+    assert "temperature" not in kimi_payload
+    assert mimo_payload["max_completion_tokens"] == 128
+    assert "max_tokens" not in mimo_payload
+    assert mimo_payload["temperature"] == 0.2
+
+
+def test_model_provider_xiaomi_headers_support_token_plan_auth_styles() -> None:
+    headers = model_provider_module._openai_headers("xiaomi_mimo", "tp-test-token")
+
+    assert headers["api-key"] == "tp-test-token"
+    assert headers["Authorization"] == "Bearer tp-test-token"

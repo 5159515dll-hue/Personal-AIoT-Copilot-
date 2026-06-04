@@ -18,6 +18,7 @@
 ## 运行模块
 
 - `apps/web`：公开项目页和控制台。
+- `apps/web/app/api/[...path]/route.ts`：浏览器端同源 API 代理，服务端再转发到 FastAPI，避免 IP 部署时浏览器直连本机地址。
 - `apps/web/middleware.ts`：保护私有控制台路由，公开项目页不拦截。
 - `services/api/app/routes`：前端使用的后端接口。
 - `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
@@ -40,7 +41,7 @@
 3. 智能体请求会被映射到受约束工具。
 4. 工具返回结构化数据和必要的策略判断。
 5. 控制尝试会被允许、要求确认或拒绝；允许的模拟动作通过 mock device adapter 更新状态。
-6. 已确认规则可手动评估，满足条件时触发提醒审计。
+6. 已确认规则可手动评估，默认使用模拟状态，必要时也可以切换到数据库遥测。
 7. 关键事件持久化到 `services/api/.local/`。
 
 ## 可选真实遥测数据流
@@ -51,8 +52,9 @@
 4. `GET /api/telemetry/status` 汇总数据库连通性、样本数、最新入库时间和 Timescale 扩展状态。
 5. `GET /api/room/current?source=database` 从数据库最新读数生成当前房间摘要。
 6. `GET /api/sensors/history?source=database&bucket=15m&from=...` 从数据库读取并聚合历史曲线。
-7. `/dashboard`、`/trends` 和 `/agent` 可选择 database 数据源，用入库最新读数和历史曲线展示或回答环境问题。
-8. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
+7. `POST /api/rules/evaluate?source=database` 使用数据库最新房间状态评估已确认规则。
+8. `/dashboard`、`/trends`、`/agent` 和 `/rules` 可选择 database 数据源，用入库最新读数和历史曲线展示、回答环境问题或评估提醒规则。
+9. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
 
 生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中 `DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。
 

@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.audit import record_audit
 from app.models import AutomationRule, AutomationRuleCreate, PolicyResult, RuleEvaluation
 from app.policy import validate_rule
+from app.room_state import clean_database_error_text, current_database_room_state
 from app.rule_engine import evaluate_automation_rules
 from app.rule_store import list_rules, save_rule
 from app.time_utils import now
@@ -16,8 +19,16 @@ def get_rules() -> list[AutomationRule]:
 
 
 @router.post("/evaluate", response_model=list[RuleEvaluation])
-def evaluate_rules() -> list[RuleEvaluation]:
-    return evaluate_automation_rules()
+def evaluate_rules(source: Literal["mock", "database"] = Query("mock")) -> list[RuleEvaluation]:
+    if source == "database":
+        try:
+            room = current_database_room_state()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=clean_database_error_text(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态。") from exc
+        return evaluate_automation_rules(room=room, telemetry_source="database")
+    return evaluate_automation_rules(telemetry_source="mock")
 
 
 @router.post("", response_model=AutomationRule)

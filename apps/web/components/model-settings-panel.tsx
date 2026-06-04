@@ -46,6 +46,13 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     activeConfig.endpoint_id === endpoint.id &&
     activeConfig.protocol === endpoint.protocol &&
     activeConfig.base_url.replace(/\/$/, "") === baseUrl.replace(/\/$/, "");
+  const selectionMatchesActive =
+    activeConfig?.provider_id === provider.id &&
+    activeConfig.endpoint_id === endpoint.id &&
+    activeConfig.protocol === endpoint.protocol &&
+    activeConfig.base_url.replace(/\/$/, "") === baseUrl.replace(/\/$/, "") &&
+    activeConfig.model === model;
+  const hasUsableKey = Boolean(apiKey.trim()) || canReuseActiveKey;
 
   function changeProvider(next: ModelProviderDefinition) {
     const nextEndpoint = next.endpoints[0];
@@ -53,12 +60,14 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     setEndpointId(nextEndpoint.id);
     setBaseUrl(nextEndpoint.base_url);
     setModel(next.default_model);
+    setApiKey("");
     setResult(null);
   }
 
   function changeEndpoint(next: ProviderEndpoint) {
     setEndpointId(next.id);
     setBaseUrl(next.base_url);
+    setApiKey("");
     setResult(null);
   }
 
@@ -75,13 +84,17 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
 
   async function onSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!hasUsableKey) {
+      setResult("请先导入当前厂商接口密钥，或切回可复用已导入密钥的配置。");
+      return;
+    }
     setPending("save");
     setResult(null);
     try {
       const saved = await saveModelConfig(payload());
       setActiveConfig(saved);
       setApiKey("");
-      setResult("配置已保存。密钥只保存在后端本地，不会在接口响应中回显。");
+      setResult("已保存为智能体当前模型。密钥只保存在后端本地，不会在接口响应中回显。");
     } catch (error) {
       setResult(error instanceof Error ? error.message : "保存失败");
     } finally {
@@ -90,6 +103,10 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
   }
 
   async function onTest() {
+    if (!hasUsableKey) {
+      setResult("请先导入当前厂商接口密钥，或切回可复用已导入密钥的配置。");
+      return;
+    }
     setPending("test");
     setResult(null);
     try {
@@ -126,7 +143,15 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
                 item.id === provider.id ? "border-teal-300 bg-teal-50" : "border-line bg-white hover:border-teal-200"
               ].join(" ")}
             >
-              <span className="text-sm font-semibold text-ink">{item.label}</span>
+              <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+                {item.label}
+                {item.id === provider.id && (
+                  <span className="rounded-md bg-white px-2 py-0.5 text-xs font-semibold text-teal-700">正在编辑</span>
+                )}
+                {item.id === activeConfig?.provider_id && (
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">当前生效</span>
+                )}
+              </span>
               <span className="mt-2 block text-sm leading-6 text-muted">{item.description}</span>
             </button>
           ))}
@@ -205,7 +230,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
             className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Save size={16} aria-hidden />
-            保存配置
+            保存为当前模型
           </button>
           <button
             type="button"
@@ -214,9 +239,14 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
             className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <TestTube2 size={16} aria-hidden />
-            测试连接
+            测试当前选择
           </button>
         </div>
+        {!selectionMatchesActive && (
+          <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+            当前页面内容只是待保存选择。点击“保存为当前模型”后，智能体才会使用这个厂商、接口和模型。
+          </p>
+        )}
 
         {result && (
           <div

@@ -64,6 +64,8 @@ export DASHBOARD_COOKIE_SECURE="false"
 
 如果部署到 HTTPS 域名，可以把 `DASHBOARD_COOKIE_SECURE` 设为 `true`。当前 IP 直连 HTTP 部署应保持 `false`。
 
+前端浏览器端请求统一走同源 `/api/*` 代理，再由 Next.js 服务端转发到 FastAPI。生产 IP 直连时不要把浏览器端 `NEXT_PUBLIC_API_BASE_URL` 配成 `127.0.0.1`，否则访问者浏览器会请求自己的本机地址并出现 `Failed to fetch`。
+
 ## 大模型接入
 
 `/models` 页面用于选择智能体当前使用的大模型。当前预置中国区接口：
@@ -73,6 +75,8 @@ export DASHBOARD_COOKIE_SECURE="false"
 - Kimi（月之暗面）：`https://api.moonshot.cn/v1`
 
 智能体仍然坚持工具优先和策略优先：传感器查询、规则草案和设备控制判断先由本地工具完成，外部模型只负责在这些结构化结果之后生成更自然的分析说明。提示注入、高风险控制、未知插座和报警器关闭等被策略拒绝的请求不会发送给外部模型。
+
+Kimi K2.6 使用 `max_completion_tokens`，并在 V0 默认关闭 thinking，以避免连接测试或智能体回复只返回推理字段而没有正文。小米 MiMo Token Plan 同时兼容 `api-key` 和 `Authorization: Bearer` 认证头。
 
 ## 可选遥测入站
 
@@ -110,11 +114,12 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
 curl "http://localhost:8000/api/telemetry/status"
 curl "http://localhost:8000/api/room/current?source=database"
 curl "http://localhost:8000/api/sensors/history?metric=co2&source=database&bucket=15m&from=2026-06-04T00:00:00%2B08:00"
+curl -X POST "http://localhost:8000/api/rules/evaluate?source=database"
 ```
 
 `bucket` 支持 `5m`、`15m`、`1h`、`1d`。mock 和 database 数据源使用同一套时间桶语义；database 数据源会把真实入库读数聚合后返回，避免前端趋势页直接承受原始高频点。
 
-`/dashboard`、`/trends` 和 `/agent` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。总览页的“遥测链路”卡片会展示数据库连接、样本数、最新入库时间和 Timescale 扩展状态。
+`/dashboard`、`/trends`、`/agent` 和 `/rules` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。总览页的“遥测链路”卡片会展示数据库连接、样本数、最新入库时间和 Timescale 扩展状态。
 
 MQTT 消息示例见 `services/mqtt-ingestor/examples/room-node-message.json`。
 
@@ -131,10 +136,10 @@ npm run test
 ## 当前版本边界
 
 - 数据由确定性模拟器根据时间窗口生成。
-- 数据库和 MQTT 已有本地开发骨架；公开演示默认仍使用模拟数据，控制台总览、趋势页和 Agent 可手动切换到数据库遥测。
+- 数据库和 MQTT 已有本地开发骨架；公开演示默认仍使用模拟数据，控制台总览、趋势页、Agent 和规则评估可手动切换到数据库遥测。
 - 规则、审计日志和模拟设备状态保存在 `services/api/.local/`。
 - 智能体可以建议自动化规则，但创建规则必须经过用户确认。
-- 已确认规则可在 `/rules` 手动评估；V0 只触发提醒类动作，不执行设备控制。
+- 已确认规则可在 `/rules` 手动评估，并可选择模拟数据或数据库遥测；V0 只触发提醒类动作，不执行设备控制。
 - 设备 API 和智能体共用同一个 mock device adapter；低风险模拟控制会更新设备状态并写入审计日志。
 - 大模型密钥保存在后端本地数据目录，接口只返回脱敏预览；不要把真实密钥提交到 Git。
 - 未知插座、禁止设备、提示注入请求和高风险控制请求都会被拒绝。

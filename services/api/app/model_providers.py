@@ -368,6 +368,7 @@ def _openai_headers(provider_id: str, api_key: str) -> dict[str, str]:
     if provider_id == "xiaomi_mimo":
         return {
             "api-key": api_key,
+            "Authorization": f"Bearer {api_key}",
             "content-type": "application/json",
         }
     return {
@@ -380,11 +381,12 @@ def _openai_test_payload(provider_id: str, model: str) -> dict:
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": "请只回复：连接正常"}],
+        "max_completion_tokens": 128,
     }
-    if provider_id == "xiaomi_mimo":
-        payload["max_completion_tokens"] = 16
+    if provider_id == "kimi":
+        payload["thinking"] = {"type": "disabled"}
     else:
-        payload["max_tokens"] = 16
+        payload["temperature"] = 0.2
     return payload
 
 
@@ -440,11 +442,12 @@ def _openai_agent_payload(provider_id: str, model: str, prompt: str) -> dict[str
             {"role": "system", "content": AGENT_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
+        "max_completion_tokens": 1200,
     }
-    if provider_id == "xiaomi_mimo":
-        payload["max_completion_tokens"] = 1000
+    if provider_id == "kimi":
+        payload["thinking"] = {"type": "disabled"}
     else:
-        payload["max_tokens"] = 1000
+        payload["temperature"] = 0.2
     return payload
 
 

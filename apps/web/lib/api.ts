@@ -25,15 +25,8 @@ function configured(value: string | undefined): string | null {
 function apiBaseUrl(): string {
   const publicBaseUrl = configured(process.env.NEXT_PUBLIC_API_BASE_URL);
   if (typeof window !== "undefined") {
-    if (publicBaseUrl) {
-      return publicBaseUrl;
-    }
-    if (window.location.hostname === "127.0.0.1") {
-      return "http://127.0.0.1:8000";
-    }
-    if (window.location.hostname === "localhost") {
-      return "http://localhost:8000";
-    }
+    // Browser requests stay same-origin and are forwarded by the Next.js API proxy.
+    // This avoids production pages trying to fetch the viewer's own 127.0.0.1.
     return "";
   }
   return configured(process.env.API_BASE_URL) ?? publicBaseUrl ?? "http://localhost:8000";
@@ -132,8 +125,9 @@ export async function createRule(payload: AutomationRuleCreate): Promise<Automat
   });
 }
 
-export async function evaluateRules(): Promise<RuleEvaluation[]> {
-  return request<RuleEvaluation[]>("/api/rules/evaluate", {
+export async function evaluateRules(source: TelemetrySource = "mock"): Promise<RuleEvaluation[]> {
+  const params = source === "database" ? "?source=database" : "";
+  return request<RuleEvaluation[]>(`/api/rules/evaluate${params}`, {
     method: "POST"
   });
 }

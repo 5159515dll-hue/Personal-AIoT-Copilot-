@@ -3,6 +3,7 @@ from __future__ import annotations
 import operator
 import re
 from collections.abc import Callable
+from typing import Literal
 
 from app.audit import record_audit
 from app.mock_data import current_room_state
@@ -31,13 +32,23 @@ def evaluate_automation_rules(
     room: RoomState | None = None,
     rules: list[AutomationRule] | None = None,
     emit_audit: bool = True,
+    telemetry_source: Literal["mock", "database"] = "mock",
 ) -> list[RuleEvaluation]:
     state = room or current_room_state()
     candidates = rules if rules is not None else list_rules()
-    return [_evaluate_rule(rule, state, emit_audit=emit_audit) for rule in candidates]
+    return [
+        _evaluate_rule(rule, state, emit_audit=emit_audit, telemetry_source=telemetry_source)
+        for rule in candidates
+    ]
 
 
-def _evaluate_rule(rule: AutomationRule, room: RoomState, *, emit_audit: bool) -> RuleEvaluation:
+def _evaluate_rule(
+    rule: AutomationRule,
+    room: RoomState,
+    *,
+    emit_audit: bool,
+    telemetry_source: Literal["mock", "database"],
+) -> RuleEvaluation:
     evaluated_at = now()
     if not rule.enabled:
         return RuleEvaluation(
@@ -77,6 +88,7 @@ def _evaluate_rule(rule: AutomationRule, room: RoomState, *, emit_audit: bool) -
 
     matched = comparator(reading.value, threshold)
     observed = {
+        "source": telemetry_source,
         "metric": metric.value,
         "value": reading.value,
         "unit": reading.unit,
