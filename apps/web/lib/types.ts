@@ -1,0 +1,155 @@
+export type MetricName = "temperature" | "humidity" | "co2" | "light" | "presence";
+
+export type SensorReading = {
+  metric: MetricName;
+  value: number;
+  unit: string;
+  timestamp: string;
+  device_id: string;
+  quality: "ok" | "stale" | "anomaly";
+};
+
+export type RoomState = {
+  timestamp: string;
+  health_score: number;
+  status: "good" | "watch" | "poor";
+  summary: string;
+  metrics: Record<MetricName, SensorReading>;
+  anomalies: string[];
+  recommendation: string;
+};
+
+export type Device = {
+  id: string;
+  name: string;
+  type: string;
+  location: string;
+  risk_level: "read_only" | "low" | "medium" | "high" | "forbidden";
+  controllable: boolean;
+  requires_confirmation: boolean;
+  online_state: "online" | "offline" | "unknown";
+  current_state: Record<string, unknown>;
+  connected_appliance?: string | null;
+  max_active_duration_minutes?: number | null;
+};
+
+export type PolicyDecision = {
+  result: "allowed" | "requires_confirmation" | "denied";
+  risk_level: Device["risk_level"];
+  requires_confirmation: boolean;
+  reason: string;
+  constraints: string[];
+};
+
+export type ControlDeviceResponse = {
+  policy: PolicyDecision;
+  execution_result: "success" | "blocked" | "requires_confirmation" | "failed";
+  audit_log_id: string;
+  device: Device | null;
+};
+
+export type AutomationRule = {
+  id: string;
+  condition: string;
+  action: string;
+  enabled: boolean;
+  created_by: "user" | "agent";
+  created_at: string;
+};
+
+export type AutomationRuleCreate = {
+  condition: string;
+  action: string;
+  enabled: boolean;
+  confirmed: boolean;
+};
+
+export type ToolCall = {
+  id: string;
+  name: string;
+  parameters: Record<string, unknown>;
+  result: Record<string, unknown>;
+  policy: PolicyDecision | null;
+  created_at: string;
+};
+
+export type AgentChatResponse = {
+  session_id: string;
+  message: {
+    role: "user" | "assistant";
+    content: string;
+    created_at: string;
+  };
+  used_data: string[];
+  tool_calls: ToolCall[];
+  needs_confirmation: boolean;
+  policy: PolicyDecision | null;
+  rule_draft: AutomationRuleCreate | null;
+};
+
+export type AuditLog = {
+  id: string;
+  timestamp: string;
+  actor: "user" | "agent" | "system";
+  action: string;
+  policy_result: PolicyDecision["result"] | null;
+  risk_level: Device["risk_level"] | null;
+  parameters: Record<string, unknown>;
+  result: string;
+  details: string;
+};
+
+export type ProviderProtocol = "openai" | "anthropic";
+
+export type ProviderEndpoint = {
+  id: string;
+  label: string;
+  protocol: ProviderProtocol;
+  base_url: string;
+  description: string;
+};
+
+export type ModelProviderDefinition = {
+  id: string;
+  label: string;
+  description: string;
+  docs_url: string;
+  endpoints: ProviderEndpoint[];
+  models: string[];
+  default_model: string;
+};
+
+export type PublicModelConfig = {
+  provider_id: string;
+  endpoint_id: string;
+  protocol: ProviderProtocol;
+  base_url: string;
+  model: string;
+  api_key_set: boolean;
+  api_key_preview: string | null;
+  updated_at: string | null;
+};
+
+export type ModelProviderCatalog = {
+  providers: ModelProviderDefinition[];
+  active_config: PublicModelConfig | null;
+};
+
+export type ModelConfigRequest = {
+  provider_id: string;
+  endpoint_id: string;
+  protocol: ProviderProtocol;
+  base_url: string;
+  model: string;
+  api_key?: string | null;
+};
+
+export type ModelConnectionTestResponse = {
+  ok: boolean;
+  provider_id: string;
+  protocol: ProviderProtocol;
+  base_url: string;
+  model: string;
+  message: string;
+  status_code: number | null;
+};

@@ -1,0 +1,26 @@
+services:
+  api:
+    image: python:3.14-slim
+    working_dir: /workspace/services/api
+    volumes:
+      - ..:/workspace
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    image: node:22-slim
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    command: >
+      sh -c "npm install && npm --workspace apps/web run dev -- --hostname 0.0.0.0"
+    depends_on:
+      - api
+
