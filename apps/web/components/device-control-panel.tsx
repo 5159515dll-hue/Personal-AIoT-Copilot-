@@ -8,6 +8,7 @@ import { applianceLabel, deviceTypeLabel, locationLabel, statusLabel, translated
 import { RiskPill } from "./risk-pill";
 
 export function DeviceControlPanel({ devices }: { devices: Device[] }) {
+  const [deviceList, setDeviceList] = useState(devices);
   const [results, setResults] = useState<Record<string, ControlDeviceResponse | string>>({});
   const [pending, setPending] = useState<string | null>(null);
 
@@ -15,6 +16,10 @@ export function DeviceControlPanel({ devices }: { devices: Device[] }) {
     setPending(device.id);
     try {
       const response = await controlDevice(device.id, state, false);
+      const updatedDevice = response.device;
+      if (updatedDevice) {
+        setDeviceList((current) => current.map((item) => (item.id === updatedDevice.id ? updatedDevice : item)));
+      }
       setResults((current) => ({ ...current, [device.id]: response }));
     } catch (error) {
       setResults((current) => ({
@@ -28,7 +33,7 @@ export function DeviceControlPanel({ devices }: { devices: Device[] }) {
 
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      {devices.map((device) => {
+      {deviceList.map((device) => {
         const result = results[device.id];
         return (
           <section key={device.id} className="rounded-lg border border-line bg-white p-4 shadow-sm">

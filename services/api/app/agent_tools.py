@@ -5,7 +5,8 @@ from uuid import uuid4
 
 from app.audit import record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db
-from app.mock_data import current_room_state, get_device, query_history, summarize_metric
+from app.device_adapter import execute_mock_control, get_mock_device
+from app.mock_data import current_room_state, query_history, summarize_metric
 from app.model_providers import generate_agent_reply
 from app.models import (
     AgentChatRequest,
@@ -385,7 +386,7 @@ async def _database_weekly_response(
 
 
 def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> ToolCall:
-    device = get_device(device_id)
+    device = get_mock_device(device_id)
     policy = assess_device_control(
         device=device,
         requested_state=state,
@@ -393,6 +394,9 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> T
         intent=intent,
     )
     execution_result = "success" if policy.result == PolicyResult.allowed else "blocked"
+    controlled_device = None
+    if device and policy.result == PolicyResult.allowed and state in {"on", "off"}:
+        controlled_device = execute_mock_control(device, state)
     audit = record_audit(
         actor="agent",
         action="control_device",
@@ -404,7 +408,11 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> T
     return ToolCall(
         name="control_device",
         parameters={"device_id": device_id, "state": state, "confirmed": confirmed},
-        result={"execution_result": execution_result, "audit_log_id": audit.id},
+        result={
+            "execution_result": execution_result,
+            "audit_log_id": audit.id,
+            "device": controlled_device.model_dump(mode="json") if controlled_device else None,
+        },
         policy=policy,
         created_at=now(),
     )

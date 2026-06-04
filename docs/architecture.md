@@ -22,6 +22,7 @@
 - `services/api/app/routes`：前端使用的后端接口。
 - `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
 - `services/api/app/mock_data.py`：确定性传感器与设备数据。
+- `services/api/app/device_adapter.py`：可持久化的模拟设备控制适配器，供 API 和智能体共用。
 - `services/api/app/ingestion.py`：HTTP 与 MQTT payload 转换为统一传感器读数。
 - `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、写入和查询。
 - `services/api/app/agent_tools.py`：工具优先的智能体编排。
@@ -37,7 +38,7 @@
 2. 后端根据时间窗口返回模拟读数。
 3. 智能体请求会被映射到受约束工具。
 4. 工具返回结构化数据和必要的策略判断。
-5. 控制尝试会被允许、要求确认或拒绝。
+5. 控制尝试会被允许、要求确认或拒绝；允许的模拟动作通过 mock device adapter 更新状态。
 6. 已确认规则可手动评估，满足条件时触发提醒审计。
 7. 关键事件持久化到 `services/api/.local/`。
 

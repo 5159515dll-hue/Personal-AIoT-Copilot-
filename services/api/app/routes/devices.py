@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.audit import record_audit
-from app.mock_data import get_device, get_device_catalog
+from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
 from app.models import (
     ControlDeviceRequest,
     ControlDeviceResponse,
@@ -15,12 +15,12 @@ router = APIRouter(prefix="/api/devices", tags=["devices"])
 
 @router.get("", response_model=list[Device])
 def list_devices() -> list[Device]:
-    return get_device_catalog()
+    return list_mock_devices()
 
 
 @router.post("/{device_id}/control", response_model=ControlDeviceResponse)
 def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDeviceResponse:
-    device = get_device(device_id)
+    device = get_mock_device(device_id)
     if device is None:
         policy = assess_device_control(
             device=None,
@@ -52,7 +52,7 @@ def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDevi
         intent=request.reason,
     )
     if policy.result == PolicyResult.allowed:
-        device.current_state["power"] = request.state
+        device = execute_mock_control(device, request.state)
         result = "success"
         details = "模拟设备状态已更新。"
     elif policy.result == PolicyResult.requires_confirmation:

@@ -7,7 +7,7 @@
 - `get_current_room_state`：返回当前房间指标；mock 使用确定性模拟器，database 使用入库最新读数。
 - `query_sensor_history`：返回二氧化碳等指标的聚合证据；mock 和 database 使用同一套 bucket 语义。
 - `create_automation_rule`：只创建草案；保存必须通过用户确认。
-- `control_device`：将设备动作请求送入策略引擎和审计日志。
+- `control_device`：将设备动作请求送入策略引擎和审计日志；允许的低风险模拟动作会写入 mock device adapter 状态。
 - `policy_check`：记录提示注入或绕过策略的拒绝决定。
 - `llm_response_generation`：可选语言生成层，读取当前模型配置，把工具结果整理为更自然的中文解释。
 

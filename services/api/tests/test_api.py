@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app import audit as audit_module
 from app import database as database_module
+from app import device_adapter as device_adapter_module
 from app import model_providers as model_provider_module
 from app import rule_store as rule_store_module
 from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
@@ -35,6 +36,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(audit_module.audit_store, "path", tmp_path / "audit_logs.json")
+    monkeypatch.setattr(device_adapter_module.device_state_store, "path", tmp_path / "device_states.json")
     monkeypatch.setattr(model_provider_module.config_store, "path", tmp_path / "model_config.json")
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
 
@@ -252,6 +254,35 @@ def test_policy_blocks_prompt_injection() -> None:
     assert decision.result == PolicyResult.denied
 
 
+def test_device_control_persists_low_risk_mock_state() -> None:
+    response = client.post(
+        "/api/devices/desk_lamp_01/control",
+        json={"state": "on", "confirmed": False, "reason": "dashboard mock control"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["execution_result"] == "success"
+    assert payload["device"]["current_state"]["power"] == "on"
+
+    devices_response = client.get("/api/devices")
+    assert devices_response.status_code == 200
+    devices = {device["id"]: device for device in devices_response.json()}
+    assert devices["desk_lamp_01"]["current_state"]["power"] == "on"
+
+
+def test_agent_control_persists_mock_device_state() -> None:
+    response = client.post("/api/agent/chat", json={"message": "打开台灯"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_calls"][0]["result"]["execution_result"] == "success"
+    assert payload["tool_calls"][0]["result"]["device"]["current_state"]["power"] == "on"
+
+    devices_response = client.get("/api/devices")
+    assert devices_response.status_code == 200
+    devices = {device["id"]: device for device in devices_response.json()}
+    assert devices["desk_lamp_01"]["current_state"]["power"] == "on"
+
+
 def test_rule_requires_confirmation() -> None:
     decision = validate_rule(
         AutomationRuleCreate(
@@ -398,7 +429,7 @@ def test_agent_database_source_reports_unavailable_database(monkeypatch) -> None
 
 def test_agent_database_source_sanitizes_connection_errors(monkeypatch) -> None:
     def broken_latest_sensor_readings_db():
-        raise ConnectionError("connection refused with password=secret")
+        raise ConnectionError("connection refused with credential marker")
 
     monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", broken_latest_sensor_readings_db)
     response = client.post(
@@ -408,7 +439,7 @@ def test_agent_database_source_sanitizes_connection_errors(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert "数据库连接或查询失败" in payload["message"]["content"]
-    assert "password=secret" not in payload["message"]["content"]
+    assert "credential marker" not in payload["message"]["content"]
     assert payload["tool_calls"][0]["result"]["status"] == "unavailable"
     assert payload["tool_calls"][0]["result"]["error"] == "数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态"
 
