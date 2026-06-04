@@ -1,0 +1,19 @@
+[Unit]
+Description=个人空间智能物联助手 MQTT 入站服务
+After=network.target postgresql.service mosquitto.service
+Requires=postgresql.service mosquitto.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/aiot-copilot/services/mqtt-ingestor
+EnvironmentFile=/home/ubuntu/aiot-copilot/.dashboard-env
+Environment=PYTHONPATH=/home/ubuntu/aiot-copilot/services/api
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/aiot-copilot/.venv/bin/python -m ingestor.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

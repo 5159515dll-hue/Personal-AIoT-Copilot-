@@ -117,6 +117,8 @@ curl "http://localhost:8000/api/sensors/history?metric=co2&source=database&bucke
 
 MQTT 消息示例见 `services/mqtt-ingestor/examples/room-node-message.json`。
 
+生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd/aiot-mqtt-ingestor.service`。服务读取私有 `.dashboard-env` 中的 `DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`，收到 MQTT 消息后会初始化表结构并写入 `sensor_readings`。
+
 ## 常用命令
 
 ```bash

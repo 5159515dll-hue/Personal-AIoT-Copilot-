@@ -1,8 +1,12 @@
 import asyncio
 from datetime import timedelta
+from pathlib import Path
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
+
+sys.path.append(str(Path(__file__).resolve().parents[2] / "mqtt-ingestor"))
 
 from app import audit as audit_module
 from app import database as database_module
@@ -27,9 +31,11 @@ from app.models import (
 from app.mock_data import query_history
 from app.policy import assess_device_control, validate_rule
 from app.mock_data import get_device
+from app.routes import ingest as ingest_route_module
 from app.routes import room as room_route_module
 from app.routes import sensors as sensors_route_module
 from app.time_utils import now
+from ingestor.main import mqtt_reason_code_succeeded
 
 client = TestClient(app)
 
@@ -266,6 +272,43 @@ def test_mqtt_metric_map_payload_expands_readings() -> None:
         '{"device_id":"room_node_01","timestamp":"2026-06-04T17:30:00+08:00","temperature":25.4,"humidity":48.2,"co2":1180}'
     )
     assert [item.metric for item in request.readings] == [Metric.temperature, Metric.humidity, Metric.co2]
+
+
+def test_mqtt_reason_code_handles_paho_v2_reason_code_objects() -> None:
+    class SuccessReasonCode:
+        value = 0
+
+        def is_failure(self) -> bool:
+            return False
+
+    class FailureReasonCode:
+        value = 135
+
+        def is_failure(self) -> bool:
+            return True
+
+    assert mqtt_reason_code_succeeded(SuccessReasonCode()) is True
+    assert mqtt_reason_code_succeeded(FailureReasonCode()) is False
+    assert mqtt_reason_code_succeeded(0) is True
+    assert mqtt_reason_code_succeeded("success") is True
+
+
+def test_http_ingest_reports_database_write_failure(monkeypatch) -> None:
+    def broken_insert_sensor_readings(*args, **kwargs):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings", broken_insert_sensor_readings)
+    response = client.post(
+        "/api/ingest/sensor-readings",
+        json={
+            "device_id": "room_node_01",
+            "readings": [
+                {"metric": "co2", "value": 880},
+            ],
+        },
+    )
+    assert response.status_code == 503
+    assert "数据库连接或写入失败" in response.json()["detail"]
 
 
 def test_policy_allows_low_risk_mock_device() -> None:

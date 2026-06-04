@@ -19,6 +19,8 @@ def ingest_sensor_readings(request: SensorIngestRequest) -> SensorIngestResponse
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="数据库连接或写入失败，请检查 DATABASE_URL、网络和数据库服务状态。") from exc
 
     record_audit(
         actor="system",
@@ -38,4 +40,3 @@ def ingest_sensor_readings(request: SensorIngestRequest) -> SensorIngestResponse
         source=request.source,
         message="传感器读数已写入时间序列数据库。",
     )
-

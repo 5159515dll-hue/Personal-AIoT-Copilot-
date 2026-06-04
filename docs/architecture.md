@@ -31,6 +31,7 @@
 - `services/api/app/audit.py`：持久化审计记录。
 - `services/mqtt-ingestor`：订阅 MQTT 遥测并写入时间序列数据库。
 - `infra/docker-compose.yml`：本地数据库、MQTT broker、API、前端和入站服务编排。
+- `infra/systemd/aiot-mqtt-ingestor.service`：生产服务器上的 MQTT 入站服务模板。
 
 ## 默认模拟数据流
 
@@ -51,6 +52,8 @@
 5. `GET /api/sensors/history?source=database&bucket=15m&from=...` 从数据库读取并聚合历史曲线。
 6. `/dashboard`、`/trends` 和 `/agent` 可选择 database 数据源，用入库最新读数和历史曲线展示或回答环境问题。
 7. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
+
+生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中 `DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。
 
 ## 下一阶段替换点
 

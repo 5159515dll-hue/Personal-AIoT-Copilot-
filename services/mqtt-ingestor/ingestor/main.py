@@ -31,7 +31,7 @@ def main() -> int:
         client.username_pw_set(username, password)
 
     def on_connect(client, userdata, flags, reason_code, properties) -> None:
-        if int(reason_code) == 0:
+        if mqtt_reason_code_succeeded(reason_code):
             LOGGER.info("已连接 MQTT broker %s:%s，订阅 %s", host, port, topic)
             client.subscribe(topic, qos=1)
         else:
@@ -64,6 +64,19 @@ def main() -> int:
     return 0
 
 
+def mqtt_reason_code_succeeded(reason_code) -> bool:
+    is_failure = getattr(reason_code, "is_failure", None)
+    if callable(is_failure):
+        return not is_failure()
+    if isinstance(is_failure, bool):
+        return not is_failure
+
+    value = getattr(reason_code, "value", reason_code)
+    try:
+        return int(value) == 0
+    except (TypeError, ValueError):
+        return str(reason_code).lower() in {"0", "success"}
+
+
 if __name__ == "__main__":
     sys.exit(main())
-
