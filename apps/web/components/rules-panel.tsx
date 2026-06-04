@@ -1,17 +1,19 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Check, Plus } from "lucide-react";
-import { createRule } from "@/lib/api";
-import type { AutomationRule } from "@/lib/types";
+import { BellRing, Check, CircleDashed, Play, Plus, ShieldAlert } from "lucide-react";
+import { createRule, evaluateRules } from "@/lib/api";
+import type { AutomationRule, RuleEvaluation } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 
 export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] }) {
   const [rules, setRules] = useState(initialRules);
+  const [evaluations, setEvaluations] = useState<RuleEvaluation[]>([]);
   const [condition, setCondition] = useState("二氧化碳 > 1200 ppm 持续 15 分钟");
   const [action, setAction] = useState("发送通风提醒");
   const [confirmed, setConfirmed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -24,6 +26,23 @@ export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] })
       setMessage(error instanceof Error ? error.message : "规则创建失败");
     }
   }
+
+  async function onEvaluate() {
+    setEvaluating(true);
+    setMessage(null);
+    try {
+      const result = await evaluateRules();
+      setEvaluations(result);
+      const triggered = result.filter((item) => item.status === "triggered").length;
+      setMessage(triggered > 0 ? `已触发 ${triggered} 条提醒规则，并写入审计日志。` : "当前没有规则被触发。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "规则评估失败");
+    } finally {
+      setEvaluating(false);
+    }
+  }
+
+  const evaluationByRule = new Map(evaluations.map((item) => [item.rule_id, item]));
 
   return (
     <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
@@ -67,26 +86,76 @@ export function RulesPanel({ initialRules }: { initialRules: AutomationRule[] })
       </form>
 
       <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
-        <h2 className="text-base font-semibold text-ink">自动化规则</h2>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-base font-semibold text-ink">自动化规则</h2>
+          <button
+            type="button"
+            onClick={onEvaluate}
+            disabled={evaluating || rules.length === 0}
+            className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Play size={16} aria-hidden />
+            {evaluating ? "评估中" : "评估当前规则"}
+          </button>
+        </div>
         <div className="mt-4 space-y-3">
-          {rules.map((rule) => (
-            <article key={rule.id} className="rounded-lg border border-line bg-slate-50 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-ink">如果 {rule.condition}</p>
-                  <p className="mt-1 text-sm text-muted">那么 {rule.action}</p>
+          {rules.map((rule) => {
+            const evaluation = evaluationByRule.get(rule.id);
+            return (
+              <article key={rule.id} className="rounded-lg border border-line bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-ink">如果 {rule.condition}</p>
+                    <p className="mt-1 text-sm text-muted">那么 {rule.action}</p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700">
+                    <Check size={13} aria-hidden />
+                    {rule.enabled ? "已启用" : "已暂停"}
+                  </span>
                 </div>
-                <span className="inline-flex items-center gap-1 rounded-md bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700">
-                  <Check size={13} aria-hidden />
-                  {rule.enabled ? "已启用" : "已暂停"}
-                </span>
-              </div>
-              <p className="mt-2 text-xs text-muted">创建时间：{formatDateTime(rule.created_at)}</p>
-            </article>
-          ))}
+                <p className="mt-2 text-xs text-muted">创建时间：{formatDateTime(rule.created_at)}</p>
+                {evaluation && <RuleEvaluationStatus evaluation={evaluation} />}
+              </article>
+            );
+          })}
           {rules.length === 0 && <p className="text-sm leading-6 text-muted">暂无已确认规则。</p>}
         </div>
       </section>
+    </div>
+  );
+}
+
+function RuleEvaluationStatus({ evaluation }: { evaluation: RuleEvaluation }) {
+  const style =
+    evaluation.status === "triggered"
+      ? "border-teal-100 bg-teal-50 text-teal-800"
+      : evaluation.status === "unsupported"
+        ? "border-amber-100 bg-amber-50 text-amber-800"
+        : "border-line bg-white text-slate-700";
+  const Icon =
+    evaluation.status === "triggered"
+      ? BellRing
+      : evaluation.status === "unsupported"
+        ? ShieldAlert
+        : CircleDashed;
+  const label =
+    evaluation.status === "triggered"
+      ? "已触发"
+      : evaluation.status === "not_matched"
+        ? "未触发"
+        : evaluation.status === "disabled"
+          ? "已暂停"
+          : "暂不支持";
+
+  return (
+    <div className={`mt-3 rounded-lg border p-3 text-sm leading-6 ${style}`}>
+      <p className="flex flex-wrap items-center gap-2 font-semibold">
+        <Icon size={15} aria-hidden />
+        {label}
+        <span className="font-medium opacity-80">{formatDateTime(evaluation.evaluated_at)}</span>
+      </p>
+      <p className="mt-1">{evaluation.reason}</p>
+      {evaluation.audit_log_id && <p className="mt-1 break-all text-xs opacity-80">审计编号：{evaluation.audit_log_id}</p>}
     </div>
   );
 }

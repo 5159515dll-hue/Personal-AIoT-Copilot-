@@ -26,6 +26,7 @@
 - `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、写入和查询。
 - `services/api/app/agent_tools.py`：工具优先的智能体编排。
 - `services/api/app/policy.py`：风险分级、确认要求和拒绝逻辑。
+- `services/api/app/rule_engine.py`：评估简单 IF/THEN 提醒规则并写入触发审计。
 - `services/api/app/audit.py`：持久化审计记录。
 - `services/mqtt-ingestor`：订阅 MQTT 遥测并写入时间序列数据库。
 - `infra/docker-compose.yml`：本地数据库、MQTT broker、API、前端和入站服务编排。
@@ -37,7 +38,8 @@
 3. 智能体请求会被映射到受约束工具。
 4. 工具返回结构化数据和必要的策略判断。
 5. 控制尝试会被允许、要求确认或拒绝。
-6. 关键事件持久化到 `services/api/.local/`。
+6. 已确认规则可手动评估，满足条件时触发提醒审计。
+7. 关键事件持久化到 `services/api/.local/`。
 
 ## 可选真实遥测数据流
 

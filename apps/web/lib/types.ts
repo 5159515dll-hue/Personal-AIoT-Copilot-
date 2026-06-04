@@ -64,6 +64,18 @@ export type AutomationRuleCreate = {
   confirmed: boolean;
 };
 
+export type RuleEvaluation = {
+  rule_id: string;
+  condition: string;
+  action: string;
+  matched: boolean;
+  status: "triggered" | "not_matched" | "disabled" | "unsupported";
+  reason: string;
+  evaluated_at: string;
+  observed: Record<string, unknown>;
+  audit_log_id: string | null;
+};
+
 export type ToolCall = {
   id: string;
   name: string;

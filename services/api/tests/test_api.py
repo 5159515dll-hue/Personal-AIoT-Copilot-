@@ -245,6 +245,75 @@ def test_rule_requires_confirmation() -> None:
     assert decision.result == PolicyResult.requires_confirmation
 
 
+def test_rule_evaluation_triggers_reminder_and_audit_log() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1 ppm",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+    rule_id = create_response.json()["id"]
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluations = evaluate_response.json()
+    assert len(evaluations) == 1
+    assert evaluations[0]["rule_id"] == rule_id
+    assert evaluations[0]["status"] == "triggered"
+    assert evaluations[0]["matched"] is True
+    assert evaluations[0]["audit_log_id"]
+    assert evaluations[0]["observed"]["metric"] == "co2"
+
+    audit_response = client.get("/api/audit-logs")
+    assert audit_response.status_code == 200
+    actions = [item["action"] for item in audit_response.json()]
+    assert "trigger_automation_rule" in actions
+
+
+def test_rule_evaluation_respects_disabled_rules() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1 ppm",
+            "action": "发送通风提醒",
+            "enabled": False,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "disabled"
+    assert evaluation["matched"] is False
+    assert evaluation["audit_log_id"] is None
+
+
+def test_rule_evaluation_marks_unsupported_conditions() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "天气变差",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "unsupported"
+    assert evaluation["matched"] is False
+    assert evaluation["audit_log_id"] is None
+
+
 def test_agent_environment_uses_tools() -> None:
     response = client.post("/api/agent/chat", json={"message": "今天二氧化碳情况怎么样？"})
     assert response.status_code == 200

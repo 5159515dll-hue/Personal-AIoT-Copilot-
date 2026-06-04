@@ -9,6 +9,7 @@ import type {
   ModelConfigRequest,
   ModelConnectionTestResponse,
   ModelProviderCatalog,
+  RuleEvaluation,
   RoomState,
   SensorReading
 } from "./types";
@@ -90,6 +91,12 @@ export async function createRule(payload: AutomationRuleCreate): Promise<Automat
   return request<AutomationRule>("/api/rules", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function evaluateRules(): Promise<RuleEvaluation[]> {
+  return request<RuleEvaluation[]>("/api/rules/evaluate", {
+    method: "POST"
   });
 }
 

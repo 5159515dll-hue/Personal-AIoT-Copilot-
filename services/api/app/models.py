@@ -127,6 +127,18 @@ class AutomationRule(BaseModel):
     created_at: datetime
 
 
+class RuleEvaluation(BaseModel):
+    rule_id: str
+    condition: str
+    action: str
+    matched: bool
+    status: Literal["triggered", "not_matched", "disabled", "unsupported"]
+    reason: str
+    evaluated_at: datetime
+    observed: dict[str, Any] = Field(default_factory=dict)
+    audit_log_id: str | None = None
+
+
 class AgentChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     session_id: str | None = None

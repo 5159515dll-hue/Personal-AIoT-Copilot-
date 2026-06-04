@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException
 
 from app.audit import record_audit
-from app.models import AutomationRule, AutomationRuleCreate, PolicyResult
+from app.models import AutomationRule, AutomationRuleCreate, PolicyResult, RuleEvaluation
 from app.policy import validate_rule
+from app.rule_engine import evaluate_automation_rules
 from app.rule_store import list_rules, save_rule
 from app.time_utils import now
 
@@ -12,6 +13,11 @@ router = APIRouter(prefix="/api/rules", tags=["rules"])
 @router.get("", response_model=list[AutomationRule])
 def get_rules() -> list[AutomationRule]:
     return list_rules()
+
+
+@router.post("/evaluate", response_model=list[RuleEvaluation])
+def evaluate_rules() -> list[RuleEvaluation]:
+    return evaluate_automation_rules()
 
 
 @router.post("", response_model=AutomationRule)
