@@ -12,7 +12,8 @@ import type {
   ModelProviderCatalog,
   RuleEvaluation,
   RoomState,
-  SensorReading
+  SensorReading,
+  TelemetrySource
 } from "./types";
 
 function configured(value: string | undefined): string | null {
@@ -52,24 +53,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(body || `Request failed: ${response.status}`);
+    throw new Error(errorMessageFromBody(body) || `请求失败：${response.status}`);
   }
 
   return response.json() as Promise<T>;
 }
 
-export async function getRoomState(): Promise<RoomState> {
-  return request<RoomState>("/api/room/current");
+function errorMessageFromBody(body: string): string {
+  if (!body) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    if (typeof parsed.detail === "string") {
+      return parsed.detail;
+    }
+    if (parsed.detail && typeof parsed.detail === "object" && "message" in parsed.detail) {
+      const message = (parsed.detail as { message?: unknown }).message;
+      return typeof message === "string" ? message : body;
+    }
+  } catch {
+    return body;
+  }
+  return body;
+}
+
+export async function getRoomState(source: TelemetrySource = "mock"): Promise<RoomState> {
+  const params = source === "database" ? "?source=database" : "";
+  return request<RoomState>(`/api/room/current${params}`);
 }
 
 export async function getSensorHistory(
   metric: MetricName,
   bucket = "15m",
-  days?: number
+  days?: number,
+  source: TelemetrySource = "mock"
 ): Promise<SensorReading[]> {
   const params = new URLSearchParams({ metric, bucket });
-  if (days) {
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  if (source === "database") {
+    params.set("source", "database");
+  }
+  const windowDays = days ?? (source === "database" ? 1 : undefined);
+  if (windowDays) {
+    const from = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
     params.set("from", from);
   }
   return request<SensorReading[]>(`/api/sensors/history?${params.toString()}`);

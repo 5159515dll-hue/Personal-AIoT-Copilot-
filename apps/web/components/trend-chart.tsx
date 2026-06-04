@@ -19,6 +19,14 @@ export function TrendChart({
   readings: SensorReading[];
   color?: string;
 }) {
+  if (readings.length === 0) {
+    return (
+      <div className="flex h-72 w-full items-center justify-center rounded-lg border border-dashed border-line bg-slate-50 px-4 text-center text-sm leading-6 text-muted">
+        暂无曲线数据。模拟数据会自动生成；数据库遥测需要先通过 MQTT 或 HTTP 入库。
+      </div>
+    );
+  }
+
   const data = readings.map((reading) => ({
     time: formatTime(reading.timestamp),
     value: reading.value,
@@ -45,4 +53,3 @@ export function TrendChart({
     </div>
   );
 }
-

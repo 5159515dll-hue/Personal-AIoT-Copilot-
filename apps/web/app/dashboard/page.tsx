@@ -4,55 +4,89 @@ import { AppShell } from "@/components/app-shell";
 import { MetricCard } from "@/components/metric-card";
 import { PageHeader } from "@/components/page-header";
 import { RiskPill } from "@/components/risk-pill";
+import { TelemetrySourceSwitch } from "@/components/telemetry-source-switch";
 import { TrendChart } from "@/components/trend-chart";
 import { getAuditLogs, getDevices, getRoomState, getSensorHistory } from "@/lib/api";
 import { formatDateTime, statusLabel } from "@/lib/format";
+import { normalizeTelemetrySource, telemetrySourceLabel } from "@/lib/telemetry-source";
+import type { SensorReading } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const [room, co2History, devices, auditLogs] = await Promise.all([
-    getRoomState(),
-    getSensorHistory("co2", "15m"),
+type DashboardPageProps = {
+  searchParams?: Promise<{ source?: string | string[] }>;
+};
+
+type DataResult<T> = {
+  data: T | null;
+  error: string | null;
+};
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const params = await searchParams;
+  const source = normalizeTelemetrySource(params?.source);
+  const [roomResult, co2HistoryResult, devices, auditLogs] = await Promise.all([
+    readData(() => getRoomState(source)),
+    readData(() => getSensorHistory("co2", "15m", undefined, source)),
     getDevices(),
     getAuditLogs()
   ]);
+  const room = roomResult.data;
+  const co2History = co2HistoryResult.data ?? [];
 
   const riskyDevices = devices.filter((device) => ["medium", "high", "forbidden"].includes(device.risk_level));
+  const metricReadings = room ? (Object.values(room.metrics).filter(Boolean) as SensorReading[]) : [];
 
   return (
     <AppShell>
       <PageHeader
         title="空间总览"
-        description="查看当前模拟环境、智能体建议、安全状态和最近审计活动。"
+        description={`查看当前${telemetrySourceLabel(source)}、智能体建议、安全状态和最近审计活动。`}
         action={
-          <Link
-            href="/agent"
-            className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white"
-          >
-            询问智能体
-            <ArrowRight size={16} aria-hidden />
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <TelemetrySourceSwitch source={source} basePath="/dashboard" />
+            <Link
+              href="/agent"
+              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white"
+            >
+              询问智能体
+              <ArrowRight size={16} aria-hidden />
+            </Link>
+          </div>
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {Object.values(room.metrics).map((reading) => (
-          <MetricCard key={reading.metric} reading={reading} />
-        ))}
-      </div>
+      {roomResult.error && <DataSourceNotice title="当前状态不可用" detail={roomResult.error} />}
+
+      {metricReadings.length > 0 ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {metricReadings.map((reading) => (
+            <MetricCard key={reading.metric} reading={reading} />
+          ))}
+        </div>
+      ) : !roomResult.error ? (
+        <DataSourceNotice
+          title="暂无当前指标"
+          detail={source === "database" ? "数据库当前没有可展示的最新传感器读数。" : "模拟数据暂不可用。"}
+        />
+      ) : null}
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
         <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold">二氧化碳最近 24 小时</h2>
-              <p className="mt-1 text-sm text-muted">异常窗口会在下午和晚间有人时段模拟生成。</p>
+              <p className="mt-1 text-sm text-muted">
+                {source === "database" ? "来自 TimescaleDB 的最近 24 小时聚合曲线。" : "异常窗口会在下午和晚间有人时段模拟生成。"}
+              </p>
             </div>
-            <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-              {statusLabel(room.status)}
-            </span>
+            {room && (
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                {statusLabel(room.status)}
+              </span>
+            )}
           </div>
+          {co2HistoryResult.error && <p className="mt-3 text-sm leading-6 text-rose-700">{co2HistoryResult.error}</p>}
           <div className="mt-4">
             <TrendChart readings={co2History} />
           </div>
@@ -64,8 +98,10 @@ export default async function DashboardPage() {
               <ShieldCheck className="mt-0.5 text-teal-700" size={20} aria-hidden />
               <div>
                 <h2 className="text-base font-semibold">智能体建议</h2>
-                <p className="mt-2 text-sm leading-6 text-muted">{room.recommendation}</p>
-                <p className="mt-3 text-xs text-muted">依据：{room.summary}</p>
+                <p className="mt-2 text-sm leading-6 text-muted">
+                  {room?.recommendation ?? "当前数据源暂无可生成建议的房间状态。"}
+                </p>
+                {room && <p className="mt-3 text-xs text-muted">依据：{room.summary}</p>}
               </div>
             </div>
           </section>
@@ -76,14 +112,14 @@ export default async function DashboardPage() {
               <h2 className="text-base font-semibold">异常事件</h2>
             </div>
             <div className="mt-3 space-y-2">
-              {room.anomalies.length ? (
+              {room?.anomalies.length ? (
                 room.anomalies.map((item) => (
                   <p key={item} className="rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">
                     {item}
                   </p>
                 ))
               ) : (
-                <p className="text-sm leading-6 text-muted">当前模拟房间没有异常。</p>
+                <p className="text-sm leading-6 text-muted">当前{telemetrySourceLabel(source)}没有异常。</p>
               )}
             </div>
           </section>
@@ -123,5 +159,22 @@ export default async function DashboardPage() {
         </section>
       </div>
     </AppShell>
+  );
+}
+
+async function readData<T>(reader: () => Promise<T>): Promise<DataResult<T>> {
+  try {
+    return { data: await reader(), error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : "数据读取失败。" };
+  }
+}
+
+function DataSourceNotice({ title, detail }: { title: string; detail: string }) {
+  return (
+    <section className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+      <p className="font-semibold">{title}</p>
+      <p className="mt-1">{detail}</p>
+    </section>
   );
 }

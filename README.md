@@ -8,7 +8,7 @@
 
 - 公开项目页，说明系统价值与架构。
 - 使用模拟房间数据的私有控制台。
-- 最近 24 小时和 7 天环境趋势。
+- 最近 24 小时和 7 天环境趋势，支持模拟数据和数据库遥测切换。
 - 可选 MQTT 遥测入站服务与 TimescaleDB 存储。
 - 带风险等级的设备清单和可持久化模拟控制。
 - 受工具约束的智能体对话，可在模拟数据和数据库遥测之间切换，并可选调用当前大模型增强分析。
@@ -104,15 +104,16 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
   }'
 ```
 
-查询数据库来源的历史数据：
+查询数据库来源的当前状态和历史数据：
 
 ```bash
+curl "http://localhost:8000/api/room/current?source=database"
 curl "http://localhost:8000/api/sensors/history?metric=co2&source=database&bucket=15m&from=2026-06-04T00:00:00%2B08:00"
 ```
 
 `bucket` 支持 `5m`、`15m`、`1h`、`1d`。mock 和 database 数据源使用同一套时间桶语义；database 数据源会把真实入库读数聚合后返回，避免前端趋势页直接承受原始高频点。
 
-`/agent` 页面也可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，智能体会在工具调用结果中明确说明不可用或为空。
+`/dashboard`、`/trends` 和 `/agent` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。
 
 MQTT 消息示例见 `services/mqtt-ingestor/examples/room-node-message.json`。
 
@@ -127,7 +128,7 @@ npm run test
 ## 当前版本边界
 
 - 数据由确定性模拟器根据时间窗口生成。
-- 数据库和 MQTT 已有本地开发骨架；公开演示默认仍使用模拟数据，Agent 可手动切换到数据库遥测。
+- 数据库和 MQTT 已有本地开发骨架；公开演示默认仍使用模拟数据，控制台总览、趋势页和 Agent 可手动切换到数据库遥测。
 - 规则、审计日志和模拟设备状态保存在 `services/api/.local/`。
 - 智能体可以建议自动化规则，但创建规则必须经过用户确认。
 - 已确认规则可在 `/rules` 手动评估；V0 只触发提醒类动作，不执行设备控制。

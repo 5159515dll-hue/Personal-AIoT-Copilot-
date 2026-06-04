@@ -27,6 +27,7 @@ from app.models import (
 from app.mock_data import query_history
 from app.policy import assess_device_control, validate_rule
 from app.mock_data import get_device
+from app.routes import room as room_route_module
 from app.routes import sensors as sensors_route_module
 from app.time_utils import now
 
@@ -48,6 +49,51 @@ def test_room_current_schema() -> None:
     assert payload["health_score"] >= 0
     assert "co2" in payload["metrics"]
     assert payload["recommendation"]
+
+
+def test_room_current_database_source_uses_latest_readings(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.co2: SensorReading(metric=Metric.co2, value=980, unit="ppm", timestamp=base, device_id="db_node"),
+            Metric.temperature: SensorReading(
+                metric=Metric.temperature,
+                value=25.2,
+                unit="℃",
+                timestamp=base,
+                device_id="db_node",
+            ),
+        }
+
+    monkeypatch.setattr(room_route_module, "latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    response = client.get("/api/room/current", params={"source": "database"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "watch"
+    assert payload["metrics"]["co2"]["value"] == 980
+    assert payload["metrics"]["temperature"]["device_id"] == "db_node"
+    assert "数据库最新读数" in payload["summary"]
+
+
+def test_room_current_database_source_reports_empty_database(monkeypatch) -> None:
+    monkeypatch.setattr(room_route_module, "latest_sensor_readings_db", lambda: {})
+    response = client.get("/api/room/current", params={"source": "database"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metrics"] == {}
+    assert payload["health_score"] == 0
+    assert "数据库暂无当前房间遥测" in payload["anomalies"][0]
+
+
+def test_room_current_database_source_reports_unavailable_database(monkeypatch) -> None:
+    def unavailable_latest_sensor_readings_db():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr(room_route_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    response = client.get("/api/room/current", params={"source": "database"})
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
 
 
 def test_private_api_requires_dashboard_session_when_enabled(monkeypatch) -> None:
