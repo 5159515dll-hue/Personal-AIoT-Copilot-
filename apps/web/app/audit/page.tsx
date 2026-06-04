@@ -14,7 +14,7 @@ export default async function AuditPage() {
     <AppShell>
       <PageHeader
         title="审计日志"
-        description="每次重要智能体回复、控制尝试、策略拒绝和已确认规则创建都可以追溯。"
+        description="每次重要智能体回复、控制尝试、用户确认、策略拒绝和规则活动都可以追溯。"
       />
       {logs.length === 0 ? (
         <EmptyState title="暂无审计日志" detail="使用智能体页面或设备控制功能后，会产生经过策略检查的活动记录。" />

@@ -52,6 +52,15 @@ def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDevi
         intent=request.reason,
     )
     if policy.result == PolicyResult.allowed:
+        if device.requires_confirmation and request.confirmed:
+            record_audit(
+                actor="user",
+                action="confirm_device_control",
+                result="success",
+                details=f"用户已确认控制中风险设备：{device.name} -> {request.state}。",
+                parameters={"device_id": device_id, **request.model_dump()},
+                policy=policy,
+            )
         device = execute_mock_control(device, request.state)
         result = "success"
         details = "模拟设备状态已更新。"

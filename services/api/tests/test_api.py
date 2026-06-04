@@ -401,6 +401,32 @@ def test_device_control_persists_low_risk_mock_state() -> None:
     assert devices["desk_lamp_01"]["current_state"]["power"] == "on"
 
 
+def test_medium_risk_device_control_requires_confirmation_and_records_it() -> None:
+    first_response = client.post(
+        "/api/devices/fan_ir_01/control",
+        json={"state": "on", "confirmed": False, "reason": "短时通风测试"},
+    )
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+    assert first_payload["execution_result"] == "requires_confirmation"
+    assert first_payload["policy"]["requires_confirmation"] is True
+
+    confirmed_response = client.post(
+        "/api/devices/fan_ir_01/control",
+        json={"state": "on", "confirmed": True, "reason": "用户确认短时通风"},
+    )
+    assert confirmed_response.status_code == 200
+    confirmed_payload = confirmed_response.json()
+    assert confirmed_payload["execution_result"] == "success"
+    assert confirmed_payload["device"]["current_state"]["power"] == "on"
+
+    audit_response = client.get("/api/audit-logs")
+    assert audit_response.status_code == 200
+    actions = [item["action"] for item in audit_response.json()]
+    assert "confirm_device_control" in actions
+    assert "control_device" in actions
+
+
 def test_agent_control_persists_mock_device_state() -> None:
     response = client.post("/api/agent/chat", json={"message": "打开台灯"})
     assert response.status_code == 200
@@ -423,6 +449,25 @@ def test_rule_requires_confirmation() -> None:
         )
     )
     assert decision.result == PolicyResult.requires_confirmation
+
+
+def test_rule_creation_records_user_confirmation() -> None:
+    response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1200 ppm",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert response.status_code == 200
+
+    audit_response = client.get("/api/audit-logs")
+    assert audit_response.status_code == 200
+    actions = [item["action"] for item in audit_response.json()]
+    assert "confirm_automation_rule" in actions
+    assert "create_automation_rule" in actions
 
 
 def test_rule_evaluation_triggers_reminder_and_audit_log() -> None:

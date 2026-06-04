@@ -61,6 +61,19 @@ def create_rule(request: AutomationRuleCreate) -> AutomationRule:
     saved = save_rule(rule)
     record_audit(
         actor="user",
+        action="confirm_automation_rule",
+        result="success",
+        details="用户已确认保存简单自动化规则。",
+        parameters={
+            "rule_id": saved.id,
+            "condition": saved.condition,
+            "action": saved.action,
+            "enabled": saved.enabled,
+        },
+        policy=policy,
+    )
+    record_audit(
+        actor="user",
         action="create_automation_rule",
         result="success",
         details="已确认的简单自动化规则已保存。",
