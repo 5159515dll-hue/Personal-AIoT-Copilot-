@@ -13,6 +13,7 @@ import type {
   RuleEvaluation,
   RoomState,
   SensorReading,
+  TelemetryStatus,
   TelemetrySource
 } from "./types";
 
@@ -99,6 +100,10 @@ export async function getSensorHistory(
     params.set("from", from);
   }
   return request<SensorReading[]>(`/api/sensors/history?${params.toString()}`);
+}
+
+export async function getTelemetryStatus(): Promise<TelemetryStatus> {
+  return request<TelemetryStatus>("/api/telemetry/status");
 }
 
 export async function getDevices(): Promise<Device[]> {

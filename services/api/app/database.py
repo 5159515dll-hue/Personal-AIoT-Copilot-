@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from app.models import Metric, SensorReading
+from app.models import Metric, SensorReading, TelemetryStatus
 from app.time_utils import bucket_to_delta, ensure_tz, floor_to_bucket, now
 
 SCHEMA_SQL = """
@@ -124,6 +124,82 @@ def latest_sensor_readings_db(*, url: str | None = None) -> dict[Metric, SensorR
     return {_row_to_reading(row).metric: _row_to_reading(row) for row in rows}
 
 
+def telemetry_status_db(*, url: str | None = None) -> TelemetryStatus:
+    if not (url or database_url()):
+        return TelemetryStatus(
+            configured=False,
+            connected=False,
+            status="unavailable",
+            message="未配置 DATABASE_URL，无法访问时间序列数据库。",
+        )
+
+    try:
+        psycopg = _import_psycopg()
+        dict_row = _dict_row_factory()
+        db_url = _require_url(url)
+        with psycopg.connect(db_url, row_factory=dict_row) as conn:
+            sensor_table_exists = _sensor_table_exists(conn)
+            timescale_available = _extension_available(conn, "timescaledb")
+            timescale_enabled = _extension_enabled(conn, "timescaledb")
+            hypertable = _sensor_table_is_hypertable(conn) if timescale_enabled else False
+
+            if not sensor_table_exists:
+                return TelemetryStatus(
+                    configured=True,
+                    connected=True,
+                    sensor_table_exists=False,
+                    timescale_available=timescale_available,
+                    timescale_enabled=timescale_enabled,
+                    hypertable=hypertable,
+                    status="empty",
+                    message="数据库已连接，但 sensor_readings 表尚未初始化。",
+                )
+
+            summary = conn.execute(
+                """
+                SELECT
+                    COUNT(*)::int AS total_readings,
+                    COUNT(DISTINCT device_id)::int AS device_count,
+                    COUNT(DISTINCT metric)::int AS metric_count,
+                    MAX(time) AS latest_reading_at,
+                    MAX(received_at) AS latest_received_at
+                FROM sensor_readings
+                """
+            ).fetchone()
+            latest_metrics = latest_sensor_readings_db(url=db_url)
+            total = int(summary["total_readings"] or 0)
+            return TelemetryStatus(
+                configured=True,
+                connected=True,
+                sensor_table_exists=True,
+                timescale_available=timescale_available,
+                timescale_enabled=timescale_enabled,
+                hypertable=hypertable,
+                total_readings=total,
+                device_count=int(summary["device_count"] or 0),
+                metric_count=int(summary["metric_count"] or 0),
+                latest_reading_at=summary["latest_reading_at"],
+                latest_received_at=summary["latest_received_at"],
+                latest_metrics=latest_metrics,
+                status="ok" if total else "empty",
+                message="数据库遥测链路已有入库数据。" if total else "数据库已连接，但暂无传感器读数。",
+            )
+    except RuntimeError as exc:
+        return TelemetryStatus(
+            configured=True,
+            connected=False,
+            status="unavailable",
+            message=_clean_error_text(exc),
+        )
+    except Exception:
+        return TelemetryStatus(
+            configured=True,
+            connected=False,
+            status="unavailable",
+            message="数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态。",
+        )
+
+
 def _row_to_reading(row: dict) -> SensorReading:
     return SensorReading(
         metric=Metric(row["metric"]),
@@ -183,6 +259,43 @@ def _dict_row_factory():
     except ModuleNotFoundError as exc:
         raise RuntimeError("未安装 psycopg，无法访问时间序列数据库。请安装 services/api/requirements.txt。") from exc
     return dict_row
+
+
+def _sensor_table_exists(conn) -> bool:
+    row = conn.execute("SELECT to_regclass('public.sensor_readings') AS table_name").fetchone()
+    return bool(row and row["table_name"])
+
+
+def _extension_available(conn, name: str) -> bool:
+    row = conn.execute("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = %s) AS exists", (name,)).fetchone()
+    return bool(row and row["exists"])
+
+
+def _extension_enabled(conn, name: str) -> bool:
+    row = conn.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = %s) AS exists", (name,)).fetchone()
+    return bool(row and row["exists"])
+
+
+def _sensor_table_is_hypertable(conn) -> bool:
+    try:
+        row = conn.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM timescaledb_information.hypertables
+                WHERE hypertable_schema = 'public'
+                  AND hypertable_name = 'sensor_readings'
+            ) AS exists
+            """
+        ).fetchone()
+        return bool(row and row["exists"])
+    except Exception:
+        conn.rollback()
+        return False
+
+
+def _clean_error_text(exc: Exception) -> str:
+    return str(exc).strip().rstrip("。.") + "。"
 
 
 def _try_enable_timescale(conn) -> None:

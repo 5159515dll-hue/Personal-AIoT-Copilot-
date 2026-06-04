@@ -1,15 +1,15 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, FileClock, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRight, Database, FileClock, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { MetricCard } from "@/components/metric-card";
 import { PageHeader } from "@/components/page-header";
 import { RiskPill } from "@/components/risk-pill";
 import { TelemetrySourceSwitch } from "@/components/telemetry-source-switch";
 import { TrendChart } from "@/components/trend-chart";
-import { getAuditLogs, getDevices, getRoomState, getSensorHistory } from "@/lib/api";
+import { getAuditLogs, getDevices, getRoomState, getSensorHistory, getTelemetryStatus } from "@/lib/api";
 import { formatDateTime, statusLabel } from "@/lib/format";
 import { normalizeTelemetrySource, telemetrySourceLabel } from "@/lib/telemetry-source";
-import type { SensorReading } from "@/lib/types";
+import type { SensorReading, TelemetryStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +25,10 @@ type DataResult<T> = {
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const params = await searchParams;
   const source = normalizeTelemetrySource(params?.source);
-  const [roomResult, co2HistoryResult, devices, auditLogs] = await Promise.all([
+  const [roomResult, co2HistoryResult, telemetryResult, devices, auditLogs] = await Promise.all([
     readData(() => getRoomState(source)),
     readData(() => getSensorHistory("co2", "15m", undefined, source)),
+    readData(getTelemetryStatus),
     getDevices(),
     getAuditLogs()
   ]);
@@ -93,6 +94,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </section>
 
         <aside className="space-y-5">
+          <TelemetryStatusCard result={telemetryResult} />
+
           <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 text-teal-700" size={20} aria-hidden />
@@ -177,4 +180,83 @@ function DataSourceNotice({ title, detail }: { title: string; detail: string }) 
       <p className="mt-1">{detail}</p>
     </section>
   );
+}
+
+function TelemetryStatusCard({ result }: { result: DataResult<TelemetryStatus> }) {
+  const status = result.data;
+  const label = status ? telemetryStatusLabel(status.status) : "未知";
+  const badgeClass = status ? telemetryStatusClass(status.status) : "bg-slate-100 text-slate-700";
+
+  return (
+    <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <Database className="mt-0.5 text-teal-700" size={20} aria-hidden />
+          <div>
+            <h2 className="text-base font-semibold">遥测链路</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              {result.error ?? status?.message ?? "遥测状态暂不可用。"}
+            </p>
+          </div>
+        </div>
+        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${badgeClass}`}>{label}</span>
+      </div>
+
+      {status && (
+        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <dt className="text-xs font-semibold text-muted">样本数</dt>
+            <dd className="mt-1 font-medium text-ink">{status.total_readings}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-semibold text-muted">设备 / 指标</dt>
+            <dd className="mt-1 font-medium text-ink">
+              {status.device_count} / {status.metric_count}
+            </dd>
+          </div>
+          <div className="col-span-2">
+            <dt className="text-xs font-semibold text-muted">最新入库</dt>
+            <dd className="mt-1 font-medium text-ink">
+              {status.latest_received_at ? formatDateTime(status.latest_received_at) : "暂无"}
+            </dd>
+          </div>
+          <div className="col-span-2">
+            <dt className="text-xs font-semibold text-muted">Timescale</dt>
+            <dd className="mt-1 font-medium text-ink">{timescaleStatusText(status)}</dd>
+          </div>
+        </dl>
+      )}
+    </section>
+  );
+}
+
+function telemetryStatusLabel(status: TelemetryStatus["status"]): string {
+  const labels = {
+    ok: "正常",
+    empty: "无数据",
+    unavailable: "不可用"
+  };
+  return labels[status];
+}
+
+function telemetryStatusClass(status: TelemetryStatus["status"]): string {
+  const classes = {
+    ok: "bg-teal-50 text-teal-700",
+    empty: "bg-amber-50 text-amber-700",
+    unavailable: "bg-rose-50 text-rose-700"
+  };
+  return classes[status];
+}
+
+function timescaleStatusText(status: TelemetryStatus): string {
+  if (status.hypertable) {
+    return "时序表已启用";
+  }
+  if (status.timescale_enabled) {
+    return "扩展已启用，当前表未转换";
+  }
+  if (status.timescale_available) {
+    return "扩展可用，尚未启用";
+  }
+  return "扩展不可用，使用 PostgreSQL 表";
 }

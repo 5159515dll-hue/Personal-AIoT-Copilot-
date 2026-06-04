@@ -26,6 +26,7 @@ from app.models import (
     ProviderProtocol,
     RiskLevel,
     SensorReading,
+    TelemetryStatus,
     ToolCall,
 )
 from app.mock_data import query_history
@@ -34,6 +35,7 @@ from app.mock_data import get_device
 from app.routes import ingest as ingest_route_module
 from app.routes import room as room_route_module
 from app.routes import sensors as sensors_route_module
+from app.routes import telemetry as telemetry_route_module
 from app.time_utils import now
 from ingestor.main import mqtt_reason_code_succeeded
 
@@ -135,6 +137,45 @@ def test_health_endpoint_stays_public_when_auth_enabled(monkeypatch) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_telemetry_status_reports_unconfigured_database(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    response = client.get("/api/telemetry/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["configured"] is False
+    assert payload["connected"] is False
+    assert payload["status"] == "unavailable"
+    assert "DATABASE_URL" in payload["message"]
+
+
+def test_telemetry_status_route_returns_structured_summary(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_status():
+        return TelemetryStatus(
+            configured=True,
+            connected=True,
+            sensor_table_exists=True,
+            total_readings=5,
+            device_count=1,
+            metric_count=5,
+            latest_reading_at=base,
+            latest_received_at=base,
+            latest_metrics={
+                Metric.co2: SensorReading(metric=Metric.co2, value=930, unit="ppm", timestamp=base, device_id="db_node")
+            },
+            status="ok",
+            message="数据库遥测链路已有入库数据。",
+        )
+
+    monkeypatch.setattr(telemetry_route_module, "telemetry_status_db", fake_status)
+    response = client.get("/api/telemetry/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_readings"] == 5
+    assert payload["latest_metrics"]["co2"]["value"] == 930
 
 
 def test_sensor_history_rejects_bad_bucket() -> None:

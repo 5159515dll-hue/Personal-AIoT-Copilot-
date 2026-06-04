@@ -19,6 +19,24 @@ export type RoomState = {
   recommendation: string;
 };
 
+export type TelemetryStatus = {
+  source: "database";
+  configured: boolean;
+  connected: boolean;
+  sensor_table_exists: boolean;
+  timescale_available: boolean;
+  timescale_enabled: boolean;
+  hypertable: boolean;
+  total_readings: number;
+  device_count: number;
+  metric_count: number;
+  latest_reading_at: string | null;
+  latest_received_at: string | null;
+  latest_metrics: Partial<Record<MetricName, SensorReading>>;
+  status: "ok" | "empty" | "unavailable";
+  message: string;
+};
+
 export type Device = {
   id: string;
   name: string;

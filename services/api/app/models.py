@@ -66,6 +66,24 @@ class SensorIngestResponse(BaseModel):
     message: str
 
 
+class TelemetryStatus(BaseModel):
+    source: Literal["database"] = "database"
+    configured: bool
+    connected: bool
+    sensor_table_exists: bool = False
+    timescale_available: bool = False
+    timescale_enabled: bool = False
+    hypertable: bool = False
+    total_readings: int = 0
+    device_count: int = 0
+    metric_count: int = 0
+    latest_reading_at: datetime | None = None
+    latest_received_at: datetime | None = None
+    latest_metrics: dict[Metric, SensorReading] = Field(default_factory=dict)
+    status: Literal["ok", "empty", "unavailable"]
+    message: str
+
+
 class RoomState(BaseModel):
     timestamp: datetime
     health_score: int = Field(ge=0, le=100)
