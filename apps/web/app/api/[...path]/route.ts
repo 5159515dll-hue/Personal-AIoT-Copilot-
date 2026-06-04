@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { DASHBOARD_SESSION_COOKIE, dashboardAccessCode, sessionTokenFor } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,10 @@ export async function DELETE(request: NextRequest, context: ApiProxyContext) {
 
 async function proxyApiRequest(request: NextRequest, context: ApiProxyContext): Promise<Response> {
   const { path } = await context.params;
+  const authFailure = await validateProxyAccess(request, path);
+  if (authFailure) {
+    return authFailure;
+  }
   const target = apiTargetUrl(path, request.nextUrl.search);
   const headers = proxyRequestHeaders(request);
   const body = await proxyRequestBody(request);
@@ -62,6 +67,25 @@ async function proxyApiRequest(request: NextRequest, context: ApiProxyContext): 
       { status: 502 }
     );
   }
+}
+
+async function validateProxyAccess(request: NextRequest, path: string[]): Promise<Response | null> {
+  if (path.join("/") === "health") {
+    return null;
+  }
+
+  const accessCode = dashboardAccessCode();
+  if (!accessCode) {
+    return null;
+  }
+
+  const expectedToken = await sessionTokenFor(accessCode);
+  const currentToken = request.cookies.get(DASHBOARD_SESSION_COOKIE)?.value;
+  if (currentToken === expectedToken) {
+    return null;
+  }
+
+  return Response.json({ detail: "私有接口需要先通过控制台访问口令验证。" }, { status: 401 });
 }
 
 function apiTargetUrl(path: string[], search: string): string {
