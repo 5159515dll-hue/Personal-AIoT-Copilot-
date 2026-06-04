@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from app.auth import api_auth_enabled, is_public_api_path, request_is_authorized
 from app.routes import agent, audit_logs, devices, ingest, model_providers, room, rules, sensors
 
 app = FastAPI(
@@ -19,6 +21,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def protect_private_api(request: Request, call_next):
+    if (
+        api_auth_enabled()
+        and request.url.path.startswith("/api/")
+        and not is_public_api_path(request.url.path)
+        and request.method != "OPTIONS"
+        and not request_is_authorized(request)
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "私有接口需要先通过控制台访问验证。"},
+        )
+    return await call_next(request)
+
 
 app.include_router(room.router)
 app.include_router(sensors.router)

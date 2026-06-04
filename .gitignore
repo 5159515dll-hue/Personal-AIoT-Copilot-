@@ -6,6 +6,8 @@ build/
 coverage/
 .env
 .env.local
+.dashboard-access-code
+.dashboard-env
 .venv/
 __pycache__/
 .pytest_cache/

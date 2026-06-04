@@ -1,0 +1,35 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  DASHBOARD_SESSION_COOKIE,
+  dashboardAccessCode,
+  isProtectedDashboardPath,
+  sessionTokenFor
+} from "./lib/auth";
+
+export async function middleware(request: NextRequest) {
+  const { pathname, search } = request.nextUrl;
+  if (!isProtectedDashboardPath(pathname)) {
+    return NextResponse.next();
+  }
+
+  const accessCode = dashboardAccessCode();
+  if (!accessCode) {
+    return NextResponse.next();
+  }
+
+  const expectedToken = await sessionTokenFor(accessCode);
+  const currentToken = request.cookies.get(DASHBOARD_SESSION_COOKIE)?.value;
+  if (currentToken === expectedToken) {
+    return NextResponse.next();
+  }
+
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = "/access";
+  loginUrl.search = "";
+  loginUrl.searchParams.set("next", `${pathname}${search}`);
+  return NextResponse.redirect(loginUrl);
+}
+
+export const config = {
+  matcher: ["/dashboard/:path*", "/trends/:path*", "/devices/:path*", "/agent/:path*", "/models/:path*", "/rules/:path*", "/audit/:path*"]
+};

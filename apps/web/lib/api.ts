@@ -13,15 +13,31 @@ import type {
   SensorReading
 } from "./types";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.API_BASE_URL ?? "http://localhost:8000";
+function configured(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.replace(/\/$/, "") : null;
+}
+
+function apiBaseUrl(): string {
+  const publicBaseUrl = configured(process.env.NEXT_PUBLIC_API_BASE_URL);
+  if (typeof window !== "undefined") {
+    if (publicBaseUrl) {
+      return publicBaseUrl;
+    }
+    return ["localhost", "127.0.0.1"].includes(window.location.hostname) ? "http://localhost:8000" : "";
+  }
+  return configured(process.env.API_BASE_URL) ?? publicBaseUrl ?? "http://localhost:8000";
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const internalToken = process.env.AIOT_INTERNAL_API_TOKEN;
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
     ...init,
     cache: "no-store",
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
+      ...(internalToken ? { "X-AIoT-Internal-Token": internalToken } : {}),
       ...(init?.headers ?? {})
     }
   });

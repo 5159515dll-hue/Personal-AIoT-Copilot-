@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
 from app.ingestion import parse_mqtt_payload
 from app.main import app
 from app.models import Metric, PolicyResult, RiskLevel
@@ -19,6 +20,41 @@ def test_room_current_schema() -> None:
     assert payload["health_score"] >= 0
     assert "co2" in payload["metrics"]
     assert payload["recommendation"]
+
+
+def test_private_api_requires_dashboard_session_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
+    response = client.get("/api/room/current")
+    assert response.status_code == 401
+    assert "私有接口" in response.json()["detail"]
+
+
+def test_private_api_accepts_dashboard_session_cookie(monkeypatch) -> None:
+    access_code = "local-test-code"
+    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", access_code)
+    auth_client = TestClient(app)
+    auth_client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for(access_code))
+    response = auth_client.get("/api/room/current")
+    assert response.status_code == 200
+    assert response.json()["health_score"] >= 0
+
+
+def test_private_api_accepts_internal_service_token(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
+    monkeypatch.setenv("AIOT_INTERNAL_API_TOKEN", "internal-test-token")
+    response = client.get(
+        "/api/room/current",
+        headers={INTERNAL_API_TOKEN_HEADER: "internal-test-token"},
+    )
+    assert response.status_code == 200
+    assert response.json()["health_score"] >= 0
+
+
+def test_health_endpoint_stays_public_when_auth_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
 
 
 def test_sensor_history_rejects_bad_bucket() -> None:

@@ -4,6 +4,7 @@
 
 ```text
 前端控制台
+  -> 访问口令会话
   -> 后端接口
     -> 确定性模拟遥测
     -> HTTP 传感器写入接口
@@ -17,7 +18,9 @@
 ## 运行模块
 
 - `apps/web`：公开项目页和控制台。
+- `apps/web/middleware.ts`：保护私有控制台路由，公开项目页不拦截。
 - `services/api/app/routes`：前端使用的后端接口。
+- `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
 - `services/api/app/mock_data.py`：确定性传感器与设备数据。
 - `services/api/app/ingestion.py`：HTTP 与 MQTT payload 转换为统一传感器读数。
 - `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、写入和查询。

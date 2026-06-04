@@ -1,0 +1,40 @@
+export const DASHBOARD_SESSION_COOKIE = "aiot_dashboard_session";
+
+export const protectedDashboardRoutes = [
+  "/dashboard",
+  "/trends",
+  "/devices",
+  "/agent",
+  "/models",
+  "/rules",
+  "/audit"
+];
+
+export function dashboardAccessCode(): string | null {
+  const value = process.env.DASHBOARD_ACCESS_CODE?.trim();
+  return value ? value : null;
+}
+
+export function isDashboardAuthEnabled(): boolean {
+  return dashboardAccessCode() !== null;
+}
+
+export function isProtectedDashboardPath(pathname: string): boolean {
+  return protectedDashboardRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
+export function safeNextPath(value: FormDataEntryValue | string | null | undefined): string {
+  const raw = typeof value === "string" ? value : "";
+  if (!raw.startsWith("/") || raw.startsWith("//")) {
+    return "/dashboard";
+  }
+  const pathname = raw.split("?")[0] || "/dashboard";
+  return isProtectedDashboardPath(pathname) ? raw : "/dashboard";
+}
+
+export async function sessionTokenFor(accessCode: string): Promise<string> {
+  const secret = process.env.DASHBOARD_SESSION_SECRET?.trim() || "personal-aiot-copilot-dashboard";
+  const bytes = new TextEncoder().encode(`aiot-copilot:${secret}:${accessCode}`);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}

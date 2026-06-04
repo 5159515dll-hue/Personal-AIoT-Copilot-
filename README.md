@@ -7,7 +7,7 @@
 ## 当前版本展示内容
 
 - 公开项目页，说明系统价值与架构。
-- 使用模拟房间数据的控制台。
+- 使用模拟房间数据的私有控制台。
 - 最近 24 小时和 7 天环境趋势。
 - 可选 MQTT 遥测入站服务与 TimescaleDB 存储。
 - 带风险等级的设备清单和模拟控制。
@@ -42,6 +42,26 @@ npm run dev
 
 - 前端页面：http://localhost:3000
 - 后端接口文档：http://localhost:8000/docs
+
+## 私有控制台访问
+
+本地开发默认不启用访问保护。部署到公网时应设置以下环境变量：
+
+```bash
+export DASHBOARD_ACCESS_CODE="替换为控制台口令"
+export DASHBOARD_SESSION_SECRET="替换为随机会话密钥"
+export AIOT_INTERNAL_API_TOKEN="替换为内部服务令牌"
+export DASHBOARD_COOKIE_SECURE="false"
+```
+
+启用后：
+
+- `/` 公开项目页继续开放。
+- `/dashboard`、`/trends`、`/devices`、`/agent`、`/models`、`/rules`、`/audit` 会跳转到 `/access`。
+- `/api/health` 保持公开健康检查。
+- 其他 `/api/*` 私有接口需要登录 cookie，或由 Web 服务携带内部服务令牌访问。
+
+如果部署到 HTTPS 域名，可以把 `DASHBOARD_COOKIE_SECURE` 设为 `true`。当前 IP 直连 HTTP 部署应保持 `false`。
 
 ## 可选遥测入站
 
