@@ -4,6 +4,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from app.audit import record_audit
+from app.database import latest_sensor_readings_db, query_sensor_history_db
 from app.mock_data import current_room_state, get_device, query_history, summarize_metric
 from app.model_providers import generate_agent_reply
 from app.models import (
@@ -26,6 +27,7 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
     message = request.message.strip()
     session_id = request.session_id or f"session_{uuid4().hex[:10]}"
     lowered = message.lower()
+    data_source = request.data_source
     tool_calls: list[ToolCall] = []
     used_data: list[str] = []
     needs_confirmation = False
@@ -139,6 +141,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
 
     if _mentions_co2_or_environment(lowered):
+        if data_source == "database":
+            return await _database_environment_response(
+                session_id=session_id,
+                message=message,
+                used_data=used_data,
+                tool_calls=tool_calls,
+                needs_confirmation=needs_confirmation,
+                policy=policy,
+                rule_draft=rule_draft,
+            )
+
         room = current_room_state()
         co2_summary = summarize_metric(Metric.co2)
         used_data.extend(["current_room_state", "co2_24h_summary"])
@@ -177,6 +190,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
 
     if "7" in lowered or "week" in lowered or "一周" in lowered:
+        if data_source == "database":
+            return await _database_weekly_response(
+                session_id=session_id,
+                message=message,
+                used_data=used_data,
+                tool_calls=tool_calls,
+                needs_confirmation=needs_confirmation,
+                policy=policy,
+                rule_draft=rule_draft,
+            )
+
         end_ts = now()
         readings = query_history(Metric.co2, end_ts - timedelta(days=7), end_ts, "1h")
         values = [reading.value for reading in readings]
@@ -205,6 +229,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             rule_draft,
         )
 
+    if data_source == "database":
+        return await _database_environment_response(
+            session_id=session_id,
+            message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
     room = current_room_state()
     used_data.append("current_room_state")
     tool_calls.append(
@@ -231,6 +266,124 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
     )
 
 
+async def _database_environment_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    end_ts = now()
+    start_ts = end_ts - timedelta(hours=24)
+    used_data.extend(["database_latest_sensor_readings", "database_co2_24h_history"])
+    try:
+        latest = latest_sensor_readings_db()
+        readings = query_sensor_history_db(Metric.co2, start_ts, end_ts, bucket="15m")
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="get_current_room_state",
+                parameters={"source": "database"},
+                result={"source": "database", "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"数据库数据源暂不可用：{error_text}。可以切回模拟数据继续演示，或配置 DATABASE_URL 后再查询真实遥测。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    latest_payload = {
+        metric.value: reading.model_dump(mode="json")
+        for metric, reading in latest.items()
+    }
+    tool_calls.append(
+        ToolCall(
+            name="get_current_room_state",
+            parameters={"source": "database"},
+            result={
+                "source": "database",
+                "status": "ok" if latest_payload else "empty",
+                "metrics": latest_payload,
+            },
+            created_at=now(),
+        )
+    )
+    summary = _summarize_readings(readings)
+    tool_calls.append(
+        ToolCall(
+            name="query_sensor_history",
+            parameters={"source": "database", "metric": "co2", "period": "last_24_hours", "bucket": "15m"},
+            result=summary,
+            created_at=now(),
+        )
+    )
+
+    latest_co2 = latest.get(Metric.co2)
+    if not latest_co2 and not readings:
+        reply = "数据库数据源当前没有可用的二氧化碳读数。请确认 MQTT 入站服务和 TimescaleDB 写入链路已经启动。"
+    elif latest_co2 and summary["samples"]:
+        reply = (
+            f"数据库最新二氧化碳读数为 {latest_co2.value:.0f} {latest_co2.unit}。"
+            f"最近 24 小时数据库曲线平均值为 {summary['avg']} ppm，峰值为 {summary['max']} ppm。"
+        )
+    elif latest_co2:
+        reply = f"数据库最新二氧化碳读数为 {latest_co2.value:.0f} {latest_co2.unit}，但最近 24 小时历史曲线暂无可聚合样本。"
+    else:
+        reply = "数据库有历史曲线样本，但当前最新读数缺少二氧化碳指标。请检查 MQTT payload 的 metric 字段。"
+
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
+async def _database_weekly_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    end_ts = now()
+    start_ts = end_ts - timedelta(days=7)
+    used_data.append("database_co2_7d_hourly")
+    try:
+        readings = query_sensor_history_db(Metric.co2, start_ts, end_ts, bucket="1h")
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="query_sensor_history",
+                parameters={"source": "database", "metric": "co2", "period": "last_7_days", "bucket": "1h"},
+                result={"source": "database", "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"数据库 7 天趋势暂不可用：{error_text}。可以切回模拟数据，或先启动数据库和 MQTT 入站链路。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    summary = _summarize_readings(readings)
+    tool_calls.append(
+        ToolCall(
+            name="query_sensor_history",
+            parameters={"source": "database", "metric": "co2", "period": "last_7_days", "bucket": "1h"},
+            result=summary,
+            created_at=now(),
+        )
+    )
+    if summary["samples"]:
+        reply = (
+            f"数据库 7 天趋势已有 {summary['samples']} 个小时级样本，"
+            f"平均值为 {summary['avg']} ppm，峰值为 {summary['max']} ppm。"
+        )
+    else:
+        reply = "数据库 7 天趋势暂无二氧化碳样本。请确认传感器数据已经通过 MQTT 或 HTTP 入库。"
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> ToolCall:
     device = get_device(device_id)
     policy = assess_device_control(
@@ -255,6 +408,29 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> T
         policy=policy,
         created_at=now(),
     )
+
+
+def _summarize_readings(readings: list) -> dict[str, float | int | str]:
+    if not readings:
+        return {"status": "empty", "min": 0, "max": 0, "avg": 0, "samples": 0}
+    values = [reading.value for reading in readings]
+    return {
+        "status": "ok",
+        "min": min(values),
+        "max": max(values),
+        "avg": round(sum(values) / len(values), 1),
+        "samples": len(values),
+    }
+
+
+def _clean_error_text(exc: Exception) -> str:
+    return str(exc).strip().rstrip("。.")
+
+
+def _database_error_text(exc: Exception) -> str:
+    if isinstance(exc, RuntimeError):
+        return _clean_error_text(exc)
+    return "数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态"
 
 
 async def _response(

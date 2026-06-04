@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Bot, BrainCircuit, Send, ShieldCheck, Wrench } from "lucide-react";
+import { Bot, BrainCircuit, Database, Send, ShieldCheck, Wrench } from "lucide-react";
 import { chat } from "@/lib/api";
-import type { AgentChatResponse } from "@/lib/types";
+import type { AgentChatResponse, AgentDataSource } from "@/lib/types";
 
 const prompts = [
   "今天二氧化碳情况怎么样？",
@@ -15,6 +15,7 @@ const prompts = [
 export function AgentConsole() {
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [input, setInput] = useState(prompts[0]);
+  const [dataSource, setDataSource] = useState<AgentDataSource>("mock");
   const [responses, setResponses] = useState<AgentChatResponse[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +25,7 @@ export function AgentConsole() {
     setPending(true);
     setError(null);
     try {
-      const response = await chat(message, sessionId);
+      const response = await chat(message, sessionId, dataSource);
       setSessionId(response.session_id);
       setResponses((current) => [response, ...current]);
       setInput("");
@@ -43,14 +44,17 @@ export function AgentConsole() {
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-3 border-b border-line pb-4">
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
-            <Bot size={20} aria-hidden />
-          </span>
-          <div>
-            <h2 className="text-base font-semibold">受约束的智能体对话</h2>
-            <p className="text-sm text-muted">每个动作都会经过工具、策略和审计链路。</p>
+        <div className="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
+              <Bot size={20} aria-hidden />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold">受约束的智能体对话</h2>
+              <p className="text-sm text-muted">每个动作都会经过工具、策略和审计链路。</p>
+            </div>
           </div>
+          <DataSourceSwitch value={dataSource} onChange={setDataSource} />
         </div>
 
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -143,6 +147,41 @@ export function AgentConsole() {
           )) ?? <p className="text-sm leading-6 text-muted">第一次智能体回复后会显示工具依据。</p>}
         </div>
       </aside>
+    </div>
+  );
+}
+
+function DataSourceSwitch({
+  value,
+  onChange
+}: {
+  value: AgentDataSource;
+  onChange: (value: AgentDataSource) => void;
+}) {
+  const options: Array<{ value: AgentDataSource; label: string; icon: typeof Bot }> = [
+    { value: "mock", label: "模拟数据", icon: Bot },
+    { value: "database", label: "数据库遥测", icon: Database }
+  ];
+
+  return (
+    <div className="inline-flex rounded-lg border border-line bg-slate-50 p-1">
+      {options.map((option) => {
+        const Icon = option.icon;
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`focus-ring inline-flex h-9 items-center gap-2 rounded-md px-3 text-xs font-semibold ${
+              active ? "bg-white text-teal-700 shadow-sm" : "text-slate-600 hover:text-ink"
+            }`}
+          >
+            <Icon size={14} aria-hidden />
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

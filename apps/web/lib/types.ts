@@ -108,6 +108,8 @@ export type AgentChatResponse = {
   rule_draft: AutomationRuleCreate | null;
 };
 
+export type AgentDataSource = "mock" | "database";
+
 export type AuditLog = {
   id: string;
   timestamp: string;

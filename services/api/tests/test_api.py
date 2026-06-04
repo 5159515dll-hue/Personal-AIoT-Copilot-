@@ -109,6 +109,24 @@ def test_database_history_rejects_bad_bucket_before_database_lookup() -> None:
     assert "bucket" in response.json()["detail"]
 
 
+def test_database_history_reports_missing_database_dependency(monkeypatch) -> None:
+    def missing_psycopg():
+        raise RuntimeError("未安装 psycopg，无法访问时间序列数据库。")
+
+    monkeypatch.setattr(database_module, "_import_psycopg", missing_psycopg)
+    response = client.get(
+        "/api/sensors/history",
+        params={
+            "metric": "co2",
+            "source": "database",
+            "bucket": "15m",
+            "from": now().isoformat(),
+        },
+    )
+    assert response.status_code == 503
+    assert "psycopg" in response.json()["detail"]
+
+
 def test_database_history_passes_bucket_to_database_query(monkeypatch) -> None:
     captured = {}
 
@@ -321,6 +339,78 @@ def test_agent_environment_uses_tools() -> None:
     assert payload["tool_calls"]
     assert "二氧化碳" in payload["message"]["content"]
     assert payload["model_usage"]["status"] == "not_configured"
+
+
+def test_agent_database_source_uses_database_tools(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+    captured = {}
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.co2: SensorReading(
+                metric=Metric.co2,
+                value=890,
+                unit="ppm",
+                timestamp=base,
+                device_id="room_node_db",
+            )
+        }
+
+    def fake_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        captured["metric"] = metric
+        captured["bucket"] = bucket
+        return [
+            SensorReading(metric=Metric.co2, value=800, unit="ppm", timestamp=base - timedelta(minutes=15)),
+            SensorReading(metric=Metric.co2, value=1000, unit="ppm", timestamp=base),
+        ]
+
+    monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    monkeypatch.setattr("app.agent_tools.query_sensor_history_db", fake_query_sensor_history_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "今天二氧化碳情况怎么样？", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "数据库最新二氧化碳读数" in payload["message"]["content"]
+    assert "database_latest_sensor_readings" in payload["used_data"]
+    assert payload["tool_calls"][0]["parameters"]["source"] == "database"
+    assert payload["tool_calls"][1]["parameters"]["source"] == "database"
+    assert payload["tool_calls"][1]["result"]["avg"] == 900
+    assert captured == {"metric": Metric.co2, "bucket": "15m"}
+
+
+def test_agent_database_source_reports_unavailable_database(monkeypatch) -> None:
+    def unavailable_latest_sensor_readings_db():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "今天二氧化碳情况怎么样？", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "数据库数据源暂不可用" in payload["message"]["content"]
+    assert payload["tool_calls"][0]["result"]["status"] == "unavailable"
+    assert payload["tool_calls"][0]["parameters"]["source"] == "database"
+
+
+def test_agent_database_source_sanitizes_connection_errors(monkeypatch) -> None:
+    def broken_latest_sensor_readings_db():
+        raise ConnectionError("connection refused with password=secret")
+
+    monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", broken_latest_sensor_readings_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "今天二氧化碳情况怎么样？", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "数据库连接或查询失败" in payload["message"]["content"]
+    assert "password=secret" not in payload["message"]["content"]
+    assert payload["tool_calls"][0]["result"]["status"] == "unavailable"
+    assert payload["tool_calls"][0]["result"]["error"] == "数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态"
 
 
 def test_agent_can_use_current_model_after_tools(monkeypatch) -> None:

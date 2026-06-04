@@ -47,11 +47,11 @@
 2. `services/mqtt-ingestor` 解析 batch、单指标或 metric map payload。
 3. 入站服务将读数写入 `sensor_readings` 表。
 4. `GET /api/sensors/history?source=database&bucket=15m&from=...` 从数据库读取并聚合历史曲线。
-5. 默认 dashboard 仍使用 mock 数据，避免公开演示依赖真实隐私数据。
+5. `/agent` 可选择 database 数据源，用入库最新读数和历史曲线回答环境问题。
+6. 默认 dashboard 仍使用 mock 数据，避免公开演示依赖真实隐私数据。
 
 ## 下一阶段替换点
 
 - 用数据库设备注册表替换静态设备清单。
-- 让 Agent 工具按用户选择从 mock 或 database 数据源读取。
 - 用 PostgreSQL 或 TimescaleDB 替换本地规则与审计 JSON 持久化。
 - 保持智能体、策略和审计接口稳定。

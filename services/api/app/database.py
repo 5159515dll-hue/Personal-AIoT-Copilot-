@@ -31,8 +31,7 @@ def database_url() -> str | None:
 
 
 def init_db(url: str | None = None) -> None:
-    import psycopg
-
+    psycopg = _import_psycopg()
     db_url = _require_url(url)
     with psycopg.connect(db_url, autocommit=True) as conn:
         _try_enable_timescale(conn)
@@ -52,8 +51,7 @@ def insert_sensor_readings(
     if not readings:
         return 0
 
-    import psycopg
-
+    psycopg = _import_psycopg()
     db_url = _require_url(url)
     rows = [
         (
@@ -92,9 +90,8 @@ def query_sensor_history_db(
 ) -> list[SensorReading]:
     bucket_to_delta(bucket)
 
-    import psycopg
-    from psycopg.rows import dict_row
-
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
     db_url = _require_url(url)
     with psycopg.connect(db_url, row_factory=dict_row) as conn:
         rows = conn.execute(
@@ -113,9 +110,8 @@ def query_sensor_history_db(
 
 
 def latest_sensor_readings_db(*, url: str | None = None) -> dict[Metric, SensorReading]:
-    import psycopg
-    from psycopg.rows import dict_row
-
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
     db_url = _require_url(url)
     with psycopg.connect(db_url, row_factory=dict_row) as conn:
         rows = conn.execute(
@@ -171,6 +167,22 @@ def _require_url(url: str | None) -> str:
     if not db_url:
         raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
     return db_url
+
+
+def _import_psycopg():
+    try:
+        import psycopg
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("未安装 psycopg，无法访问时间序列数据库。请安装 services/api/requirements.txt。") from exc
+    return psycopg
+
+
+def _dict_row_factory():
+    try:
+        from psycopg.rows import dict_row
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("未安装 psycopg，无法访问时间序列数据库。请安装 services/api/requirements.txt。") from exc
+    return dict_row
 
 
 def _try_enable_timescale(conn) -> None:

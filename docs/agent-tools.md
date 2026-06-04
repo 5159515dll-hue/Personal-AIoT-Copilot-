@@ -1,11 +1,11 @@
 # 智能体工具
 
-当前版本智能体是工具优先实现。工具调用和策略判断由后端确定性执行，当前大模型只在这些结果之后参与自然语言分析。
+当前版本智能体是工具优先实现。工具调用和策略判断由后端确定性执行，当前大模型只在这些结果之后参与自然语言分析。Agent 请求支持 `data_source=mock|database`，默认使用模拟数据，切换到 database 时会读取 TimescaleDB 最新读数和聚合历史曲线。
 
 ## 已实现工具
 
-- `get_current_room_state`：返回当前模拟房间指标、健康分、异常和建议。
-- `query_sensor_history`：返回二氧化碳等指标的聚合证据。
+- `get_current_room_state`：返回当前房间指标；mock 使用确定性模拟器，database 使用入库最新读数。
+- `query_sensor_history`：返回二氧化碳等指标的聚合证据；mock 和 database 使用同一套 bucket 语义。
 - `create_automation_rule`：只创建草案；保存必须通过用户确认。
 - `control_device`：将设备动作请求送入策略引擎和审计日志。
 - `policy_check`：记录提示注入或绕过策略的拒绝决定。

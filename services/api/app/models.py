@@ -142,6 +142,7 @@ class RuleEvaluation(BaseModel):
 class AgentChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     session_id: str | None = None
+    data_source: Literal["mock", "database"] = "mock"
 
 
 class ToolCall(BaseModel):

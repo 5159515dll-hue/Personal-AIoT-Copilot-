@@ -1,4 +1,5 @@
 import type {
+  AgentDataSource,
   AgentChatResponse,
   AuditLog,
   AutomationRule,
@@ -25,7 +26,13 @@ function apiBaseUrl(): string {
     if (publicBaseUrl) {
       return publicBaseUrl;
     }
-    return ["localhost", "127.0.0.1"].includes(window.location.hostname) ? "http://localhost:8000" : "";
+    if (window.location.hostname === "127.0.0.1") {
+      return "http://127.0.0.1:8000";
+    }
+    if (window.location.hostname === "localhost") {
+      return "http://localhost:8000";
+    }
+    return "";
   }
   return configured(process.env.API_BASE_URL) ?? publicBaseUrl ?? "http://localhost:8000";
 }
@@ -100,10 +107,10 @@ export async function evaluateRules(): Promise<RuleEvaluation[]> {
   });
 }
 
-export async function chat(message: string, sessionId?: string): Promise<AgentChatResponse> {
+export async function chat(message: string, sessionId?: string, dataSource: AgentDataSource = "mock"): Promise<AgentChatResponse> {
   return request<AgentChatResponse>("/api/agent/chat", {
     method: "POST",
-    body: JSON.stringify({ message, session_id: sessionId })
+    body: JSON.stringify({ message, session_id: sessionId, data_source: dataSource })
   });
 }
 
