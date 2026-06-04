@@ -70,13 +70,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               当前版本不会控制真实物理设备。
             </p>
           </div>
-          <Link
+          <a
             href="/access/logout"
             className="focus-ring flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             <LogOut size={16} aria-hidden />
             退出控制台
-          </Link>
+          </a>
         </div>
       </aside>
 
@@ -96,10 +96,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <span className="h-2 w-2 rounded-full bg-teal-500" aria-hidden />
                 <span className="font-medium text-slate-700">接口正常</span>
               </span>
-              <Link href="/access/logout" className="focus-ring inline-flex items-center gap-1 font-semibold text-slate-500 hover:text-ink">
+              <a href="/access/logout" className="focus-ring inline-flex items-center gap-1 font-semibold text-slate-500 hover:text-ink">
                 <LogOut size={14} aria-hidden />
                 退出
-              </Link>
+              </a>
             </div>
           </div>
           <nav className="flex gap-1 overflow-x-auto border-t border-line px-3 py-2 lg:hidden" aria-label="移动端控制台">
