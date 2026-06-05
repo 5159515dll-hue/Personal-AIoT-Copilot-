@@ -57,8 +57,13 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     () => switchProvider.endpoints.find((item) => item.id === switchEndpointId) ?? switchProvider.endpoints[0],
     [switchEndpointId, switchProvider]
   );
-  const switchModelOptions = useMemo(() => uniqueModelOptions(switchProvider.models, activeConfig?.model), [
+  const switchModelOptions = useMemo(() => uniqueModelOptions(
+    switchProvider.models,
+    activeConfig?.provider_id === switchProvider.id ? activeConfig.model : undefined
+  ), [
     activeConfig?.model,
+    activeConfig?.provider_id,
+    switchProvider.id,
     switchProvider.models
   ]);
   const activeProvider = useMemo(
@@ -355,7 +360,9 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
                 className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
               >
                 {switchModelOptions.map((item) => (
-                  <option key={item} value={item} />
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
                 ))}
               </select>
               <span className="mt-2 block text-xs leading-5 text-muted">模型切换不会要求重新输入接口密钥。</span>
