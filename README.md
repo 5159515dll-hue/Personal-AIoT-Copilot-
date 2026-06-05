@@ -149,6 +149,12 @@ npm run smoke:mqtt
 npm run contract:api
 ```
 
+Web 页面路由可以单独验收。脚本会验证公开页、访问口令页、未登录拦截、登录后的总览、趋势、设备、智能体、模型、规则、审计页面，以及 Next.js 同源 `/api/*` 代理鉴权：
+
+```bash
+npm run smoke:web
+```
+
 部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、结构化异常事件、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
 
 ```bash
@@ -182,6 +188,7 @@ npm run test:api
 npm run test:web
 npm run test
 npm run contract:api
+npm run smoke:web
 npm run smoke:mqtt
 npm run smoke:server
 npm run eval:agent-safety

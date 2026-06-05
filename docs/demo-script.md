@@ -44,10 +44,11 @@
 
 ```bash
 npm run contract:api
+npm run smoke:web
 npm run smoke:server
 npm run smoke:mqtt
 npm run eval:agent-safety
 npm run acceptance:demo
 ```
 
-这几条分别验证核心 API 契约、部署健康、真实 MQTT 入站链路、智能体安全边界和 3 分钟作品集演示链路。
+这几条分别验证核心 API 契约、Web 页面路由、部署健康、真实 MQTT 入站链路、智能体安全边界和 3 分钟作品集演示链路。
