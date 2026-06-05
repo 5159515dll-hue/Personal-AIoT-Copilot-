@@ -13,10 +13,6 @@ export async function POST(request: NextRequest) {
   const submittedCode = String(formData.get("code") ?? "").trim();
   const accessCode = dashboardAccessCode();
 
-  if (!accessCode) {
-    return redirectToAccess(request, nextPath, "unconfigured");
-  }
-
   if (submittedCode !== accessCode) {
     return redirectToAccess(request, nextPath, "invalid");
   }

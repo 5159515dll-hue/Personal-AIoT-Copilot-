@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
-import { dashboardAccessCode, safeNextPath } from "@/lib/auth";
+import { safeNextPath } from "@/lib/auth";
 
 type AccessPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -8,7 +8,6 @@ type AccessPageProps = {
 
 const errorText: Record<string, string> = {
   invalid: "访问口令不正确，请重新输入。",
-  unconfigured: "当前环境尚未配置控制台访问口令。",
 };
 
 export default async function AccessPage({ searchParams }: AccessPageProps) {
@@ -16,7 +15,6 @@ export default async function AccessPage({ searchParams }: AccessPageProps) {
   const nextPath = safeNextPath(firstValue(params.next));
   const error = firstValue(params.error);
   const status = firstValue(params.status);
-  const authEnabled = dashboardAccessCode() !== null;
 
   return (
     <main className="min-h-screen bg-[#03070d] px-5 py-8 text-white sm:px-8 lg:px-12">
@@ -73,13 +71,11 @@ export default async function AccessPage({ searchParams }: AccessPageProps) {
                   type="password"
                   autoComplete="current-password"
                   className="focus-ring mt-2 h-11 w-full rounded-lg border border-white/16 bg-[#071017] px-3 text-sm text-white outline-none placeholder:text-slate-500"
-                  placeholder={authEnabled ? "输入控制台口令" : "当前环境未启用"}
-                  disabled={!authEnabled}
+                  placeholder="输入控制台口令"
                 />
               </label>
               <button
                 type="submit"
-                disabled={!authEnabled}
                 className="focus-ring inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-400 px-4 text-sm font-semibold text-[#031316] disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
               >
                 进入控制台

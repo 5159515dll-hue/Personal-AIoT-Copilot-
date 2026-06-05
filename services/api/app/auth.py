@@ -12,11 +12,11 @@ INTERNAL_API_TOKEN_HEADER = "x-aiot-internal-token"
 PUBLIC_API_PATHS = {
     "/api/health",
 }
+DEFAULT_DASHBOARD_ACCESS_CODE = "admin123"
 
 
-def dashboard_access_code() -> str | None:
-    value = os.getenv("DASHBOARD_ACCESS_CODE", "").strip()
-    return value or None
+def dashboard_access_code() -> str:
+    return DEFAULT_DASHBOARD_ACCESS_CODE
 
 
 def internal_api_token() -> str | None:
@@ -25,7 +25,7 @@ def internal_api_token() -> str | None:
 
 
 def api_auth_enabled() -> bool:
-    return dashboard_access_code() is not None
+    return True
 
 
 def is_public_api_path(path: str) -> bool:

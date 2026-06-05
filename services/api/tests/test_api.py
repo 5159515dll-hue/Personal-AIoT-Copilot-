@@ -46,6 +46,8 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def isolate_json_stores(tmp_path, monkeypatch) -> None:
+    client.cookies.clear()
+    client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for("admin123"))
     monkeypatch.setattr(audit_module.audit_store, "path", tmp_path / "audit_logs.json")
     monkeypatch.setattr(device_adapter_module.device_state_store, "path", tmp_path / "device_states.json")
     monkeypatch.setattr(device_rate_limit_module.device_control_rate_store, "path", tmp_path / "device_control_rate_events.json")
@@ -109,27 +111,43 @@ def test_room_current_database_source_reports_unavailable_database(monkeypatch) 
     assert "DATABASE_URL" in response.json()["detail"]
 
 
-def test_private_api_requires_dashboard_session_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
-    response = client.get("/api/room/current")
+def test_private_api_requires_dashboard_session() -> None:
+    anonymous_client = TestClient(app)
+    response = anonymous_client.get("/api/room/current")
     assert response.status_code == 401
     assert "私有接口" in response.json()["detail"]
 
 
-def test_private_api_accepts_dashboard_session_cookie(monkeypatch) -> None:
-    access_code = "local-test-code"
-    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", access_code)
+def test_private_api_rejects_non_admin_session_cookie(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
     auth_client = TestClient(app)
-    auth_client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for(access_code))
+    auth_client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for("local-test-code"))
+    response = auth_client.get("/api/room/current")
+    assert response.status_code == 401
+    assert "私有接口" in response.json()["detail"]
+
+
+def test_private_api_accepts_default_admin_session_cookie() -> None:
+    auth_client = TestClient(app)
+    auth_client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for("admin123"))
+    response = auth_client.get("/api/room/current")
+    assert response.status_code == 200
+    assert response.json()["health_score"] >= 0
+
+
+def test_private_api_accepts_admin_session_cookie_even_if_env_is_set(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
+    auth_client = TestClient(app)
+    auth_client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for("admin123"))
     response = auth_client.get("/api/room/current")
     assert response.status_code == 200
     assert response.json()["health_score"] >= 0
 
 
 def test_private_api_accepts_internal_service_token(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
     monkeypatch.setenv("AIOT_INTERNAL_API_TOKEN", "internal-test-token")
-    response = client.get(
+    anonymous_client = TestClient(app)
+    response = anonymous_client.get(
         "/api/room/current",
         headers={INTERNAL_API_TOKEN_HEADER: "internal-test-token"},
     )
@@ -138,7 +156,6 @@ def test_private_api_accepts_internal_service_token(monkeypatch) -> None:
 
 
 def test_health_endpoint_stays_public_when_auth_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_ACCESS_CODE", "local-test-code")
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -1423,7 +1440,6 @@ def test_model_provider_imports_keys_once_per_provider_and_switches_active_model
             "protocol": "openai",
             "base_url": "https://api.moonshot.cn/v1",
             "model": "moonshot-v1-32k",
-            "api_key": None,
         },
     )
     assert switch_response.status_code == 200
@@ -1490,6 +1506,33 @@ def test_model_provider_selection_requires_imported_provider_key() -> None:
     )
     assert response.status_code == 400
     assert "先导入该厂商接口密钥" in response.json()["detail"]
+
+
+def test_model_provider_selection_rejects_api_key_field() -> None:
+    key_response = client.post(
+        "/api/model-providers/keys",
+        json={
+            "provider_id": "kimi",
+            "endpoint_id": "kimi_cn_openai",
+            "protocol": "openai",
+            "base_url": "https://api.moonshot.cn/v1",
+            "api_key": "sk-kimi-saved-key-0000",
+        },
+    )
+    assert key_response.status_code == 200
+
+    response = client.post(
+        "/api/model-providers/selection",
+        json={
+            "provider_id": "kimi",
+            "endpoint_id": "kimi_cn_openai",
+            "protocol": "openai",
+            "base_url": "https://api.moonshot.cn/v1",
+            "model": "kimi-k2.6",
+            "api_key": "sk-should-not-be-submitted",
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_model_provider_rejects_unlisted_base_url() -> None:

@@ -18,16 +18,23 @@ type PanelResult = ModelConnectionTestResponse | string | null;
 
 export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog }) {
   const firstProvider = catalog.providers[0];
+  const initialSavedConfigs = catalog.saved_configs;
   const initialActiveProvider =
     catalog.providers.find((provider) => provider.id === catalog.active_config?.provider_id) ?? firstProvider;
   const initialActiveEndpoint =
     initialActiveProvider.endpoints.find((endpoint) => endpoint.id === catalog.active_config?.endpoint_id) ??
     initialActiveProvider.endpoints[0];
+  const initialSwitchProviderId =
+    catalog.active_config?.api_key_set
+      ? catalog.active_config.provider_id
+      : initialSavedConfigs.find((config) => config.api_key_set)?.provider_id ?? initialActiveProvider.id;
+  const initialSwitchProvider = catalog.providers.find((provider) => provider.id === initialSwitchProviderId) ?? initialActiveProvider;
+  const initialSwitchEndpoint =
+    initialSwitchProvider.endpoints.find((endpoint) => endpoint.id === catalog.active_config?.endpoint_id) ??
+    initialSwitchProvider.endpoints[0];
 
   const [activeConfig, setActiveConfig] = useState(catalog.active_config);
-  const [savedConfigs, setSavedConfigs] = useState<PublicModelConfig[]>(
-    catalog.saved_configs.length > 0 ? catalog.saved_configs : catalog.active_config ? [catalog.active_config] : []
-  );
+  const [savedConfigs, setSavedConfigs] = useState<PublicModelConfig[]>(initialSavedConfigs);
 
   const [keyProviderId, setKeyProviderId] = useState(initialActiveProvider.id);
   const [keyEndpointId, setKeyEndpointId] = useState(initialActiveEndpoint.id);
@@ -35,9 +42,11 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
   const [keyPending, setKeyPending] = useState(false);
   const [keyResult, setKeyResult] = useState<PanelResult>(null);
 
-  const [switchProviderId, setSwitchProviderId] = useState(initialActiveProvider.id);
-  const [switchEndpointId, setSwitchEndpointId] = useState(initialActiveEndpoint.id);
-  const [model, setModel] = useState(catalog.active_config?.model ?? initialActiveProvider.default_model);
+  const [switchProviderId, setSwitchProviderId] = useState(initialSwitchProvider.id);
+  const [switchEndpointId, setSwitchEndpointId] = useState(initialSwitchEndpoint.id);
+  const [model, setModel] = useState(
+    catalog.active_config?.provider_id === initialSwitchProvider.id ? catalog.active_config.model : initialSwitchProvider.default_model
+  );
   const [switchPending, setSwitchPending] = useState<PendingSwitchAction>(null);
   const [switchResult, setSwitchResult] = useState<PanelResult>(null);
 
@@ -78,6 +87,10 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     () => findProviderKeyConfig(savedConfigs, switchProvider.id),
     [savedConfigs, switchProvider.id]
   );
+  const switchableConfigs = useMemo(
+    () => savedConfigs.filter((config) => config.api_key_set),
+    [savedConfigs]
+  );
   const switchMatchesActive =
     activeConfig?.provider_id === switchProvider.id &&
     activeConfig.endpoint_id === switchEndpoint.id &&
@@ -100,7 +113,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     setSwitchProviderId(next.id);
     setSwitchEndpointId(nextEndpoint.id);
     setModel(activeConfig?.provider_id === next.id ? activeConfig.model : next.default_model);
-    setSwitchResult(null);
+    setSwitchResult(saved?.api_key_set ? null : `还没有导入 ${next.label} 密钥；请在下方密钥导入工具保存一次，之后切换模型不需要再次输入密钥。`);
   }
 
   function switchPayload(): ModelConfigRequest {
@@ -132,9 +145,6 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
         api_key: trimmedKey
       });
       setSavedConfigs((current) => [saved, ...current.filter((item) => item.provider_id !== saved.provider_id)]);
-      setSwitchProviderId(saved.provider_id);
-      setSwitchEndpointId(saved.endpoint_id);
-      setModel(activeConfig?.provider_id === saved.provider_id ? activeConfig.model : keyProvider.default_model);
       setActiveConfig((current) =>
         current && current.provider_id === saved.provider_id
           ? { ...current, api_key_set: saved.api_key_set, api_key_preview: saved.api_key_preview }
@@ -142,7 +152,9 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
       );
       setApiKey("");
       setKeyResult(`已保存 ${keyProvider.label} 的厂商密钥；同一厂商只保留这一条，新密钥已覆盖旧密钥。当前智能体模型没有改变。`);
-      setSwitchResult(`切换工具已准备使用 ${keyProvider.label}。如需启用该厂商，请点击“设为智能体当前模型”。`);
+      if (switchProvider.id === saved.provider_id) {
+        setSwitchResult(`已找到 ${keyProvider.label} 的导入密钥，现在可以直接切换模型，不需要再次输入接口密钥。`);
+      }
     } catch (error) {
       setKeyResult(error instanceof Error ? error.message : "密钥导入失败");
     } finally {
@@ -217,6 +229,19 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
           <div className="mt-5 rounded-lg border border-teal-100 bg-teal-50 p-3 text-sm leading-6 text-teal-800">
             切换流程：选择厂商、接口和模型，系统使用该厂商已导入的密钥完成测试或切换；未导入密钥的厂商不能设为当前模型。
           </div>
+
+          {switchableConfigs.length > 0 ? (
+            <div className="mt-4 rounded-lg border border-line bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+              可直接切换的厂商：
+              {" "}
+              {switchableConfigs.map((config) => providerLabel(catalog.providers, config.provider_id)).join("、")}
+              。切换时只提交厂商、接口和模型，不会提交接口密钥。
+            </div>
+          ) : (
+            <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+              还没有导入任何厂商密钥。先在下方导入一次，之后即可在这里反复切换模型。
+            </div>
+          )}
 
           <div className="mt-5">
             <p className="mb-2 text-sm font-semibold text-slate-700">选择要启用的厂商</p>

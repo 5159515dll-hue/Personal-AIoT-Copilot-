@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Metric(str, Enum):
@@ -266,6 +266,8 @@ class ModelConfig(BaseModel):
 
 
 class ModelKeyImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider_id: str
     endpoint_id: str
     protocol: ProviderProtocol
@@ -274,6 +276,8 @@ class ModelKeyImportRequest(BaseModel):
 
 
 class ModelSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider_id: str
     endpoint_id: str
     protocol: ProviderProtocol

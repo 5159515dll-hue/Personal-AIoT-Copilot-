@@ -1,4 +1,5 @@
 export const DASHBOARD_SESSION_COOKIE = "aiot_dashboard_session";
+export const DEFAULT_DASHBOARD_ACCESS_CODE = "admin123";
 
 export const protectedDashboardRoutes = [
   "/dashboard",
@@ -10,13 +11,12 @@ export const protectedDashboardRoutes = [
   "/audit"
 ];
 
-export function dashboardAccessCode(): string | null {
-  const value = process.env.DASHBOARD_ACCESS_CODE?.trim();
-  return value ? value : null;
+export function dashboardAccessCode(): string {
+  return DEFAULT_DASHBOARD_ACCESS_CODE;
 }
 
 export function isDashboardAuthEnabled(): boolean {
-  return dashboardAccessCode() !== null;
+  return true;
 }
 
 export function isProtectedDashboardPath(pathname: string): boolean {

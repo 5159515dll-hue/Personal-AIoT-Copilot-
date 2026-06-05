@@ -47,16 +47,21 @@ npm run dev
 
 ## 私有控制台访问
 
-本地开发默认不启用访问保护。部署到公网时应设置以下环境变量：
+私有控制台固定启用访问保护，访问口令为：
+
+```text
+admin123
+```
+
+部署到公网时仍应设置会话密钥和内部服务令牌：
 
 ```bash
-export DASHBOARD_ACCESS_CODE="替换为控制台口令"
 export DASHBOARD_SESSION_SECRET="替换为随机会话密钥"
 export AIOT_INTERNAL_API_TOKEN="替换为内部服务令牌"
 export DASHBOARD_COOKIE_SECURE="false"
 ```
 
-启用后：
+访问保护规则：
 
 - `/` 公开项目页继续开放。
 - `/dashboard`、`/trends`、`/devices`、`/agent`、`/models`、`/rules`、`/audit` 会跳转到 `/access`。
