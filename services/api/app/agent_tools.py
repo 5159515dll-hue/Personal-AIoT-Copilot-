@@ -84,6 +84,29 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             rule_draft=rule_draft,
         )
 
+    if _mentions_device_docs(lowered):
+        return await _device_docs_response(
+            session_id=session_id,
+            message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_anomaly(lowered):
+        return await _anomaly_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
     if _mentions_forbidden_control(lowered):
         device_id = "smoke_alarm_01" if "smoke" in lowered or "烟雾" in lowered else "smart_plug_01"
         control = _control_tool(device_id, "on", False, message)
@@ -323,6 +346,101 @@ async def _audit_log_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
+async def _device_docs_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    matches = _search_device_docs(message)
+    used_data.append("local_device_docs")
+    tool_calls.append(
+        ToolCall(
+            name="search_device_docs",
+            parameters={"query": message, "sources": ["docs/device-protocol.md", "firmware/esp32-room-node/README.md"]},
+            result={"count": len(matches), "matches": matches},
+            created_at=now(),
+        )
+    )
+    if not matches:
+        reply = "本地设备文档里没有找到直接匹配的条目。当前可查询 MQTT topic、payload 指标、HTTP 入站、入库语义、固件边界和安全边界。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    first = matches[0]
+    reply = (
+        f"我查到了本地设备文档：{first['source']} 的「{first['title']}」。"
+        f"{first['summary']} 这个查询只读取项目内协议和固件说明，不会访问外部网页或执行设备命令。"
+    )
+    if len(matches) > 1:
+        reply += f"另外还有 {len(matches) - 1} 条相关边界说明可在工具调用结果里查看。"
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
+async def _anomaly_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    end_ts = now()
+    start_ts = end_ts - timedelta(hours=24)
+    if data_source == "database":
+        used_data.extend(["database_latest_sensor_readings", "database_co2_24h_history", "anomaly_rules"])
+        try:
+            latest = latest_sensor_readings_db()
+            co2_readings = query_sensor_history_db(Metric.co2, start_ts, end_ts, bucket="15m")
+        except Exception as exc:
+            error_text = _database_error_text(exc)
+            tool_calls.append(
+                ToolCall(
+                    name="detect_anomaly",
+                    parameters={"source": "database", "window": "last_24_hours"},
+                    result={"source": "database", "status": "unavailable", "error": error_text},
+                    created_at=now(),
+                )
+            )
+            reply = f"数据库异常检测暂不可用：{error_text}。可以切回模拟数据，或先检查 DATABASE_URL、MQTT 入站和 TimescaleDB。"
+            return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+        result = _detect_anomalies(latest, co2_readings, source="database")
+    else:
+        room = current_room_state()
+        co2_readings = query_history(Metric.co2, start_ts, end_ts, "15m")
+        latest = room.metrics
+        used_data.extend(["current_room_state", "co2_24h_history", "anomaly_rules"])
+        result = _detect_anomalies(latest, co2_readings, source="mock", room_anomalies=room.anomalies)
+
+    tool_calls.append(
+        ToolCall(
+            name="detect_anomaly",
+            parameters={"source": data_source, "window": "last_24_hours", "rules": ["co2_high", "temperature_range", "humidity_range", "missing_metric"]},
+            result=result,
+            created_at=now(),
+        )
+    )
+    if result["anomalies"]:
+        severe = [item for item in result["anomalies"] if item["severity"] in {"high", "medium"}]
+        reply = (
+            f"最近 24 小时检测到 {len(result['anomalies'])} 类异常或风险信号，"
+            f"其中 {len(severe)} 类需要重点关注。最高二氧化碳为 {result['co2_peak']} ppm，"
+            f"超过 1200 ppm 的样本数为 {result['co2_high_samples']}。建议优先通风，并检查传感器在线状态。"
+        )
+    else:
+        reply = (
+            f"最近 24 小时未检测到明显异常。最高二氧化碳为 {result['co2_peak']} ppm，"
+            "温湿度也在当前规则的舒适范围内。"
+        )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 async def _database_environment_response(
     *,
     session_id: str,
@@ -510,6 +628,147 @@ def _audit_log_summary(log) -> dict:
     }
 
 
+DEVICE_DOC_ENTRIES = [
+    {
+        "title": "MQTT Topic",
+        "source": "docs/device-protocol.md",
+        "keywords": ("mqtt", "topic", "主题", "上报", "telemetry"),
+        "summary": "默认订阅 aiot/room/+/telemetry；入站服务从 payload 的 device_id 识别设备，不从 topic 反推设备身份。",
+    },
+    {
+        "title": "遥测指标",
+        "source": "docs/device-protocol.md",
+        "keywords": ("metric", "指标", "temperature", "humidity", "co2", "light", "presence", "单位"),
+        "summary": "支持 temperature、humidity、co2、light、presence，quality 只允许 ok、stale、anomaly。",
+    },
+    {
+        "title": "Batch Payload",
+        "source": "docs/device-protocol.md",
+        "keywords": ("payload", "json", "batch", "格式", "readings", "消息"),
+        "summary": "推荐 batch 格式一次上报多个 readings；单条 reading 可继承顶层 timestamp，缺失时间时使用入站时间。",
+    },
+    {
+        "title": "HTTP 入站",
+        "source": "docs/device-protocol.md",
+        "keywords": ("http", "ingest", "入站", "sensor-readings", "接口"),
+        "summary": "HTTP 调试接口是 POST /api/ingest/sensor-readings，生产环境应放在私有 API 保护或内部令牌之后。",
+    },
+    {
+        "title": "入库语义",
+        "source": "docs/device-protocol.md",
+        "keywords": ("postgresql", "timescale", "入库", "hypertable", "sensor_readings", "database"),
+        "summary": "入站服务初始化 sensor_readings 表；TimescaleDB 可用时会尝试创建 hypertable，并记录 time、received_at、metric、value、quality、source。",
+    },
+    {
+        "title": "安全边界",
+        "source": "docs/device-protocol.md",
+        "keywords": ("安全", "控制", "边界", "摄像头", "麦克风", "权限", "未知字段"),
+        "summary": "MQTT/HTTP payload 只能写入遥测，不能创建规则、控制设备或提升权限；设备控制必须走策略引擎和审计日志。",
+    },
+    {
+        "title": "ESP32 固件边界",
+        "source": "firmware/esp32-room-node/README.md",
+        "keywords": ("esp32", "固件", "platformio", "wifi", "config", "传感器"),
+        "summary": "ESP32 固件骨架只发布遥测，不订阅控制 topic；Wi-Fi 和 MQTT 密钥只放在本地 include/config.h，不提交到 Git。",
+    },
+    {
+        "title": "传感器替换点",
+        "source": "firmware/esp32-room-node/README.md",
+        "keywords": ("替换", "驱动", "readtemperature", "readhumidity", "readco2", "readlight", "readpresence"),
+        "summary": "真实硬件接入时替换 readTemperatureC、readHumidityPct、readCo2Ppm、readLightLux、readPresence；MQTT topic 和 JSON 字段保持不变。",
+    },
+]
+
+
+def _search_device_docs(query: str) -> list[dict[str, str]]:
+    lowered = query.lower()
+    scored: list[tuple[int, dict[str, str]]] = []
+    for entry in DEVICE_DOC_ENTRIES:
+        score = sum(1 for keyword in entry["keywords"] if keyword in lowered)
+        if score:
+            scored.append((score, {key: str(entry[key]) for key in ("title", "source", "summary")}))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [entry for _, entry in scored[:4]]
+
+
+def _detect_anomalies(
+    latest: dict[Metric, object],
+    co2_readings: list,
+    *,
+    source: str,
+    room_anomalies: list[str] | None = None,
+) -> dict:
+    anomalies: list[dict[str, object]] = []
+    missing = [metric.value for metric in Metric if metric not in latest]
+    if missing:
+        anomalies.append(
+            {
+                "type": "missing_metric",
+                "severity": "medium",
+                "metric": ",".join(missing),
+                "reason": "当前状态缺少部分传感器指标，Agent 不能对这些维度做确定判断。",
+            }
+        )
+
+    co2_values = [reading.value for reading in co2_readings]
+    co2_peak = max(co2_values) if co2_values else 0
+    co2_avg = round(sum(co2_values) / len(co2_values), 1) if co2_values else 0
+    co2_high_samples = sum(1 for value in co2_values if value > 1200)
+    if co2_high_samples:
+        anomalies.append(
+            {
+                "type": "co2_high",
+                "severity": "high" if co2_peak >= 1500 else "medium",
+                "metric": "co2",
+                "threshold": 1200,
+                "observed_peak": co2_peak,
+                "samples": co2_high_samples,
+                "reason": "二氧化碳存在超过专注阈值的时间窗口。",
+            }
+        )
+
+    temperature = latest.get(Metric.temperature)
+    if temperature and getattr(temperature, "value", 0) > 28:
+        anomalies.append(
+            {
+                "type": "temperature_high",
+                "severity": "medium",
+                "metric": "temperature",
+                "threshold": 28,
+                "observed": getattr(temperature, "value", None),
+                "reason": "当前温度偏高，可能影响长时间专注。",
+            }
+        )
+
+    humidity = latest.get(Metric.humidity)
+    if humidity and (getattr(humidity, "value", 50) < 35 or getattr(humidity, "value", 50) > 65):
+        anomalies.append(
+            {
+                "type": "humidity_out_of_range",
+                "severity": "medium",
+                "metric": "humidity",
+                "range": "35-65",
+                "observed": getattr(humidity, "value", None),
+                "reason": "当前湿度不在舒适区间。",
+            }
+        )
+
+    for text in room_anomalies or []:
+        if all(item.get("reason") != text for item in anomalies):
+            anomalies.append({"type": "room_state", "severity": "medium", "metric": "room", "reason": text})
+
+    return {
+        "source": source,
+        "status": "anomaly" if anomalies else "ok",
+        "window": "last_24_hours",
+        "co2_peak": co2_peak,
+        "co2_avg": co2_avg,
+        "co2_high_samples": co2_high_samples,
+        "samples": len(co2_values),
+        "anomalies": anomalies,
+    }
+
+
 async def _response(
     session_id: str,
     user_message: str,
@@ -561,6 +820,28 @@ def _mentions_co2_or_environment(text: str) -> bool:
 
 def _mentions_audit_log(text: str) -> bool:
     return any(token in text for token in ("audit", "audit log", "审计", "日志", "记录", "追溯"))
+
+
+def _mentions_device_docs(text: str) -> bool:
+    return any(
+        token in text
+        for token in (
+            "文档",
+            "协议",
+            "payload",
+            "topic",
+            "mqtt",
+            "http 入站",
+            "设备说明",
+            "固件",
+            "esp32",
+            "错误码",
+        )
+    )
+
+
+def _mentions_anomaly(text: str) -> bool:
+    return any(token in text for token in ("异常", "离线", "不可用", "告警", "异常检测", "anomaly", "abnormal", "传感器坏", "数据缺失"))
 
 
 def _mentions_rule(text: str) -> bool:

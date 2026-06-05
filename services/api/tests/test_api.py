@@ -748,6 +748,57 @@ def test_agent_can_query_recent_audit_log_summary() -> None:
     assert "最近" in payload["message"]["content"]
 
 
+def test_agent_can_detect_mock_anomalies() -> None:
+    response = client.post("/api/agent/chat", json={"message": "检测最近环境异常"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "detect_anomaly"
+    assert "anomaly_rules" in payload["used_data"]
+    assert tool["parameters"]["source"] == "mock"
+    assert tool["parameters"]["window"] == "last_24_hours"
+    assert tool["result"]["source"] == "mock"
+    assert tool["result"]["window"] == "last_24_hours"
+    assert "co2_peak" in tool["result"]
+    assert "co2_high_samples" in tool["result"]
+    assert isinstance(tool["result"]["anomalies"], list)
+    assert "二氧化碳" in payload["message"]["content"] or "异常" in payload["message"]["content"]
+
+
+def test_agent_database_anomaly_source_reports_unavailable_database(monkeypatch) -> None:
+    def unavailable_latest_sensor_readings_db():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "检测最近环境异常", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "detect_anomaly"
+    assert tool["parameters"]["source"] == "database"
+    assert tool["result"]["source"] == "database"
+    assert tool["result"]["status"] == "unavailable"
+    assert "DATABASE_URL" in tool["result"]["error"]
+    assert "数据库异常检测暂不可用" in payload["message"]["content"]
+
+
+def test_agent_can_search_local_device_docs() -> None:
+    response = client.post("/api/agent/chat", json={"message": "查看设备上报协议和 MQTT payload 格式"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "search_device_docs"
+    assert "local_device_docs" in payload["used_data"]
+    assert tool["parameters"]["sources"] == ["docs/device-protocol.md", "firmware/esp32-room-node/README.md"]
+    assert tool["result"]["count"] >= 1
+    assert tool["result"]["matches"][0]["source"] == "docs/device-protocol.md"
+    assert "本地设备文档" in payload["message"]["content"]
+    assert "执行设备命令" in payload["message"]["content"]
+
+
 def test_model_provider_generate_agent_reply_uses_configured_model(monkeypatch) -> None:
     model_provider_module.save_config(
         ModelConfigRequest(
