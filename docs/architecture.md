@@ -60,7 +60,7 @@
 
 ## ESP32 固件边界
 
-`firmware/esp32-room-node` 当前只提供 V1 接入骨架，默认不参与 V0 公开演示。固件只发布温度、湿度、CO2、光照和人体存在遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥。
+`firmware/esp32-room-node` 当前只提供 V1 接入骨架，默认不参与 V0 公开演示。固件只发布温度、湿度、CO2、光照、人体存在和噪声分贝遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥；噪声只上报 dB 数值，不采集或上传原始音频。
 
 生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中 `DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。
 
