@@ -7,6 +7,7 @@
 - `get_current_room_state`：返回当前房间指标；mock 使用确定性模拟器，database 使用入库最新读数。
 - `query_sensor_history`：返回二氧化碳、温湿度、光照、人体存在和噪声分贝等指标的聚合证据；mock 和 database 使用同一套 bucket 语义。
 - `summarize_daily_environment`：聚合最近 24 小时温度、湿度、二氧化碳、光照、有人状态和噪声分贝，返回每日摘要、最差空气时间、噪声峰值提示和解释。
+- `summarize_weekly_environment`：聚合最近 7 天六类环境指标，比较有人状态与二氧化碳均值，用于回答一周环境趋势和学习/停留状态关系；人体存在只作为弱代理，不推断真实学习效率。
 - `explain_environment_issue`：解释下午犯困、二氧化碳上升、空气变差等问题，返回证据、可能原因和不确定性。
 - `recommend_action`：给出安全行动建议，只返回提醒或人工低风险动作，不直接控制高风险设备。
 - `get_device_status`：读取 mock device adapter 中的设备状态和风险元数据，回答哪些设备开启、离线或需要关注；该工具只读，不执行控制。
@@ -32,7 +33,7 @@
 
 当 `rule_draft` 存在时，前端只展示草案和确认按钮。用户点击“确认保存规则”后，浏览器再调用 `POST /api/rules` 并把 `confirmed=true` 发送给后端；后端会重新运行规则策略检查，并分别记录确认与创建审计日志。
 
-每日总结、问题解释和行动建议都支持 `mock` 与 `database` 数据源。数据库不可用、缺少最新读数或历史曲线为空时，工具结果会返回 `status=unavailable|empty`，智能体必须说明原因并避免给出伪确定结论。
+每日总结、一周总结、问题解释和行动建议都支持 `mock` 与 `database` 数据源。数据库不可用、缺少最新读数或历史曲线为空时，工具结果会返回 `status=unavailable|empty`，智能体必须说明原因并避免给出伪确定结论。
 
 ## 模型接入边界
 

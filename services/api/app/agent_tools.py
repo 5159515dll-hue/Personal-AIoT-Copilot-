@@ -223,43 +223,15 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
 
     if _mentions_weekly_summary(lowered):
-        if data_source == "database":
-            return await _database_weekly_response(
-                session_id=session_id,
-                message=message,
-                used_data=used_data,
-                tool_calls=tool_calls,
-                needs_confirmation=needs_confirmation,
-                policy=policy,
-                rule_draft=rule_draft,
-            )
-
-        end_ts = now()
-        readings = query_history(Metric.co2, end_ts - timedelta(days=7), end_ts, "1h")
-        values = [reading.value for reading in readings]
-        used_data.append("co2_7d_hourly")
-        tool_calls.append(
-            ToolCall(
-                name="query_sensor_history",
-                parameters={"metric": "co2", "period": "last_7_days", "bucket": "1h"},
-                result={
-                    "avg": round(sum(values) / len(values), 1),
-                    "max": max(values),
-                    "samples": len(values),
-                },
-                created_at=now(),
-            )
-        )
-        reply = "一周模式显示，二氧化碳通常在下午和深夜有人时段上升。通风提醒应重点覆盖这些时间窗口。"
-        return await _response(
-            session_id,
-            message,
-            reply,
-            used_data,
-            tool_calls,
-            needs_confirmation,
-            policy,
-            rule_draft,
+        return await _weekly_summary_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
         )
 
     if _mentions_co2_or_environment(lowered):
@@ -621,6 +593,80 @@ async def _daily_summary_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
+async def _weekly_summary_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    end_ts = now()
+    start_ts = end_ts - timedelta(days=7)
+    used_data.append(f"{data_source}_weekly_environment_7d")
+    try:
+        histories = _query_metric_histories(
+            data_source,
+            start_ts,
+            end_ts,
+            "1h",
+            [Metric.co2, Metric.temperature, Metric.humidity, Metric.light, Metric.presence, Metric.noise],
+        )
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="summarize_weekly_environment",
+                parameters={"source": data_source, "window": "last_7_days", "bucket": "1h"},
+                result={"source": data_source, "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"一周环境总结暂不可用：{error_text}。可以切回模拟数据，或先检查数据库和 MQTT 入站链路。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    metrics = {metric.value: _metric_summary(readings) for metric, readings in histories.items()}
+    result = {
+        "source": data_source,
+        "status": "ok" if any(summary["samples"] for summary in metrics.values()) else "empty",
+        "window": "last_7_days",
+        "bucket": "1h",
+        "metrics": metrics,
+        "relationship": _weekly_relationship(histories),
+        "uncertainty": "当前只用人体存在作为学习或停留状态的弱代理，不能证明真实学习效率、睡眠、饮食或心理压力。",
+    }
+    tool_calls.append(
+        ToolCall(
+            name="summarize_weekly_environment",
+            parameters={"source": data_source, "window": "last_7_days", "bucket": "1h"},
+            result=result,
+            created_at=now(),
+        )
+    )
+
+    if result["status"] == "empty":
+        reply = "最近 7 天没有可总结的环境样本。请确认传感器数据已经产生，或切回模拟数据继续演示。"
+    else:
+        co2 = metrics.get(Metric.co2.value, {})
+        temperature = metrics.get(Metric.temperature.value, {})
+        humidity = metrics.get(Metric.humidity.value, {})
+        noise = metrics.get(Metric.noise.value, {})
+        relationship = result["relationship"]
+        reply = (
+            f"最近 7 天环境总结：二氧化碳平均 {co2.get('avg', 0)} ppm，峰值 {co2.get('max', 0)} ppm；"
+            f"温度范围 {temperature.get('min', 0)}-{temperature.get('max', 0)}℃，"
+            f"湿度范围 {humidity.get('min', 0)}-{humidity.get('max', 0)}%，"
+            f"噪声峰值 {noise.get('max', 0)} dB。"
+            f"有人状态覆盖约 {relationship['presence_active_ratio']}% 的小时样本，"
+            f"有人时 CO2 均值约 {relationship['co2_avg_when_present']} ppm。"
+            f"不确定性：{result['uncertainty']}"
+        )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 async def _environment_explanation_response(
     *,
     session_id: str,
@@ -803,53 +849,6 @@ async def _database_environment_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
-async def _database_weekly_response(
-    *,
-    session_id: str,
-    message: str,
-    used_data: list[str],
-    tool_calls: list[ToolCall],
-    needs_confirmation: bool,
-    policy: PolicyDecision | None,
-    rule_draft: AutomationRuleCreate | None,
-) -> AgentChatResponse:
-    end_ts = now()
-    start_ts = end_ts - timedelta(days=7)
-    used_data.append("database_co2_7d_hourly")
-    try:
-        readings = query_sensor_history_db(Metric.co2, start_ts, end_ts, bucket="1h")
-    except Exception as exc:
-        error_text = _database_error_text(exc)
-        tool_calls.append(
-            ToolCall(
-                name="query_sensor_history",
-                parameters={"source": "database", "metric": "co2", "period": "last_7_days", "bucket": "1h"},
-                result={"source": "database", "status": "unavailable", "error": error_text},
-                created_at=now(),
-            )
-        )
-        reply = f"数据库 7 天趋势暂不可用：{error_text}。可以切回模拟数据，或先启动数据库和 MQTT 入站链路。"
-        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
-
-    summary = _summarize_readings(readings)
-    tool_calls.append(
-        ToolCall(
-            name="query_sensor_history",
-            parameters={"source": "database", "metric": "co2", "period": "last_7_days", "bucket": "1h"},
-            result=summary,
-            created_at=now(),
-        )
-    )
-    if summary["samples"]:
-        reply = (
-            f"数据库 7 天趋势已有 {summary['samples']} 个小时级样本，"
-            f"平均值为 {summary['avg']} ppm，峰值为 {summary['max']} ppm。"
-        )
-    else:
-        reply = "数据库 7 天趋势暂无二氧化碳样本。请确认传感器数据已经通过 MQTT 或 HTTP 入库。"
-    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
-
-
 def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> ToolCall:
     device = get_mock_device(device_id)
     policy = assess_device_control(
@@ -925,6 +924,35 @@ def _metric_summary(readings: list) -> dict[str, float | int | str | None]:
         "samples": len(values),
         "max_at": peak.timestamp.isoformat(),
     }
+
+
+def _weekly_relationship(histories: dict[Metric, list]) -> dict[str, float | int]:
+    presence_readings = histories.get(Metric.presence, [])
+    co2_readings = histories.get(Metric.co2, [])
+    presence_by_hour = {reading.timestamp.replace(minute=0, second=0, microsecond=0): reading.value for reading in presence_readings}
+    present_co2_values = [
+        reading.value
+        for reading in co2_readings
+        if presence_by_hour.get(reading.timestamp.replace(minute=0, second=0, microsecond=0), 0) >= 0.5
+    ]
+    absent_co2_values = [
+        reading.value
+        for reading in co2_readings
+        if presence_by_hour.get(reading.timestamp.replace(minute=0, second=0, microsecond=0), 0) < 0.5
+    ]
+    active_hours = sum(1 for reading in presence_readings if reading.value >= 0.5)
+    total_hours = len(presence_readings)
+    return {
+        "presence_active_hours": active_hours,
+        "presence_total_hours": total_hours,
+        "presence_active_ratio": round(active_hours / total_hours * 100, 1) if total_hours else 0,
+        "co2_avg_when_present": _avg(present_co2_values),
+        "co2_avg_when_absent": _avg(absent_co2_values),
+    }
+
+
+def _avg(values: list[float]) -> float:
+    return round(sum(values) / len(values), 1) if values else 0
 
 
 def _daily_interpretation(metrics: dict[str, dict]) -> str:
@@ -1093,8 +1121,8 @@ DEVICE_DOC_ENTRIES = [
     {
         "title": "遥测指标",
         "source": "docs/device-protocol.md",
-        "keywords": ("metric", "指标", "temperature", "humidity", "co2", "light", "presence", "单位"),
-        "summary": "支持 temperature、humidity、co2、light、presence，quality 只允许 ok、stale、anomaly。",
+        "keywords": ("metric", "指标", "temperature", "humidity", "co2", "light", "presence", "noise", "噪声", "分贝", "单位"),
+        "summary": "支持 temperature、humidity、co2、light、presence、noise；noise 只上报 dB 数值，不采集原始音频，quality 只允许 ok、stale、anomaly。",
     },
     {
         "title": "Batch Payload",
@@ -1129,8 +1157,8 @@ DEVICE_DOC_ENTRIES = [
     {
         "title": "传感器替换点",
         "source": "firmware/esp32-room-node/README.md",
-        "keywords": ("替换", "驱动", "readtemperature", "readhumidity", "readco2", "readlight", "readpresence"),
-        "summary": "真实硬件接入时替换 readTemperatureC、readHumidityPct、readCo2Ppm、readLightLux、readPresence；MQTT topic 和 JSON 字段保持不变。",
+        "keywords": ("替换", "驱动", "readtemperature", "readhumidity", "readco2", "readlight", "readpresence", "readnoise"),
+        "summary": "真实硬件接入时替换 readTemperatureC、readHumidityPct、readCo2Ppm、readLightLux、readPresence、readNoiseDbA；MQTT topic 和 JSON 字段保持不变。",
     },
 ]
 

@@ -838,6 +838,76 @@ def test_agent_daily_summary_database_source_reports_unavailable_database(monkey
     assert "每日环境总结暂不可用" in payload["message"]["content"]
 
 
+def test_agent_weekly_summary_uses_all_environment_metrics() -> None:
+    response = client.post("/api/agent/chat", json={"message": "过去一周 CO2、温湿度、光照和学习状态有什么关系？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "summarize_weekly_environment"
+    assert "mock_weekly_environment_7d" in payload["used_data"]
+    assert tool["parameters"] == {"source": "mock", "window": "last_7_days", "bucket": "1h"}
+    assert set(tool["result"]["metrics"]) == {metric.value for metric in Metric}
+    assert tool["result"]["relationship"]["presence_total_hours"] > 0
+    assert "co2_avg_when_present" in tool["result"]["relationship"]
+    assert "人体存在" in tool["result"]["uncertainty"]
+    assert "最近 7 天环境总结" in payload["message"]["content"]
+
+
+def test_agent_weekly_database_summary_queries_all_metrics(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+    captured_metrics = []
+
+    def fake_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        captured_metrics.append((metric, bucket))
+        unit = {
+            Metric.temperature: "℃",
+            Metric.humidity: "%",
+            Metric.co2: "ppm",
+            Metric.light: "lux",
+            Metric.presence: "occupied",
+            Metric.noise: "dB",
+        }[metric]
+        value = 1 if metric == Metric.presence else 50
+        return [
+            SensorReading(metric=metric, value=value, unit=unit, timestamp=base - timedelta(hours=1)),
+            SensorReading(metric=metric, value=value + (0 if metric == Metric.presence else 10), unit=unit, timestamp=base),
+        ]
+
+    monkeypatch.setattr("app.agent_tools.query_sensor_history_db", fake_query_sensor_history_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "看一下最近 7 天环境趋势", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "summarize_weekly_environment"
+    assert tool["parameters"]["source"] == "database"
+    assert "database_weekly_environment_7d" in payload["used_data"]
+    assert {metric for metric, _ in captured_metrics} == set(Metric)
+    assert all(bucket == "1h" for _, bucket in captured_metrics)
+    assert tool["result"]["metrics"]["noise"]["max"] == 60
+    assert "数据库 7 天趋势" not in payload["message"]["content"]
+
+
+def test_agent_weekly_database_summary_reports_unavailable_database(monkeypatch) -> None:
+    def unavailable_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr("app.agent_tools.query_sensor_history_db", unavailable_query_sensor_history_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "最近 7 天环境趋势", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "summarize_weekly_environment"
+    assert tool["result"]["status"] == "unavailable"
+    assert "DATABASE_URL" in tool["result"]["error"]
+    assert "一周环境总结暂不可用" in payload["message"]["content"]
+
+
 def test_agent_database_source_uses_database_tools(monkeypatch) -> None:
     base = now().replace(minute=0, second=0, microsecond=0)
     captured = {}
@@ -1009,6 +1079,17 @@ def test_agent_can_search_local_device_docs() -> None:
     assert tool["result"]["matches"][0]["source"] == "docs/device-protocol.md"
     assert "本地设备文档" in payload["message"]["content"]
     assert "执行设备命令" in payload["message"]["content"]
+
+
+def test_agent_device_docs_include_noise_payload_boundary() -> None:
+    response = client.post("/api/agent/chat", json={"message": "噪声分贝字段在设备协议里怎么上报？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    summaries = " ".join(item["summary"] for item in tool["result"]["matches"])
+    assert tool["name"] == "search_device_docs"
+    assert "noise" in summaries
+    assert "原始音频" in summaries
 
 
 def test_model_provider_generate_agent_reply_uses_configured_model(monkeypatch) -> None:
