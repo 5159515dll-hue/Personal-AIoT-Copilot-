@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.audit import record_audit
 from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
+from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.models import (
     ControlDeviceRequest,
     ControlDeviceResponse,
@@ -52,6 +53,8 @@ def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDevi
         intent=request.reason,
     )
     if policy.result == PolicyResult.allowed:
+        policy = assess_device_control_rate_limit(device) or policy
+    if policy.result == PolicyResult.allowed:
         if device.requires_confirmation and request.confirmed:
             record_audit(
                 actor="user",
@@ -62,6 +65,7 @@ def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDevi
                 policy=policy,
             )
         device = execute_mock_control(device, request.state)
+        record_device_control_execution(device.id, "user")
         result = "success"
         details = "模拟设备状态已更新。"
     elif policy.result == PolicyResult.requires_confirmation:

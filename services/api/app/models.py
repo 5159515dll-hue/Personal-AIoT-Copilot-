@@ -130,6 +130,13 @@ class ControlDeviceResponse(BaseModel):
     device: Device | None = None
 
 
+class DeviceControlRateEvent(BaseModel):
+    id: str = Field(default_factory=lambda: f"rate_{uuid4().hex[:10]}")
+    device_id: str
+    actor: Literal["user", "agent"]
+    timestamp: datetime
+
+
 class AutomationRuleCreate(BaseModel):
     condition: str = Field(min_length=3, max_length=240)
     action: str = Field(min_length=3, max_length=240)

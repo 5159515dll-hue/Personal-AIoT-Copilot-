@@ -6,6 +6,7 @@ from uuid import uuid4
 from app.audit import list_audit_logs, record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db
 from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
+from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.mock_data import current_room_state, query_history, summarize_metric
 from app.model_providers import generate_agent_reply
 from app.models import (
@@ -140,7 +141,10 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         control = _control_tool("desk_lamp_01", "on", True, message)
         tool_calls.append(control)
         policy = control.policy
-        reply = "模拟桌面台灯已通过策略检查链路开启，该动作已写入审计日志。"
+        if control.result.get("execution_result") == "success":
+            reply = "模拟桌面台灯已通过策略检查链路开启，该动作已写入审计日志。"
+        else:
+            reply = f"我不能执行该控制动作。{policy.reason if policy else '策略引擎已阻止。'}"
         return await _response(
             session_id,
             message,
@@ -857,10 +861,13 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> T
         confirmed=confirmed,
         intent=intent,
     )
+    if policy.result == PolicyResult.allowed:
+        policy = assess_device_control_rate_limit(device) or policy
     execution_result = "success" if policy.result == PolicyResult.allowed else "blocked"
     controlled_device = None
     if device and policy.result == PolicyResult.allowed and state in {"on", "off"}:
         controlled_device = execute_mock_control(device, state)
+        record_device_control_execution(device.id, "agent")
     audit = record_audit(
         actor="agent",
         action="control_device",

@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2] / "mqtt-ingestor"))
 from app import audit as audit_module
 from app import database as database_module
 from app import device_adapter as device_adapter_module
+from app import device_rate_limit as device_rate_limit_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
 from app import rule_store as rule_store_module
@@ -46,6 +47,7 @@ client = TestClient(app)
 def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(audit_module.audit_store, "path", tmp_path / "audit_logs.json")
     monkeypatch.setattr(device_adapter_module.device_state_store, "path", tmp_path / "device_states.json")
+    monkeypatch.setattr(device_rate_limit_module.device_control_rate_store, "path", tmp_path / "device_control_rate_events.json")
     monkeypatch.setattr(model_provider_module.config_store, "path", tmp_path / "model_config.json")
     monkeypatch.setattr(model_provider_module.active_selection_store, "path", tmp_path / "active_model_selection.json")
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
@@ -495,6 +497,34 @@ def test_medium_risk_device_control_requires_confirmation_and_records_it() -> No
     assert "control_device" in actions
 
 
+def test_device_control_rate_limit_blocks_rapid_repeated_execution() -> None:
+    for state in ("on", "off"):
+        response = client.post(
+            "/api/devices/desk_lamp_01/control",
+            json={"state": state, "confirmed": False, "reason": "rate limit setup"},
+        )
+        assert response.status_code == 200
+        assert response.json()["execution_result"] == "success"
+
+    blocked_response = client.post(
+        "/api/devices/desk_lamp_01/control",
+        json={"state": "on", "confirmed": False, "reason": "third rapid click"},
+    )
+    assert blocked_response.status_code == 200
+    payload = blocked_response.json()
+    assert payload["execution_result"] == "blocked"
+    assert payload["policy"]["result"] == "denied"
+    assert "频繁" in payload["policy"]["reason"]
+    assert payload["device"] is None
+
+    audit_response = client.get("/api/audit-logs")
+    assert audit_response.status_code == 200
+    latest = audit_response.json()[0]
+    assert latest["action"] == "control_device"
+    assert latest["result"] == "blocked"
+    assert "频繁" in latest["details"]
+
+
 def test_agent_control_persists_mock_device_state() -> None:
     response = client.post("/api/agent/chat", json={"message": "打开台灯"})
     assert response.status_code == 200
@@ -506,6 +536,23 @@ def test_agent_control_persists_mock_device_state() -> None:
     assert devices_response.status_code == 200
     devices = {device["id"]: device for device in devices_response.json()}
     assert devices["desk_lamp_01"]["current_state"]["power"] == "on"
+
+
+def test_agent_control_respects_device_rate_limit() -> None:
+    for state in ("on", "off"):
+        response = client.post(
+            "/api/devices/desk_lamp_01/control",
+            json={"state": state, "confirmed": False, "reason": "rate limit setup"},
+        )
+        assert response.status_code == 200
+        assert response.json()["execution_result"] == "success"
+
+    response = client.post("/api/agent/chat", json={"message": "打开台灯"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_calls"][0]["name"] == "control_device"
+    assert payload["tool_calls"][0]["result"]["execution_result"] == "blocked"
+    assert "频繁" in payload["message"]["content"]
 
 
 def test_rule_requires_confirmation() -> None:
