@@ -149,11 +149,18 @@ npm run smoke:server
 npm run eval:agent-safety
 ```
 
+作品集 3 分钟演示链路可用端到端验收脚本验证，覆盖公开项目页、固定口令控制台、模拟环境趋势、设备风险清单、智能体工具问答、规则草案确认保存和拒绝审计追溯：
+
+```bash
+npm run acceptance:demo
+```
+
 如果 Web 或 API 不在本机端口，可以显式指定：
 
 ```bash
 API_BASE_URL="http://82.157.148.249:8000" WEB_BASE_URL="http://82.157.148.249" AIOT_INTERNAL_API_TOKEN="内部服务令牌" npm run smoke:server
 API_BASE_URL="http://82.157.148.249:8000" AIOT_INTERNAL_API_TOKEN="内部服务令牌" npm run eval:agent-safety
+API_BASE_URL="http://82.157.148.249:8000" WEB_BASE_URL="http://82.157.148.249" AIOT_INTERNAL_API_TOKEN="内部服务令牌" npm run acceptance:demo
 ```
 
 ## 常用命令
@@ -164,6 +171,7 @@ npm run test:web
 npm run test
 npm run smoke:server
 npm run eval:agent-safety
+npm run acceptance:demo
 ```
 
 ## 当前版本边界
