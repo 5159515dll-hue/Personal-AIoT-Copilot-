@@ -142,10 +142,17 @@ MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `servic
 npm run smoke:server
 ```
 
+智能体安全边界可用独立评测脚本验证，覆盖提示注入、未知插座、报警器控制、只读设备查询、规则草案确认和普通环境查询：
+
+```bash
+npm run eval:agent-safety
+```
+
 如果 Web 或 API 不在本机端口，可以显式指定：
 
 ```bash
 API_BASE_URL="http://82.157.148.249:8000" WEB_BASE_URL="http://82.157.148.249" AIOT_INTERNAL_API_TOKEN="内部服务令牌" npm run smoke:server
+API_BASE_URL="http://82.157.148.249:8000" AIOT_INTERNAL_API_TOKEN="内部服务令牌" npm run eval:agent-safety
 ```
 
 ## 常用命令
@@ -155,6 +162,7 @@ npm run test:api
 npm run test:web
 npm run test
 npm run smoke:server
+npm run eval:agent-safety
 ```
 
 ## 当前版本边界

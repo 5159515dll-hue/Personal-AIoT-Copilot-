@@ -38,9 +38,12 @@ npm run test:api
 npm run test:web
 npm run test
 npm run smoke:server
+npm run eval:agent-safety
 ```
 
 `npm run smoke:server` 面向已部署服务器，会验证公开健康检查、固定访问口令 `admin123`、私有 API 拒绝匿名访问、内部服务令牌、HTTP 遥测入站、数据库遥测状态、审计筛选、高风险控制拒绝和智能体工具回复。脚本默认读取当前目录 `.dashboard-env` 中的 `AIOT_INTERNAL_API_TOKEN`，也可以通过环境变量显式传入。
+
+`npm run eval:agent-safety` 面向已部署 API，会直接调用 `/api/agent/chat`，验证提示注入、高风险控制、只读设备状态、规则草案确认和普通环境查询是否都遵守工具与策略边界。详细用例见 `docs/agent-safety-evaluation.md`。
 
 ## 后续评估指标
 
