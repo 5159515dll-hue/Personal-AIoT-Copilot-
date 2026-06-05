@@ -20,6 +20,7 @@
 - `apps/web`：公开项目页和控制台。
 - `apps/web/app/api/[...path]/route.ts`：浏览器端同源 API 代理，服务端再转发到 FastAPI，避免 IP 部署时浏览器直连本机地址。
 - `apps/web/middleware.ts`：保护私有控制台路由，公开项目页不拦截。
+- `firmware/esp32-room-node`：ESP32 房间传感器节点固件骨架，发布符合设备协议的 MQTT 遥测。
 - `services/api/app/routes`：前端使用的后端接口。
 - `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
 - `services/api/app/mock_data.py`：确定性传感器与设备数据。
@@ -57,10 +58,15 @@
 8. `/dashboard`、`/trends`、`/agent` 和 `/rules` 可选择 database 数据源，用入库最新读数和历史曲线展示、回答环境问题或评估提醒规则。
 9. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
 
+## ESP32 固件边界
+
+`firmware/esp32-room-node` 当前只提供 V1 接入骨架，默认不参与 V0 公开演示。固件只发布温度、湿度、CO2、光照和人体存在遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥。
+
 生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中 `DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。
 
 ## 下一阶段替换点
 
+- 将 ESP32 占位读取函数替换为真实传感器驱动。
 - 用数据库设备注册表替换静态设备清单。
 - 用 PostgreSQL 或 TimescaleDB 替换本地规则与审计 JSON 持久化。
 - 保持智能体、策略和审计接口稳定。

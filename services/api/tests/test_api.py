@@ -326,6 +326,20 @@ def test_mqtt_example_payload_matches_device_protocol() -> None:
     assert all(item.timestamp and item.timestamp.isoformat() == "2026-06-04T17:30:00+08:00" for item in request.readings)
 
 
+def test_firmware_room_node_publishes_protocol_metrics_without_control_subscription() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    source = (repo_root / "firmware/esp32-room-node/src/main.cpp").read_text(encoding="utf-8")
+    gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")
+
+    assert "aiot/room/" in source
+    assert "/telemetry" in source
+    for metric in ("temperature", "humidity", "co2", "light", "presence"):
+        assert f'"{metric}"' in source
+    assert "mqttClient.publish" in source
+    assert "mqttClient.subscribe" not in source
+    assert "firmware/esp32-room-node/include/config.h" in gitignore
+
+
 def test_mqtt_metric_map_payload_expands_readings() -> None:
     request = parse_mqtt_payload(
         '{"device_id":"room_node_01","timestamp":"2026-06-04T17:30:00+08:00","temperature":25.4,"humidity":48.2,"co2":1180}'

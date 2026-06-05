@@ -129,4 +129,4 @@ HTTP 入站用于本地调试、部署验证和脚本写入。生产公网环境
 services/mqtt-ingestor/examples/room-node-message.json
 ```
 
-后端测试会读取该文件并通过当前 MQTT 解析器验证，确保文档示例和实际入站协议保持一致。
+后端测试会读取该文件并通过当前 MQTT 解析器验证，确保文档示例和实际入站协议保持一致。ESP32 固件骨架位于 `firmware/esp32-room-node`，发布同一套 batch payload。
