@@ -1194,6 +1194,81 @@ def test_agent_database_source_sanitizes_connection_errors(monkeypatch) -> None:
     assert payload["tool_calls"][0]["result"]["error"] == "数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态"
 
 
+def test_agent_can_diagnose_telemetry_status(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_telemetry_status_db():
+        return TelemetryStatus(
+            configured=True,
+            connected=True,
+            sensor_table_exists=True,
+            total_readings=16,
+            device_count=3,
+            metric_count=6,
+            latest_reading_at=base,
+            latest_received_at=base,
+            sources=[
+                {
+                    "source": "mqtt",
+                    "total_readings": 11,
+                    "device_count": 2,
+                    "latest_reading_at": base,
+                    "latest_received_at": base,
+                },
+                {
+                    "source": "http",
+                    "total_readings": 5,
+                    "device_count": 1,
+                    "latest_reading_at": base,
+                    "latest_received_at": base,
+                },
+            ],
+            devices=[
+                {
+                    "device_id": "room_node_mqtt_smoke",
+                    "total_readings": 6,
+                    "metric_count": 6,
+                    "latest_reading_at": base,
+                    "latest_received_at": base,
+                }
+            ],
+            status="ok",
+            message="数据库遥测链路已有入库数据。",
+        )
+
+    monkeypatch.setattr("app.agent_tools.telemetry_status_db", fake_telemetry_status_db)
+    response = client.post("/api/agent/chat", json={"message": "MQTT 入站链路状态正常吗？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "get_telemetry_status"
+    assert tool["parameters"] == {"source": "database", "include_sources": True, "include_recent_devices": True}
+    assert tool["result"]["sources"][0]["source"] == "mqtt"
+    assert tool["result"]["devices"][0]["device_id"] == "room_node_mqtt_smoke"
+    assert "telemetry_status" in payload["used_data"]
+    assert "遥测链路当前正常" in payload["message"]["content"]
+    assert "MQTT 11 条" in payload["message"]["content"]
+
+
+def test_agent_telemetry_status_reports_unconfigured_database(monkeypatch) -> None:
+    def fake_telemetry_status_db():
+        return TelemetryStatus(
+            configured=False,
+            connected=False,
+            status="unavailable",
+            message="未配置 DATABASE_URL，无法访问时间序列数据库。",
+        )
+
+    monkeypatch.setattr("app.agent_tools.telemetry_status_db", fake_telemetry_status_db)
+    response = client.post("/api/agent/chat", json={"message": "数据库遥测状态有没有数据？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "get_telemetry_status"
+    assert tool["result"]["status"] == "unavailable"
+    assert "DATABASE_URL" in payload["message"]["content"]
+
+
 def test_agent_can_use_current_model_after_tools(monkeypatch) -> None:
     async def fake_generate_agent_reply(**kwargs):
         assert kwargs["allow_model"] is True

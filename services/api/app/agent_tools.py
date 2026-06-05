@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from app.agent_history import record_agent_conversation, redact_sensitive_text, redact_tool_call
 from app.audit import list_audit_logs, record_audit
-from app.database import latest_sensor_readings_db, query_sensor_history_db
+from app.database import latest_sensor_readings_db, query_sensor_history_db, telemetry_status_db
 from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.mock_data import current_room_state, query_history, summarize_metric
@@ -79,6 +79,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
 
     if _mentions_audit_log(lowered):
         return await _audit_log_response(
+            session_id=session_id,
+            message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_telemetry_status(lowered):
+        return await _telemetry_status_response(
             session_id=session_id,
             message=message,
             used_data=used_data,
@@ -381,6 +392,54 @@ async def _audit_log_response(
         reply += f"其中 {attention_count} 条需要重点关注，包含拒绝、确认或失败结果。"
     else:
         reply += "最近记录没有发现失败或被策略拒绝的动作。"
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
+async def _telemetry_status_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    used_data.append("telemetry_status")
+    status = telemetry_status_db()
+    result = status.model_dump(mode="json")
+    tool_calls.append(
+        ToolCall(
+            name="get_telemetry_status",
+            parameters={"source": "database", "include_sources": True, "include_recent_devices": True},
+            result=result,
+            created_at=now(),
+        )
+    )
+
+    if not status.configured:
+        reply = f"数据库遥测链路还没有配置。{status.message}"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+    if not status.connected:
+        reply = f"数据库遥测链路当前不可用。{status.message}"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+    if status.status == "empty":
+        reply = "数据库已连接，但还没有传感器读数。请先通过 MQTT 或 HTTP 入站写入一条遥测数据。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    source_text = _telemetry_source_text(status.sources)
+    latest_device = status.devices[0] if status.devices else None
+    latest_device_text = (
+        f"最近上报设备是 {latest_device.device_id}，包含 {latest_device.metric_count} 类指标。"
+        if latest_device
+        else "当前状态里没有最近设备摘要。"
+    )
+    reply = (
+        f"遥测链路当前正常，数据库里共有 {status.total_readings} 条读数，"
+        f"覆盖 {status.device_count} 个设备和 {status.metric_count} 类指标。"
+        f"{source_text}{latest_device_text}"
+        f"Timescale 状态：{_timescale_status_text(status)}。"
+    )
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
@@ -1137,6 +1196,27 @@ def _audit_log_summary(log) -> dict:
     }
 
 
+def _telemetry_source_text(sources: list) -> str:
+    if not sources:
+        return "当前没有来源分布摘要。"
+    labels = {"mqtt": "MQTT", "http": "HTTP", "test": "测试写入"}
+    parts = [
+        f"{labels.get(item.source, item.source)} {item.total_readings} 条"
+        for item in sources
+    ]
+    return f"来源分布：{'，'.join(parts)}。"
+
+
+def _timescale_status_text(status) -> str:
+    if status.hypertable:
+        return "Timescale hypertable 已启用"
+    if status.timescale_enabled:
+        return "Timescale 扩展已启用，但当前表未转换为 hypertable"
+    if status.timescale_available:
+        return "Timescale 扩展可用但尚未启用"
+    return "当前使用 PostgreSQL 表运行，Timescale 扩展不可用或未安装"
+
+
 DEVICE_DOC_ENTRIES = [
     {
         "title": "MQTT Topic",
@@ -1377,6 +1457,15 @@ def _mentions_co2_or_environment(text: str) -> bool:
 
 def _mentions_audit_log(text: str) -> bool:
     return any(token in text for token in ("audit", "audit log", "审计", "日志", "记录", "追溯"))
+
+
+def _mentions_telemetry_status(text: str) -> bool:
+    link_tokens = ("遥测", "telemetry", "mqtt", "入站", "数据库", "database", "timescale", "postgres", "链路")
+    status_tokens = ("状态", "是否正常", "正常吗", "有没有数据", "连通", "连接", "来源", "写入", "入库", "诊断", "样本数")
+    recent_device_question = any(token in text for token in ("最近", "最新")) and any(token in text for token in ("上报", "设备"))
+    return any(token in text for token in link_tokens) and (
+        any(token in text for token in status_tokens) or recent_device_question
+    )
 
 
 def _mentions_device_docs(text: str) -> bool:
