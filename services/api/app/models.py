@@ -126,6 +126,20 @@ class RoomState(BaseModel):
     recommendation: str
 
 
+class AnomalyEvent(BaseModel):
+    id: str
+    timestamp: datetime
+    source: Literal["mock", "database"]
+    severity: Literal["info", "warning", "critical"]
+    category: Literal["environment", "sensor_health"]
+    metric: Metric | None = None
+    title: str
+    detail: str
+    recommendation: str
+    status: Literal["active", "observed", "resolved"]
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
 class Device(BaseModel):
     id: str
     name: str

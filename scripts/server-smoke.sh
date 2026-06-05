@@ -122,6 +122,12 @@ status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
 expect_status "$status" "200" "内部服务令牌可以访问私有 API"
 assert_json "$BODY_FILE" 'payload["health_score"] >= 0 and "metrics" in payload' "当前房间状态结构正确"
 
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  "$API_BASE_URL/api/anomalies?source=mock")"
+expect_status "$status" "200" "结构化异常事件接口可访问"
+assert_json "$BODY_FILE" 'len(payload) >= 1 and payload[0]["title"] and payload[0]["recommendation"]' "结构化异常事件响应正确"
+
 cat > "$INGEST_BODY" <<JSON
 {
   "device_id": "$SMOKE_DEVICE_ID",

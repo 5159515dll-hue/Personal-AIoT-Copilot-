@@ -10,6 +10,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2] / "mqtt-ingestor"))
 
 from app import audit as audit_module
 from app import agent_history as agent_history_module
+from app import anomaly_events as anomaly_events_module
 from app import database as database_module
 from app import device_adapter as device_adapter_module
 from app import device_rate_limit as device_rate_limit_module
@@ -402,6 +403,97 @@ def test_sensor_health_database_reports_unavailable(monkeypatch) -> None:
 
     monkeypatch.setattr(sensors_route_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
     response = client.get("/api/sensors/health", params={"source": "database"})
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
+
+
+def test_anomaly_events_mock_reports_structured_events() -> None:
+    response = client.get("/api/anomalies")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload
+    first = payload[0]
+    assert first["id"]
+    assert first["source"] == "mock"
+    assert first["severity"] in {"warning", "critical"}
+    assert first["category"] in {"environment", "sensor_health"}
+    assert first["title"]
+    assert first["detail"]
+    assert first["recommendation"]
+    assert first["status"] in {"active", "observed", "resolved"}
+
+
+def test_anomaly_events_database_source_uses_latest_and_history(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+    captured: list[Metric] = []
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.co2: SensorReading(
+                metric=Metric.co2,
+                value=930,
+                unit="ppm",
+                timestamp=base,
+                device_id="db_node",
+            ),
+            Metric.noise: SensorReading(
+                metric=Metric.noise,
+                value=50,
+                unit="dB",
+                timestamp=base,
+                device_id="db_node",
+            ),
+            Metric.temperature: SensorReading(
+                metric=Metric.temperature,
+                value=25,
+                unit="℃",
+                timestamp=base,
+                device_id="db_node",
+            ),
+            Metric.humidity: SensorReading(
+                metric=Metric.humidity,
+                value=48,
+                unit="%",
+                timestamp=base,
+                device_id="db_node",
+            ),
+        }
+
+    def fake_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        captured.append(metric)
+        if metric == Metric.co2:
+            return [
+                SensorReading(metric=metric, value=880, unit="ppm", timestamp=base - timedelta(hours=1)),
+                SensorReading(metric=metric, value=1320, unit="ppm", timestamp=base),
+            ]
+        if metric == Metric.noise:
+            return [
+                SensorReading(metric=metric, value=44, unit="dB", timestamp=base - timedelta(hours=1)),
+                SensorReading(metric=metric, value=71, unit="dB", timestamp=base),
+            ]
+        if metric == Metric.temperature:
+            return [SensorReading(metric=metric, value=25, unit="℃", timestamp=base)]
+        return [SensorReading(metric=metric, value=48, unit="%", timestamp=base)]
+
+    monkeypatch.setattr(anomaly_events_module, "latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    monkeypatch.setattr(anomaly_events_module, "query_sensor_history_db", fake_query_sensor_history_db)
+
+    response = client.get("/api/anomalies", params={"source": "database"})
+    assert response.status_code == 200
+    payload = response.json()
+    by_metric = {item["metric"]: item for item in payload if item["category"] == "environment"}
+    assert by_metric["co2"]["severity"] == "critical"
+    assert "1320" in by_metric["co2"]["detail"]
+    assert by_metric["noise"]["severity"] == "warning"
+    assert set(captured) == {Metric.co2, Metric.noise, Metric.temperature, Metric.humidity}
+
+
+def test_anomaly_events_database_source_reports_unavailable(monkeypatch) -> None:
+    def unavailable_latest_sensor_readings_db():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr(anomaly_events_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    response = client.get("/api/anomalies", params={"source": "database"})
     assert response.status_code == 503
     assert "DATABASE_URL" in response.json()["detail"]
 

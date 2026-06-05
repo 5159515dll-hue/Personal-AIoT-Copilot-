@@ -3,6 +3,7 @@ import type {
   AgentChatResponse,
   AgentConversationDeleteResponse,
   AgentConversationEntry,
+  AnomalyEvent,
   AuditLog,
   AuditLogQuery,
   AutomationRule,
@@ -83,6 +84,11 @@ function errorMessageFromBody(body: string): string {
 export async function getRoomState(source: TelemetrySource = "mock"): Promise<RoomState> {
   const params = source === "database" ? "?source=database" : "";
   return request<RoomState>(`/api/room/current${params}`);
+}
+
+export async function getAnomalyEvents(source: TelemetrySource = "mock", window = "24h"): Promise<AnomalyEvent[]> {
+  const params = new URLSearchParams({ source, window });
+  return request<AnomalyEvent[]>(`/api/anomalies?${params.toString()}`);
 }
 
 export async function getSensorHistory(

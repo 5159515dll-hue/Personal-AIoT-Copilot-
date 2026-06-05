@@ -32,6 +32,20 @@ export type RoomState = {
   recommendation: string;
 };
 
+export type AnomalyEvent = {
+  id: string;
+  timestamp: string;
+  source: TelemetrySource;
+  severity: "info" | "warning" | "critical";
+  category: "environment" | "sensor_health";
+  metric: MetricName | null;
+  title: string;
+  detail: string;
+  recommendation: string;
+  status: "active" | "observed" | "resolved";
+  evidence: Record<string, unknown>;
+};
+
 export type TelemetryStatus = {
   source: "database";
   configured: boolean;

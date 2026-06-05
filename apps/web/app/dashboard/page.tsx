@@ -6,10 +6,10 @@ import { PageHeader } from "@/components/page-header";
 import { RiskPill } from "@/components/risk-pill";
 import { TelemetrySourceSwitch } from "@/components/telemetry-source-switch";
 import { TrendChart } from "@/components/trend-chart";
-import { getAuditLogs, getDevices, getRoomState, getSensorHealth, getSensorHistory, getTelemetryStatus } from "@/lib/api";
+import { getAnomalyEvents, getAuditLogs, getDevices, getRoomState, getSensorHealth, getSensorHistory, getTelemetryStatus } from "@/lib/api";
 import { formatDateTime, metricLabel, statusLabel } from "@/lib/format";
 import { normalizeTelemetrySource, telemetrySourceLabel } from "@/lib/telemetry-source";
-import type { SensorHealth, SensorReading, TelemetryStatus } from "@/lib/types";
+import type { AnomalyEvent, SensorHealth, SensorReading, TelemetryStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +25,10 @@ type DataResult<T> = {
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const params = await searchParams;
   const source = normalizeTelemetrySource(params?.source);
-  const [roomResult, co2HistoryResult, sensorHealthResult, telemetryResult, devices, auditLogs] = await Promise.all([
+  const [roomResult, co2HistoryResult, anomalyResult, sensorHealthResult, telemetryResult, devices, auditLogs] = await Promise.all([
     readData(() => getRoomState(source)),
     readData(() => getSensorHistory("co2", "15m", undefined, source)),
+    readData(() => getAnomalyEvents(source)),
     readData(() => getSensorHealth(source)),
     readData(getTelemetryStatus),
     getDevices(),
@@ -111,23 +112,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             </div>
           </section>
 
-          <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="text-amber-600" size={18} aria-hidden />
-              <h2 className="text-base font-semibold">异常事件</h2>
-            </div>
-            <div className="mt-3 space-y-2">
-              {room?.anomalies.length ? (
-                room.anomalies.map((item) => (
-                  <p key={item} className="rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">
-                    {item}
-                  </p>
-                ))
-              ) : (
-                <p className="text-sm leading-6 text-muted">当前{telemetrySourceLabel(source)}没有异常。</p>
-              )}
-            </div>
-          </section>
+          <AnomalyEventsCard result={anomalyResult} source={source} fallbackAnomalies={room?.anomalies ?? []} />
         </aside>
       </div>
 
@@ -164,6 +149,61 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </section>
       </div>
     </AppShell>
+  );
+}
+
+function AnomalyEventsCard({
+  result,
+  source,
+  fallbackAnomalies
+}: {
+  result: DataResult<AnomalyEvent[]>;
+  source: ReturnType<typeof normalizeTelemetrySource>;
+  fallbackAnomalies: string[];
+}) {
+  const events = result.data ?? [];
+  const hasEvents = events.length > 0;
+
+  return (
+    <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="text-amber-600" size={18} aria-hidden />
+          <h2 className="text-base font-semibold">异常事件</h2>
+        </div>
+        {hasEvents && <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">{events.length} 条</span>}
+      </div>
+
+      {result.error ? (
+        <p className="mt-3 rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700">{result.error}</p>
+      ) : hasEvents ? (
+        <div className="mt-3 space-y-3">
+          {events.slice(0, 5).map((event) => (
+            <article key={event.id} className={`rounded-lg border p-3 ${anomalySeverityClass(event.severity)}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-white/70 px-2 py-1 text-xs font-semibold">{anomalySeverityLabel(event.severity)}</span>
+                <span className="rounded-md bg-white/70 px-2 py-1 text-xs font-semibold">{anomalyStatusLabel(event.status)}</span>
+                {event.metric && <span className="rounded-md bg-white/70 px-2 py-1 text-xs font-semibold">{metricLabel(event.metric)}</span>}
+              </div>
+              <h3 className="mt-2 text-sm font-semibold">{event.title}</h3>
+              <p className="mt-1 text-sm leading-6 opacity-85">{event.detail}</p>
+              <p className="mt-2 text-xs leading-5 opacity-80">建议：{event.recommendation}</p>
+              <p className="mt-2 text-xs opacity-70">{formatDateTime(event.timestamp)} · {anomalyCategoryLabel(event.category)}</p>
+            </article>
+          ))}
+        </div>
+      ) : fallbackAnomalies.length ? (
+        <div className="mt-3 space-y-2">
+          {fallbackAnomalies.map((item) => (
+            <p key={item} className="rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+              {item}
+            </p>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-6 text-muted">当前{telemetrySourceLabel(source)}没有异常。</p>
+      )}
+    </section>
   );
 }
 
@@ -332,6 +372,41 @@ function telemetryStatusClass(status: TelemetryStatus["status"]): string {
     unavailable: "bg-rose-50 text-rose-700"
   };
   return classes[status];
+}
+
+function anomalySeverityLabel(value: AnomalyEvent["severity"]): string {
+  const labels: Record<AnomalyEvent["severity"], string> = {
+    info: "提示",
+    warning: "关注",
+    critical: "严重"
+  };
+  return labels[value];
+}
+
+function anomalySeverityClass(value: AnomalyEvent["severity"]): string {
+  const styles: Record<AnomalyEvent["severity"], string> = {
+    info: "border-slate-200 bg-slate-50 text-slate-700",
+    warning: "border-amber-200 bg-amber-50 text-amber-800",
+    critical: "border-rose-200 bg-rose-50 text-rose-800"
+  };
+  return styles[value];
+}
+
+function anomalyStatusLabel(value: AnomalyEvent["status"]): string {
+  const labels: Record<AnomalyEvent["status"], string> = {
+    active: "当前仍在",
+    observed: "历史出现",
+    resolved: "已恢复"
+  };
+  return labels[value];
+}
+
+function anomalyCategoryLabel(value: AnomalyEvent["category"]): string {
+  const labels: Record<AnomalyEvent["category"], string> = {
+    environment: "环境阈值",
+    sensor_health: "传感器健康"
+  };
+  return labels[value];
 }
 
 function sensorHealthClass(status: SensorHealth["status"]): string {

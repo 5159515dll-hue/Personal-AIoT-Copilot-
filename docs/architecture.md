@@ -27,6 +27,7 @@
 - `services/api/app/device_adapter.py`：可持久化的模拟设备控制适配器，供 API 和智能体共用。
 - `services/api/app/ingestion.py`：HTTP 与 MQTT payload 转换为统一传感器读数。
 - `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、写入和查询。
+- `services/api/app/anomaly_events.py`：从当前读数、历史曲线和传感器健康状态推导结构化异常事件。
 - `services/api/app/agent_tools.py`：工具优先的智能体编排。
 - `services/api/app/policy.py`：风险分级、确认要求和拒绝逻辑。
 - `services/api/app/rule_engine.py`：评估简单 IF/THEN 提醒规则并写入触发审计。

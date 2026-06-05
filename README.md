@@ -9,6 +9,7 @@
 - 3D 公开项目页，说明系统价值、架构闭环和已跑通的工程证据。
 - 使用模拟房间数据的私有控制台。
 - 最近 24 小时和 7 天环境趋势，支持温度、湿度、二氧化碳、光照、人体存在和噪声分贝模拟数据与数据库遥测切换。
+- 结构化异常事件列表，展示严重级别、指标、来源、发生时间、证据摘要和处理建议。
 - 传感器健康状态检查，识别缺失、过期和异常质量读数。
 - 可选 MQTT 遥测入站服务与 TimescaleDB 存储。
 - ESP32 房间传感器节点固件骨架，对齐 MQTT/HTTP 设备消息协议。
@@ -136,7 +137,7 @@ MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `servic
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd/aiot-mqtt-ingestor.service`。服务读取私有 `.dashboard-env` 中的 `DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`，收到 MQTT 消息后会初始化表结构并写入 `sensor_readings`。
 
-部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
+部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、结构化异常事件、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
 
 ```bash
 npm run smoke:server
