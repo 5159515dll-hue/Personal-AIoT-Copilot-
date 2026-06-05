@@ -12,6 +12,7 @@
     "dev:ingestor": "cd services/mqtt-ingestor && PYTHONPATH=../api python -m ingestor.main",
     "dev:web": "npm --workspace apps/web run dev",
     "contract:api": "python3 scripts/api-contract-check.py",
+    "check:firmware": "if [ -x .venv/bin/python ]; then .venv/bin/python scripts/firmware-protocol-check.py; else python3 scripts/firmware-protocol-check.py; fi",
     "eval:agent-safety": "python3 scripts/agent-safety-eval.py",
     "acceptance:demo": "python3 scripts/demo-acceptance.py",
     "smoke:web": "python3 scripts/web-route-smoke.py",

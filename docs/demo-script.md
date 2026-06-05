@@ -44,6 +44,7 @@
 
 ```bash
 npm run contract:api
+npm run check:firmware
 npm run smoke:web
 npm run smoke:server
 npm run smoke:mqtt
@@ -52,4 +53,4 @@ npm run acceptance:demo
 npm run verify:release
 ```
 
-这些命令分别验证核心 API 契约、Web 页面路由、部署健康、真实 MQTT 入站链路、智能体安全边界、3 分钟作品集演示链路和发布前总验收。
+这些命令分别验证核心 API 契约、ESP32 固件协议、Web 页面路由、部署健康、真实 MQTT 入站链路、智能体安全边界、3 分钟作品集演示链路和发布前总验收。

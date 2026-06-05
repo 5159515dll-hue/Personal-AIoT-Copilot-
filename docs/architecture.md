@@ -20,7 +20,7 @@
 - `apps/web`：公开项目页和控制台。
 - `apps/web/app/api/[...path]/route.ts`：浏览器端同源 API 代理，服务端再转发到 FastAPI，避免 IP 部署时浏览器直连本机地址。
 - `apps/web/middleware.ts`：保护私有控制台路由，公开项目页不拦截。
-- `firmware/esp32-room-node`：ESP32 房间传感器节点固件骨架，发布符合设备协议的 MQTT 遥测。
+- `firmware/esp32-room-node`：ESP32 房间传感器节点固件，读取真实环境传感器并发布符合设备协议的 MQTT 遥测。
 - `services/api/app/routes`：前端使用的后端接口。
 - `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
 - `services/api/app/mock_data.py`：确定性传感器与设备数据。
@@ -35,7 +35,7 @@
 - `services/mqtt-ingestor`：订阅 MQTT 遥测并写入时间序列数据库。
 - `infra/docker-compose.yml`：本地数据库、MQTT broker、API、前端和入站服务编排。
 - `infra/systemd`：生产服务器上的 API、Web 和 MQTT 入站 systemd 服务模板。
-- `docs/device-protocol.md`：MQTT 与 HTTP 遥测 payload 协议，约束后续真实 ESP32 节点接入格式。
+- `docs/device-protocol.md`：MQTT 与 HTTP 遥测 payload 协议，约束 ESP32 节点、脚本和入站服务的稳定格式。
 
 ## 默认模拟数据流
 
@@ -61,13 +61,14 @@
 
 ## ESP32 固件边界
 
-`firmware/esp32-room-node` 当前只提供 V1 接入骨架，默认不参与 V0 公开演示。固件只发布温度、湿度、CO2、光照、人体存在和噪声分贝遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥；噪声只上报 dB 数值，不采集或上传原始音频。
+`firmware/esp32-room-node` 已提供真实传感器读取路径，支持 SHT31 温湿度、SCD40 / SCD41 CO2、BH1750 光照、GPIO 人体存在和可选 ADC 噪声分贝。固件只发布遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥；噪声只上报 dB 数值，不采集或上传原始音频。未接入或读取失败的传感器会被跳过，避免把固定值伪装成真实数据。
 
 生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中会话密钥、内部服务令牌、`DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。私有控制台访问口令固定为 `admin123`，不依赖环境变量覆盖。
 
 ## 下一阶段替换点
 
-- 将 ESP32 占位读取函数替换为真实传感器驱动。
+- 烧录并接线真实 ESP32 节点，让真实传感器数据持续写入数据库。
+- 基于真实硬件运行长时间离线、乱序和异常读数测试。
 - 用数据库设备注册表替换静态设备清单。
 - 用 PostgreSQL 或 TimescaleDB 替换本地规则与审计 JSON 持久化。
 - 保持智能体、策略和审计接口稳定。

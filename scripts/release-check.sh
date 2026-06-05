@@ -29,6 +29,7 @@ run_step "前端 TypeScript 类型检查" npm --workspace apps/web run typecheck
 run_step "前端 ESLint 检查" npm --workspace apps/web run lint
 run_step "前端生产构建" npm --workspace apps/web run build
 run_step "核心 API 契约检查" npm run contract:api
+run_step "ESP32 固件协议检查" npm run check:firmware
 run_step "Web 页面路由烟测" npm run smoke:web
 run_step "MQTT 遥测入站烟测" npm run smoke:mqtt
 run_step "服务器部署烟测" npm run smoke:server

@@ -11,7 +11,7 @@
 - 总览页显示遥测链路状态，包括数据库连接、样本数、最新入库时间和 Timescale 状态。
 - 总览页显示传感器健康状态，能区分正常、过期、异常、离线和不可用。
 - MQTT/HTTP 设备消息协议有文档说明，示例 payload 能被当前解析器接受。
-- ESP32 固件骨架只发布遥测，不订阅控制 topic，且真实密钥配置文件被 Git 忽略。
+- ESP32 固件只发布遥测，不订阅控制 topic，真实密钥配置文件被 Git 忽略；SHT31、BH1750、SCD40 / SCD41 和 GPIO 存在传感器读取路径已实现，未接入传感器不会伪造成正常读数。
 - 智能体可以基于工具证据回答“今天二氧化碳情况怎么样？”。
 - 智能体可以通过 `summarize_daily_environment` 总结当天环境变化，并指出空气最差的大致时间。
 - 智能体可以通过 `summarize_weekly_environment` 总结最近 7 天二氧化碳、温湿度、光照、噪声和人体存在关系，并说明人体存在不能等同真实学习状态。
@@ -39,6 +39,7 @@ npm run test:api
 npm run test:web
 npm run test
 npm run contract:api
+npm run check:firmware
 npm run smoke:web
 npm run smoke:mqtt
 npm run smoke:server
@@ -48,6 +49,8 @@ npm run verify:release
 ```
 
 `npm run contract:api` 面向已部署 API，会逐一请求当前版本核心接口，并校验 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision`、`AuditLog` 和模型厂商目录的关键字段、枚举值和嵌套结构。模型厂商检查只读取目录和脱敏配置，不导入测试密钥、不切换当前模型；它会确认小米 MiMo / Kimi 中国区入口存在，且接口响应不回显明文 `api_key`。该脚本用于保护作品集公开接口契约，避免后续改动只通过页面烟测但破坏 API schema。
+
+`npm run check:firmware` 面向 ESP32 房间传感器节点，会检查固件是否保留真实 SHT31、BH1750、SCD40 / SCD41、GPIO 存在和可选 ADC 后备读取路径，确认 `include/config.example.h` 显式声明硬件开关，确认 `config.h` 被 Git 忽略，并用后端 MQTT 解析器验证示例 payload。
 
 `npm run smoke:web` 面向已部署 Web，会检查公开项目页、访问口令页、未登录私有页拦截、登录后的总览、趋势、设备、智能体、模型、规则和审计页面是否返回可读中文页面，并验证 Next.js 同源 API 代理的公开健康检查、私有 API 未登录拒绝和登录后访问。
 
@@ -59,7 +62,7 @@ npm run verify:release
 
 `npm run acceptance:demo` 面向已部署 Web 和 API，会验证 3 分钟作品集演示链路：公开项目页能讲清系统价值，固定口令 `admin123` 能进入控制台，模拟环境和趋势接口非空，设备风险清单包含可控低风险设备和高风险边界，智能体问答必须展示工具依据，规则草案必须由用户确认后保存并写入审计，绕过策略请求必须被拒绝且能通过审计筛选追溯。脚本会在评估后暂停自己保存的验收规则，避免长期重复触发提醒。
 
-`npm run verify:release` 是发布前总验收入口，会依次运行后端 API 单元测试、前端 TypeScript 类型检查、ESLint、生产构建、API 契约检查、Web 页面路由烟测、MQTT 入站烟测、服务器烟测、智能体安全评测和 3 分钟演示验收。它适合作为每次推送或服务器更新后的最终门禁。
+`npm run verify:release` 是发布前总验收入口，会依次运行后端 API 单元测试、前端 TypeScript 类型检查、ESLint、生产构建、API 契约检查、ESP32 固件协议检查、Web 页面路由烟测、MQTT 入站烟测、服务器烟测、智能体安全评测和 3 分钟演示验收。它适合作为每次推送或服务器更新后的最终门禁。
 
 ## 后续评估指标
 

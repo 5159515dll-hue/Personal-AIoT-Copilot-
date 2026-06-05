@@ -12,7 +12,7 @@
 - 结构化异常事件列表，展示严重级别、指标、来源、发生时间、证据摘要和处理建议。
 - 传感器健康状态检查，识别缺失、过期和异常质量读数。
 - 可选 MQTT 遥测入站服务与 TimescaleDB 存储。
-- ESP32 房间传感器节点固件骨架，对齐 MQTT/HTTP 设备消息协议。
+- ESP32 房间传感器节点固件，支持 SHT31、BH1750、SCD40 / SCD41、GPIO 存在传感器和可选 ADC 后备，对齐 MQTT/HTTP 设备消息协议。
 - 带风险等级的设备清单和可持久化模拟控制。
 - 受工具约束的智能体对话，可在模拟数据和数据库遥测之间切换，支持日总结、原因解释、安全行动建议、设备状态分析、结构化异常事件解释、本地设备协议查询，并可选调用当前大模型增强分析。
 - 中国区模型厂商配置页，预置小米 MiMo 和 Kimi 接口，并可选择智能体当前模型。
@@ -133,7 +133,7 @@ curl -X POST -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localh
 
 `/dashboard`、`/trends`、`/agent` 和 `/rules` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。总览页的“遥测链路”卡片会展示数据库连接、样本数、最新入库时间、Timescale 扩展状态、HTTP/MQTT 入站来源分布和最近设备摘要。
 
-MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。ESP32 固件骨架见 `firmware/esp32-room-node`，默认只发布遥测，不接收设备控制指令。
+MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。ESP32 固件见 `firmware/esp32-room-node`，默认只发布遥测，不接收设备控制指令；未接入或读取失败的传感器不会伪造成正常读数。
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd` 下的 systemd 模板运行 `aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor`。服务读取私有 `.dashboard-env` 中的会话密钥、内部服务令牌、`DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`；访问口令仍固定为 `admin123`。环境文件示例见 `infra/dashboard-env.example`，具体安装和重启步骤见 `infra/systemd/README.md`。
 
@@ -147,6 +147,12 @@ npm run smoke:mqtt
 
 ```bash
 npm run contract:api
+```
+
+ESP32 固件协议可以单独验收。脚本会检查固件真实传感器读取路径、配置模板、密钥忽略规则、设备协议文档和 MQTT 示例 payload 是否一致：
+
+```bash
+npm run check:firmware
 ```
 
 Web 页面路由可以单独验收。脚本会验证公开页、访问口令页、未登录拦截、登录后的总览、趋势、设备、智能体、模型、规则、审计页面，以及 Next.js 同源 `/api/*` 代理鉴权：
@@ -173,7 +179,7 @@ npm run eval:agent-safety
 npm run acceptance:demo
 ```
 
-发布前可以运行总验收入口。它会串联后端单元测试、前端类型检查 / lint / 生产构建、API 契约、Web 页面、MQTT、服务器烟测、智能体安全评测和 3 分钟演示验收：
+发布前可以运行总验收入口。它会串联后端单元测试、前端类型检查 / lint / 生产构建、API 契约、ESP32 固件协议、Web 页面、MQTT、服务器烟测、智能体安全评测和 3 分钟演示验收：
 
 ```bash
 npm run verify:release
@@ -194,6 +200,7 @@ npm run test:api
 npm run test:web
 npm run test
 npm run contract:api
+npm run check:firmware
 npm run smoke:web
 npm run smoke:mqtt
 npm run smoke:server
@@ -218,6 +225,6 @@ npm run verify:release
 
 ## 后续路线
 
-- 下一阶段：把 `firmware/esp32-room-node` 的占位读取函数替换为真实传感器驱动，接入 ESP32 传感器节点和真实环境数据。
+- 下一阶段：把 `firmware/esp32-room-node` 烧录到真实 ESP32 节点，按 `include/config.example.h` 接线并让真实环境数据持续进入数据库。
 - 再下一阶段：低风险物理设备控制、确认流程和更强的规则引擎。
 - 研究扩展：智能体安全评测任务集和提示注入测试。

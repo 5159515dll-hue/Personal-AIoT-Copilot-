@@ -1,6 +1,6 @@
 # 设备消息协议
 
-当前版本不接入真实 ESP32 固件，但已经保留 MQTT 和 HTTP 遥测入站协议。该文档定义 V0 允许的传感器消息格式，后续真实硬件接入时应优先保持这些字段稳定。
+当前版本已经包含 ESP32 房间传感器节点固件、MQTT 入站服务和 HTTP 调试入站协议。该文档定义传感器消息格式；真实硬件、脚本和服务器烟测都应保持这些字段稳定。
 
 ## MQTT Topic
 
@@ -152,7 +152,9 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
 services/mqtt-ingestor/examples/room-node-message.json
 ```
 
-后端测试会读取该文件并通过当前 MQTT 解析器验证，确保文档示例和实际入站协议保持一致。ESP32 固件骨架位于 `firmware/esp32-room-node`，发布同一套 batch payload。
+后端测试会读取该文件并通过当前 MQTT 解析器验证，确保文档示例和实际入站协议保持一致。ESP32 固件位于 `firmware/esp32-room-node`，内置 SHT31、BH1750、SCD40 / SCD41 和 GPIO 存在传感器读取流程，并发布同一套 batch payload。
+
+固件不会把未接入传感器伪造成正常读数。不可用指标会被跳过；只有显式启用 `AIOT_ALLOW_DEMO_FALLBACK` 时，固件才会发布 `quality=stale` 的演示后备值。
 
 服务器部署后可以运行真实 MQTT 入站烟测：
 
