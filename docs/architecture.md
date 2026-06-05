@@ -33,6 +33,7 @@
 - `services/mqtt-ingestor`：订阅 MQTT 遥测并写入时间序列数据库。
 - `infra/docker-compose.yml`：本地数据库、MQTT broker、API、前端和入站服务编排。
 - `infra/systemd/aiot-mqtt-ingestor.service`：生产服务器上的 MQTT 入站服务模板。
+- `docs/device-protocol.md`：MQTT 与 HTTP 遥测 payload 协议，约束后续真实 ESP32 节点接入格式。
 
 ## 默认模拟数据流
 
@@ -47,7 +48,7 @@
 ## 可选真实遥测数据流
 
 1. 传感器节点向 MQTT topic `aiot/room/+/telemetry` 发布 JSON 消息。
-2. `services/mqtt-ingestor` 解析 batch、单指标或 metric map payload。
+2. `services/mqtt-ingestor` 按 `docs/device-protocol.md` 解析 batch、单指标或 metric map payload。
 3. 入站服务将读数写入 `sensor_readings` 表。
 4. `GET /api/telemetry/status` 汇总数据库连通性、样本数、最新入库时间和 Timescale 扩展状态。
 5. `GET /api/room/current?source=database` 从数据库最新读数生成当前房间摘要。

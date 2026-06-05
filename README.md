@@ -121,7 +121,7 @@ curl -X POST "http://localhost:8000/api/rules/evaluate?source=database"
 
 `/dashboard`、`/trends`、`/agent` 和 `/rules` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。总览页的“遥测链路”卡片会展示数据库连接、样本数、最新入库时间和 Timescale 扩展状态。
 
-MQTT 消息示例见 `services/mqtt-ingestor/examples/room-node-message.json`。
+MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd/aiot-mqtt-ingestor.service`。服务读取私有 `.dashboard-env` 中的 `DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`，收到 MQTT 消息后会初始化表结构并写入 `sensor_readings`。
 
