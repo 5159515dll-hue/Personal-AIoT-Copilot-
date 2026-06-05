@@ -13,7 +13,6 @@ import type {
 } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 
-type PendingKeyAction = "import" | "test" | null;
 type PendingSwitchAction = "switch" | "test" | null;
 type PanelResult = ModelConnectionTestResponse | string | null;
 
@@ -33,7 +32,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
   const [keyProviderId, setKeyProviderId] = useState(initialActiveProvider.id);
   const [keyEndpointId, setKeyEndpointId] = useState(initialActiveEndpoint.id);
   const [apiKey, setApiKey] = useState("");
-  const [keyPending, setKeyPending] = useState<PendingKeyAction>(null);
+  const [keyPending, setKeyPending] = useState(false);
   const [keyResult, setKeyResult] = useState<PanelResult>(null);
 
   const [switchProviderId, setSwitchProviderId] = useState(initialActiveProvider.id);
@@ -58,6 +57,10 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     () => switchProvider.endpoints.find((item) => item.id === switchEndpointId) ?? switchProvider.endpoints[0],
     [switchEndpointId, switchProvider]
   );
+  const switchModelOptions = useMemo(() => uniqueModelOptions(switchProvider.models, activeConfig?.model), [
+    activeConfig?.model,
+    switchProvider.models
+  ]);
   const activeProvider = useMemo(
     () => catalog.providers.find((item) => item.id === activeConfig?.provider_id) ?? null,
     [activeConfig?.provider_id, catalog.providers]
@@ -95,17 +98,6 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     setSwitchResult(null);
   }
 
-  function keyTestPayload(): ModelConfigRequest {
-    return {
-      provider_id: keyProvider.id,
-      endpoint_id: keyEndpoint.id,
-      protocol: keyEndpoint.protocol,
-      base_url: keyEndpoint.base_url,
-      model: keyProvider.default_model,
-      api_key: apiKey.trim() || null
-    };
-  }
-
   function switchPayload(): ModelConfigRequest {
     return {
       provider_id: switchProvider.id,
@@ -124,7 +116,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
       setKeyResult("请先粘贴当前厂商接口密钥。");
       return;
     }
-    setKeyPending("import");
+    setKeyPending(true);
     setKeyResult(null);
     try {
       const saved = await importModelProviderKey({
@@ -145,24 +137,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     } catch (error) {
       setKeyResult(error instanceof Error ? error.message : "密钥导入失败");
     } finally {
-      setKeyPending(null);
-    }
-  }
-
-  async function onTestKey() {
-    if (!apiKey.trim() && !keySavedConfig?.api_key_set) {
-      setKeyResult("请先粘贴密钥，或选择已经导入密钥的厂商。");
-      return;
-    }
-    setKeyPending("test");
-    setKeyResult(null);
-    try {
-      const response = await testModelConnection(keyTestPayload());
-      setKeyResult(response);
-    } catch (error) {
-      setKeyResult(error instanceof Error ? error.message : "连接测试失败");
-    } finally {
-      setKeyPending(null);
+      setKeyPending(false);
     }
   }
 
@@ -226,7 +201,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
             </span>
             <div>
               <h2 className="text-base font-semibold">密钥导入工具</h2>
-              <p className="text-sm text-muted">只导入或覆盖厂商密钥，不改变智能体当前模型。</p>
+              <p className="text-sm text-muted">这里只保存厂商密钥。同一厂商只保留一条，第二次导入会覆盖第一次。</p>
             </div>
           </div>
 
@@ -302,20 +277,11 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
           <div className="mt-5 flex flex-wrap gap-3">
             <button
               type="submit"
-              disabled={keyPending !== null}
+              disabled={keyPending}
               className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               <PlugZap size={16} aria-hidden />
-              导入或覆盖密钥
-            </button>
-            <button
-              type="button"
-              onClick={() => void onTestKey()}
-              disabled={keyPending !== null}
-              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <TestTube2 size={16} aria-hidden />
-              测试密钥
+              {keyPending ? "正在导入" : "导入或覆盖密钥"}
             </button>
           </div>
 
@@ -329,7 +295,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
             </span>
             <div>
               <h2 className="text-base font-semibold">切换当前模型</h2>
-              <p className="text-sm text-muted">选择智能体正在使用的厂商、接口和模型；这里不输入密钥。</p>
+              <p className="text-sm text-muted">选择智能体正在使用的厂商、接口和模型；切换时直接使用已导入密钥。</p>
             </div>
           </div>
 
@@ -383,18 +349,16 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
 
             <label className="block">
               <span className="text-sm font-semibold text-slate-700">模型</span>
-              <input
-                list="model-options"
+              <select
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
                 className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
-                placeholder="输入或选择模型名"
-              />
-              <datalist id="model-options">
-                {switchProvider.models.map((item) => (
+              >
+                {switchModelOptions.map((item) => (
                   <option key={item} value={item} />
                 ))}
-              </datalist>
+              </select>
+              <span className="mt-2 block text-xs leading-5 text-muted">模型切换不会要求重新输入接口密钥。</span>
             </label>
           </div>
 
@@ -411,7 +375,7 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
               className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               <ArrowLeftRight size={16} aria-hidden />
-              切换为当前模型
+              {switchPending === "switch" ? "正在切换" : "切换为当前模型"}
             </button>
             <button
               type="button"
@@ -551,4 +515,8 @@ function endpointFromConfig(provider: ModelProviderDefinition, config: PublicMod
 
 function providerLabel(providers: ModelProviderDefinition[], providerId: string): string {
   return providers.find((item) => item.id === providerId)?.label ?? providerId;
+}
+
+function uniqueModelOptions(models: string[], activeModel: string | undefined): string[] {
+  return Array.from(new Set([activeModel, ...models].filter((item): item is string => Boolean(item))));
 }
