@@ -38,11 +38,14 @@
 npm run test:api
 npm run test:web
 npm run test
+npm run contract:api
 npm run smoke:mqtt
 npm run smoke:server
 npm run eval:agent-safety
 npm run acceptance:demo
 ```
+
+`npm run contract:api` 面向已部署 API，会逐一请求当前版本核心接口，并校验 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision` 和 `AuditLog` 的关键字段、枚举值和嵌套结构。该脚本用于保护作品集公开接口契约，避免后续改动只通过页面烟测但破坏 API schema。
 
 `npm run smoke:mqtt` 面向已部署服务器，会向 MQTT broker 发布一条唯一设备编号的 batch payload，并通过 `/api/telemetry/status` 验证 `aiot-mqtt-ingestor` 已经把该消息以 `source=mqtt` 写入 PostgreSQL / TimescaleDB。该脚本用于证明 MQTT、入站服务、数据库和 API 四段链路真实串通。
 

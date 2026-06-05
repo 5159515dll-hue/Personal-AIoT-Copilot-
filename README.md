@@ -143,6 +143,12 @@ MQTT 入站链路可以单独验收。脚本会发布一条唯一设备编号的
 npm run smoke:mqtt
 ```
 
+核心 API 契约可以单独验收。脚本会验证 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision` 和 `AuditLog` 的关键字段，避免公开接口被后续改动破坏：
+
+```bash
+npm run contract:api
+```
+
 部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、结构化异常事件、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
 
 ```bash
@@ -175,6 +181,7 @@ API_BASE_URL="http://82.157.148.249:8000" WEB_BASE_URL="http://82.157.148.249" A
 npm run test:api
 npm run test:web
 npm run test
+npm run contract:api
 npm run smoke:mqtt
 npm run smoke:server
 npm run eval:agent-safety
