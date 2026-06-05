@@ -207,6 +207,16 @@ export type AuditLog = {
   details: string;
 };
 
+export type AuditLogQuery = {
+  limit?: number;
+  actor?: AuditLog["actor"] | "";
+  action?: string;
+  result?: string;
+  policy_result?: AuditLog["policy_result"] | "";
+  risk_level?: AuditLog["risk_level"] | "";
+  q?: string;
+};
+
 export type ProviderProtocol = "openai" | "anthropic";
 
 export type ProviderEndpoint = {

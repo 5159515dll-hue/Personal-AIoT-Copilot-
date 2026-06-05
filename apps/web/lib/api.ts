@@ -4,6 +4,7 @@ import type {
   AgentConversationDeleteResponse,
   AgentConversationEntry,
   AuditLog,
+  AuditLogQuery,
   AutomationRule,
   AutomationRuleCreate,
   AutomationRuleUpdate,
@@ -172,8 +173,32 @@ export async function deleteAgentHistoryEntry(id: string): Promise<AgentConversa
   });
 }
 
-export async function getAuditLogs(): Promise<AuditLog[]> {
-  return request<AuditLog[]>("/api/audit-logs");
+export async function getAuditLogs(query: AuditLogQuery = {}): Promise<AuditLog[]> {
+  const params = new URLSearchParams();
+  if (query.limit) {
+    params.set("limit", String(query.limit));
+  }
+  if (query.actor) {
+    params.set("actor", query.actor);
+  }
+  if (query.action) {
+    params.set("action", query.action);
+  }
+  if (query.result) {
+    params.set("result", query.result);
+  }
+  if (query.policy_result) {
+    params.set("policy_result", query.policy_result);
+  }
+  if (query.risk_level) {
+    params.set("risk_level", query.risk_level);
+  }
+  const keyword = query.q?.trim();
+  if (keyword) {
+    params.set("q", keyword);
+  }
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return request<AuditLog[]>(`/api/audit-logs${suffix}`);
 }
 
 export async function getModelProviderCatalog(): Promise<ModelProviderCatalog> {

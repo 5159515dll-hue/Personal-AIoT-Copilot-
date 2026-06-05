@@ -626,6 +626,68 @@ def test_device_control_rate_limit_blocks_rapid_repeated_execution() -> None:
     assert "频繁" in latest["details"]
 
 
+def test_audit_logs_can_be_filtered_for_traceability() -> None:
+    allowed = PolicyDecision(
+        result=PolicyResult.allowed,
+        risk_level=RiskLevel.low,
+        requires_confirmation=False,
+        reason="低风险模拟设备允许执行",
+    )
+    denied = PolicyDecision(
+        result=PolicyResult.denied,
+        risk_level=RiskLevel.high,
+        requires_confirmation=False,
+        reason="禁止关闭安全报警器",
+    )
+    audit_module.record_audit(
+        actor="user",
+        action="control_device",
+        result="success",
+        details="台灯已打开",
+        parameters={"device_id": "desk_lamp_01"},
+        policy=allowed,
+    )
+    audit_module.record_audit(
+        actor="agent",
+        action="control_device",
+        result="blocked",
+        details="关闭安全报警器被策略拒绝",
+        parameters={"device_id": "alarm_01"},
+        policy=denied,
+    )
+    audit_module.record_audit(
+        actor="system",
+        action="trigger_automation_rule",
+        result="success",
+        details="二氧化碳提醒规则已触发",
+        parameters={"rule_id": "rule_co2"},
+    )
+
+    blocked_response = client.get(
+        "/api/audit-logs",
+        params={
+            "action": "control_device",
+            "result": "blocked",
+            "policy_result": "denied",
+            "risk_level": "high",
+        },
+    )
+    assert blocked_response.status_code == 200
+    blocked_logs = blocked_response.json()
+    assert len(blocked_logs) == 1
+    assert blocked_logs[0]["parameters"]["device_id"] == "alarm_01"
+
+    actor_response = client.get("/api/audit-logs", params={"actor": "system"})
+    assert actor_response.status_code == 200
+    assert [item["action"] for item in actor_response.json()] == ["trigger_automation_rule"]
+
+    query_response = client.get("/api/audit-logs", params={"q": "台灯"})
+    assert query_response.status_code == 200
+    query_logs = query_response.json()
+    assert len(query_logs) == 1
+    assert query_logs[0]["parameters"]["device_id"] == "desk_lamp_01"
+
+
 def test_agent_control_persists_mock_device_state() -> None:
     response = client.post("/api/agent/chat", json={"message": "打开台灯"})
     assert response.status_code == 200
