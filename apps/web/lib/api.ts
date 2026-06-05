@@ -9,7 +9,9 @@ import type {
   MetricName,
   ModelConfigRequest,
   ModelConnectionTestResponse,
+  ModelKeyImportRequest,
   ModelProviderCatalog,
+  ModelSelectionRequest,
   PublicModelConfig,
   RuleEvaluation,
   RoomState,
@@ -150,6 +152,20 @@ export async function getModelProviderCatalog(): Promise<ModelProviderCatalog> {
 
 export async function saveModelConfig(payload: ModelConfigRequest): Promise<PublicModelConfig> {
   return request<PublicModelConfig>("/api/model-providers/active", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function importModelProviderKey(payload: ModelKeyImportRequest): Promise<PublicModelConfig> {
+  return request<PublicModelConfig>("/api/model-providers/keys", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function switchActiveModel(payload: ModelSelectionRequest): Promise<PublicModelConfig> {
+  return request<PublicModelConfig>("/api/model-providers/selection", {
     method: "POST",
     body: JSON.stringify(payload)
   });

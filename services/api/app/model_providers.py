@@ -7,14 +7,17 @@ from urllib.parse import urljoin
 import httpx
 
 from app.models import (
+    ActiveModelSelection,
     AgentModelUsage,
     AutomationRuleCreate,
     ModelConfig,
     ModelConfigRequest,
     ModelConnectionTestRequest,
     ModelConnectionTestResponse,
+    ModelKeyImportRequest,
     ModelProviderCatalog,
     ModelProviderDefinition,
+    ModelSelectionRequest,
     PolicyDecision,
     PolicyResult,
     ProviderEndpoint,
@@ -26,6 +29,7 @@ from app.storage import JsonListStore
 from app.time_utils import now
 
 config_store = JsonListStore("model_config.json", ModelConfig)
+active_selection_store = JsonListStore("active_model_selection.json", ActiveModelSelection)
 
 AGENT_SYSTEM_PROMPT = """你是“个人空间智能物联助手”的受约束分析层。你不能直接控制设备，也不能绕过策略引擎。
 
@@ -98,10 +102,38 @@ def get_catalog() -> ModelProviderCatalog:
 
 
 def get_active_config() -> ModelConfig | None:
-    configs = config_store.list()
-    if not configs:
+    selection = get_active_selection()
+    if selection is None:
         return None
-    return sorted(configs, key=lambda item: item.updated_at, reverse=True)[0]
+    key_config = _provider_key_config(selection.provider_id)
+    return ModelConfig(
+        provider_id=selection.provider_id,
+        endpoint_id=selection.endpoint_id,
+        protocol=selection.protocol,
+        base_url=selection.base_url,
+        model=selection.model,
+        api_key=key_config.api_key if key_config else None,
+        updated_at=selection.updated_at,
+    )
+
+
+def get_active_selection() -> ActiveModelSelection | None:
+    selections = active_selection_store.list()
+    if selections:
+        return sorted(selections, key=lambda item: item.updated_at, reverse=True)[0]
+    if active_selection_store.path.exists():
+        return None
+    legacy_config = _latest_config()
+    if legacy_config is None:
+        return None
+    return ActiveModelSelection(
+        provider_id=legacy_config.provider_id,
+        endpoint_id=legacy_config.endpoint_id,
+        protocol=legacy_config.protocol,
+        base_url=legacy_config.base_url,
+        model=legacy_config.model,
+        updated_at=legacy_config.updated_at,
+    )
 
 
 def get_public_config() -> PublicModelConfig | None:
@@ -109,18 +141,43 @@ def get_public_config() -> PublicModelConfig | None:
 
 
 def get_public_configs() -> list[PublicModelConfig]:
+    latest_by_provider: dict[str, ModelConfig] = {}
+    for config in sorted(config_store.list(), key=lambda item: item.updated_at, reverse=True):
+        latest_by_provider.setdefault(config.provider_id, config)
     return [
         redacted
         for redacted in (
             redact_config(config)
-            for config in sorted(config_store.list(), key=lambda item: item.updated_at, reverse=True)
+            for config in latest_by_provider.values()
         )
         if redacted is not None
     ]
 
 
 def save_config(request: ModelConfigRequest) -> PublicModelConfig:
-    _, endpoint = validate_model_target(
+    if request.api_key and request.api_key.strip():
+        import_api_key(
+            ModelKeyImportRequest(
+                provider_id=request.provider_id,
+                endpoint_id=request.endpoint_id,
+                protocol=request.protocol,
+                base_url=request.base_url,
+                api_key=request.api_key,
+            )
+        )
+    return select_active_model(
+        ModelSelectionRequest(
+            provider_id=request.provider_id,
+            endpoint_id=request.endpoint_id,
+            protocol=request.protocol,
+            base_url=request.base_url,
+            model=request.model,
+        )
+    )
+
+
+def import_api_key(request: ModelKeyImportRequest) -> PublicModelConfig:
+    provider, endpoint = validate_model_target(
         request.provider_id,
         request.endpoint_id,
         request.protocol,
@@ -128,32 +185,53 @@ def save_config(request: ModelConfigRequest) -> PublicModelConfig:
     )
     base_url = endpoint.base_url.rstrip("/")
     configs = config_store.list()
-    existing = _matching_config(
-        configs,
-        provider_id=request.provider_id,
-        endpoint_id=request.endpoint_id,
-        protocol=request.protocol,
-        base_url=base_url,
-    )
-    requested_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
-    api_key = requested_key or _reusable_api_key(
-        existing,
-        provider_id=request.provider_id,
-        endpoint_id=request.endpoint_id,
-        protocol=request.protocol,
-        base_url=base_url,
-    )
+    _ensure_active_selection_initialized(configs)
+    api_key = request.api_key.strip()
+    if not api_key:
+        raise ValueError("接口密钥不能为空。")
     config = ModelConfig(
         provider_id=request.provider_id,
         endpoint_id=request.endpoint_id,
         protocol=request.protocol,
         base_url=base_url,
-        model=request.model,
+        model=provider.default_model,
         api_key=api_key,
         updated_at=now(),
     )
-    config_store.replace_all([config, *[item for item in configs if not _same_config_target(item, config)]])
+    config_store.replace_all([config, *[item for item in configs if item.provider_id != config.provider_id]])
     return redact_config(config)
+
+
+def select_active_model(request: ModelSelectionRequest) -> PublicModelConfig:
+    _, endpoint = validate_model_target(
+        request.provider_id,
+        request.endpoint_id,
+        request.protocol,
+        request.base_url,
+    )
+    key_config = _provider_key_config(request.provider_id)
+    if not key_config or not key_config.api_key:
+        raise ValueError("请先导入该厂商接口密钥，再切换当前模型。")
+    selection = ActiveModelSelection(
+        provider_id=request.provider_id,
+        endpoint_id=request.endpoint_id,
+        protocol=request.protocol,
+        base_url=endpoint.base_url.rstrip("/"),
+        model=request.model,
+        updated_at=now(),
+    )
+    active_selection_store.replace_all([selection])
+    return redact_config(
+        ModelConfig(
+            provider_id=selection.provider_id,
+            endpoint_id=selection.endpoint_id,
+            protocol=selection.protocol,
+            base_url=selection.base_url,
+            model=selection.model,
+            api_key=key_config.api_key,
+            updated_at=selection.updated_at,
+        )
+    )
 
 
 async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectionTestResponse:
@@ -175,26 +253,12 @@ async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectio
         )
 
     base_url = endpoint.base_url.rstrip("/")
-    existing = _matching_config(
-        config_store.list(),
-        provider_id=request.provider_id,
-        endpoint_id=request.endpoint_id,
-        protocol=request.protocol,
-        base_url=base_url,
-    )
     requested_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
     if requested_key:
         api_key = requested_key
-    elif existing:
-        api_key = _reusable_api_key(
-            existing,
-            provider_id=request.provider_id,
-            endpoint_id=request.endpoint_id,
-            protocol=request.protocol,
-            base_url=base_url,
-        )
     else:
-        api_key = None
+        saved_key = _provider_key_config(request.provider_id)
+        api_key = saved_key.api_key if saved_key else None
     if not api_key:
         return ModelConnectionTestResponse(
             ok=False,
@@ -372,51 +436,38 @@ def _preview(api_key: str | None) -> str | None:
     return f"{api_key[:4]}...{api_key[-4:]}"
 
 
-def _reusable_api_key(
-    config: ModelConfig | None,
-    *,
-    provider_id: str,
-    endpoint_id: str,
-    protocol: ProviderProtocol,
-    base_url: str,
-) -> str | None:
-    if not config or not config.api_key:
+def _latest_config() -> ModelConfig | None:
+    configs = config_store.list()
+    if not configs:
         return None
-    if (
-        config.provider_id == provider_id
-        and config.endpoint_id == endpoint_id
-        and config.protocol == protocol
-        and config.base_url.rstrip("/") == base_url.rstrip("/")
-    ):
-        return config.api_key
-    return None
+    return sorted(configs, key=lambda item: item.updated_at, reverse=True)[0]
 
 
-def _matching_config(
-    configs: list[ModelConfig],
-    *,
-    provider_id: str,
-    endpoint_id: str,
-    protocol: ProviderProtocol,
-    base_url: str,
-) -> ModelConfig | None:
-    for config in sorted(configs, key=lambda item: item.updated_at, reverse=True):
-        if (
-            config.provider_id == provider_id
-            and config.endpoint_id == endpoint_id
-            and config.protocol == protocol
-            and config.base_url.rstrip("/") == base_url.rstrip("/")
-        ):
+def _provider_key_config(provider_id: str) -> ModelConfig | None:
+    for config in sorted(config_store.list(), key=lambda item: item.updated_at, reverse=True):
+        if config.provider_id == provider_id and config.api_key:
             return config
     return None
 
 
-def _same_config_target(left: ModelConfig, right: ModelConfig) -> bool:
-    return (
-        left.provider_id == right.provider_id
-        and left.endpoint_id == right.endpoint_id
-        and left.protocol == right.protocol
-        and left.base_url.rstrip("/") == right.base_url.rstrip("/")
+def _ensure_active_selection_initialized(configs: list[ModelConfig]) -> None:
+    if active_selection_store.path.exists():
+        return
+    legacy_config = sorted(configs, key=lambda item: item.updated_at, reverse=True)[0] if configs else None
+    if legacy_config is None:
+        active_selection_store.replace_all([])
+        return
+    active_selection_store.replace_all(
+        [
+            ActiveModelSelection(
+                provider_id=legacy_config.provider_id,
+                endpoint_id=legacy_config.endpoint_id,
+                protocol=legacy_config.protocol,
+                base_url=legacy_config.base_url,
+                model=legacy_config.model,
+                updated_at=legacy_config.updated_at,
+            )
+        ]
     )
 
 

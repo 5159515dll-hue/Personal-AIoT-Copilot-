@@ -187,6 +187,22 @@ export type ModelConfigRequest = {
   api_key?: string | null;
 };
 
+export type ModelKeyImportRequest = {
+  provider_id: string;
+  endpoint_id: string;
+  protocol: ProviderProtocol;
+  base_url: string;
+  api_key: string;
+};
+
+export type ModelSelectionRequest = {
+  provider_id: string;
+  endpoint_id: string;
+  protocol: ProviderProtocol;
+  base_url: string;
+  model: string;
+};
+
 export type ModelConnectionTestResponse = {
   ok: boolean;
   provider_id: string;

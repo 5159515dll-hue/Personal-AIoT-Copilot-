@@ -253,6 +253,31 @@ class ModelConfig(BaseModel):
     updated_at: datetime
 
 
+class ModelKeyImportRequest(BaseModel):
+    provider_id: str
+    endpoint_id: str
+    protocol: ProviderProtocol
+    base_url: str
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
+class ModelSelectionRequest(BaseModel):
+    provider_id: str
+    endpoint_id: str
+    protocol: ProviderProtocol
+    base_url: str
+    model: str
+
+
+class ActiveModelSelection(BaseModel):
+    provider_id: str
+    endpoint_id: str
+    protocol: ProviderProtocol
+    base_url: str
+    model: str
+    updated_at: datetime
+
+
 class PublicModelConfig(BaseModel):
     provider_id: str
     endpoint_id: str

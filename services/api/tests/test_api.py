@@ -47,6 +47,7 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(audit_module.audit_store, "path", tmp_path / "audit_logs.json")
     monkeypatch.setattr(device_adapter_module.device_state_store, "path", tmp_path / "device_states.json")
     monkeypatch.setattr(model_provider_module.config_store, "path", tmp_path / "model_config.json")
+    monkeypatch.setattr(model_provider_module.active_selection_store, "path", tmp_path / "active_model_selection.json")
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
 
 
@@ -913,13 +914,12 @@ def test_model_provider_catalog_uses_china_endpoints() -> None:
 
 def test_model_provider_config_redacts_api_key() -> None:
     response = client.post(
-        "/api/model-providers/active",
+        "/api/model-providers/keys",
         json={
             "provider_id": "kimi",
             "endpoint_id": "kimi_cn_openai",
             "protocol": "openai",
             "base_url": "https://api.moonshot.cn/v1",
-            "model": "kimi-k2.6",
             "api_key": "sk-test-redacted-key",
         },
     )
@@ -930,35 +930,35 @@ def test_model_provider_config_redacts_api_key() -> None:
     assert "api_key" not in payload
 
 
-def test_model_provider_keeps_saved_keys_per_provider() -> None:
+def test_model_provider_imports_keys_once_per_provider_and_switches_active_model() -> None:
     kimi_response = client.post(
-        "/api/model-providers/active",
+        "/api/model-providers/keys",
         json={
             "provider_id": "kimi",
             "endpoint_id": "kimi_cn_openai",
             "protocol": "openai",
             "base_url": "https://api.moonshot.cn/v1",
-            "model": "kimi-k2.6",
             "api_key": "sk-kimi-saved-key-0000",
         },
     )
     assert kimi_response.status_code == 200
 
     xiaomi_response = client.post(
-        "/api/model-providers/active",
+        "/api/model-providers/keys",
         json={
             "provider_id": "xiaomi_mimo",
             "endpoint_id": "mimo_token_cn_openai",
             "protocol": "openai",
             "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
-            "model": "mimo-v2.5-pro",
             "api_key": "tp-xiaomi-saved-key-0000",
         },
     )
     assert xiaomi_response.status_code == 200
 
-    reuse_response = client.post(
-        "/api/model-providers/active",
+    assert client.get("/api/model-providers/active").json() is None
+
+    switch_response = client.post(
+        "/api/model-providers/selection",
         json={
             "provider_id": "kimi",
             "endpoint_id": "kimi_cn_openai",
@@ -968,34 +968,80 @@ def test_model_provider_keeps_saved_keys_per_provider() -> None:
             "api_key": None,
         },
     )
-    assert reuse_response.status_code == 200
-    reused = reuse_response.json()
-    assert reused["provider_id"] == "kimi"
-    assert reused["model"] == "moonshot-v1-32k"
-    assert reused["api_key_set"] is True
-    assert reused["api_key_preview"] == "sk-k...0000"
+    assert switch_response.status_code == 200
+    switched = switch_response.json()
+    assert switched["provider_id"] == "kimi"
+    assert switched["model"] == "moonshot-v1-32k"
+    assert switched["api_key_set"] is True
+    assert switched["api_key_preview"] == "sk-k...0000"
 
     catalog_response = client.get("/api/model-providers")
     assert catalog_response.status_code == 200
     catalog = catalog_response.json()
     assert catalog["active_config"]["provider_id"] == "kimi"
-    saved = {(item["provider_id"], item["endpoint_id"]): item for item in catalog["saved_configs"]}
-    assert ("kimi", "kimi_cn_openai") in saved
-    assert ("xiaomi_mimo", "mimo_token_cn_openai") in saved
-    assert saved[("kimi", "kimi_cn_openai")]["api_key_preview"] == "sk-k...0000"
-    assert saved[("xiaomi_mimo", "mimo_token_cn_openai")]["api_key_preview"] == "tp-x...0000"
+    saved = {item["provider_id"]: item for item in catalog["saved_configs"]}
+    assert set(saved) == {"kimi", "xiaomi_mimo"}
+    assert saved["kimi"]["api_key_preview"] == "sk-k...0000"
+    assert saved["xiaomi_mimo"]["api_key_preview"] == "tp-x...0000"
     assert all("api_key" not in item for item in catalog["saved_configs"])
+
+
+def test_model_provider_second_import_overwrites_same_provider_key() -> None:
+    first_response = client.post(
+        "/api/model-providers/keys",
+        json={
+            "provider_id": "xiaomi_mimo",
+            "endpoint_id": "mimo_token_cn_openai",
+            "protocol": "openai",
+            "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "api_key": "tp-first-key-0000",
+        },
+    )
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        "/api/model-providers/keys",
+        json={
+            "provider_id": "xiaomi_mimo",
+            "endpoint_id": "mimo_token_cn_anthropic",
+            "protocol": "anthropic",
+            "base_url": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "api_key": "tp-second-key-9999",
+        },
+    )
+    assert second_response.status_code == 200
+    assert second_response.json()["api_key_preview"] == "tp-s...9999"
+
+    catalog = client.get("/api/model-providers").json()
+    saved = [item for item in catalog["saved_configs"] if item["provider_id"] == "xiaomi_mimo"]
+    assert len(saved) == 1
+    assert saved[0]["endpoint_id"] == "mimo_token_cn_anthropic"
+    assert saved[0]["api_key_preview"] == "tp-s...9999"
+
+
+def test_model_provider_selection_requires_imported_provider_key() -> None:
+    response = client.post(
+        "/api/model-providers/selection",
+        json={
+            "provider_id": "kimi",
+            "endpoint_id": "kimi_cn_openai",
+            "protocol": "openai",
+            "base_url": "https://api.moonshot.cn/v1",
+            "model": "kimi-k2.6",
+        },
+    )
+    assert response.status_code == 400
+    assert "先导入该厂商接口密钥" in response.json()["detail"]
 
 
 def test_model_provider_rejects_unlisted_base_url() -> None:
     response = client.post(
-        "/api/model-providers/active",
+        "/api/model-providers/keys",
         json={
             "provider_id": "kimi",
             "endpoint_id": "kimi_cn_openai",
             "protocol": "openai",
             "base_url": "http://127.0.0.1:8000/v1",
-            "model": "kimi-k2.6",
             "api_key": "sk-test-redacted-key",
         },
     )
@@ -1005,13 +1051,12 @@ def test_model_provider_rejects_unlisted_base_url() -> None:
 
 def test_model_provider_does_not_reuse_key_across_provider() -> None:
     client.post(
-        "/api/model-providers/active",
+        "/api/model-providers/keys",
         json={
             "provider_id": "kimi",
             "endpoint_id": "kimi_cn_openai",
             "protocol": "openai",
             "base_url": "https://api.moonshot.cn/v1",
-            "model": "kimi-k2.6",
             "api_key": "sk-test-redacted-key",
         },
     )
