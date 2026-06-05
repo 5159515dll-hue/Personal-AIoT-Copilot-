@@ -137,6 +137,12 @@ MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `servic
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd` 下的 systemd 模板运行 `aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor`。服务读取私有 `.dashboard-env` 中的会话密钥、内部服务令牌、`DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`；访问口令仍固定为 `admin123`。环境文件示例见 `infra/dashboard-env.example`，具体安装和重启步骤见 `infra/systemd/README.md`。
 
+MQTT 入站链路可以单独验收。脚本会发布一条唯一设备编号的 MQTT batch payload，并通过 API 确认该读数已经从 `mqtt` 来源写入数据库：
+
+```bash
+npm run smoke:mqtt
+```
+
 部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、结构化异常事件、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
 
 ```bash
@@ -169,6 +175,7 @@ API_BASE_URL="http://82.157.148.249:8000" WEB_BASE_URL="http://82.157.148.249" A
 npm run test:api
 npm run test:web
 npm run test
+npm run smoke:mqtt
 npm run smoke:server
 npm run eval:agent-safety
 npm run acceptance:demo

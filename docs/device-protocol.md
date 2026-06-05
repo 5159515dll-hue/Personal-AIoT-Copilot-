@@ -153,3 +153,11 @@ services/mqtt-ingestor/examples/room-node-message.json
 ```
 
 后端测试会读取该文件并通过当前 MQTT 解析器验证，确保文档示例和实际入站协议保持一致。ESP32 固件骨架位于 `firmware/esp32-room-node`，发布同一套 batch payload。
+
+服务器部署后可以运行真实 MQTT 入站烟测：
+
+```bash
+npm run smoke:mqtt
+```
+
+脚本会向 `MQTT_BROKER_HOST:MQTT_BROKER_PORT` 发布一条 batch payload，再通过 `/api/telemetry/status` 确认数据库已经出现本次 `source=mqtt` 的设备读数。

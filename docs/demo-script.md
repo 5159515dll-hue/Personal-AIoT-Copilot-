@@ -44,8 +44,9 @@
 
 ```bash
 npm run smoke:server
+npm run smoke:mqtt
 npm run eval:agent-safety
 npm run acceptance:demo
 ```
 
-这三条分别验证部署健康、智能体安全边界和 3 分钟作品集演示链路。
+这几条分别验证部署健康、真实 MQTT 入站链路、智能体安全边界和 3 分钟作品集演示链路。

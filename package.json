@@ -13,6 +13,7 @@
     "dev:web": "npm --workspace apps/web run dev",
     "eval:agent-safety": "python3 scripts/agent-safety-eval.py",
     "acceptance:demo": "python3 scripts/demo-acceptance.py",
+    "smoke:mqtt": "if [ -x .venv/bin/python ]; then .venv/bin/python scripts/mqtt-telemetry-smoke.py; else python3 scripts/mqtt-telemetry-smoke.py; fi",
     "smoke:server": "bash scripts/server-smoke.sh",
     "test": "npm run test:api && npm run test:web",
     "test:api": "cd services/api && python -m pytest",
