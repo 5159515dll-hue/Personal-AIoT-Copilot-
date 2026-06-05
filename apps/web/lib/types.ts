@@ -9,6 +9,19 @@ export type SensorReading = {
   quality: "ok" | "stale" | "anomaly";
 };
 
+export type SensorHealth = {
+  metric: MetricName;
+  status: "ok" | "stale" | "anomaly" | "offline" | "unavailable";
+  source: TelemetrySource;
+  device_id: string | null;
+  last_seen_at: string | null;
+  age_minutes: number | null;
+  quality: SensorReading["quality"] | null;
+  value: number | null;
+  unit: string | null;
+  message: string;
+};
+
 export type RoomState = {
   timestamp: string;
   health_score: number;

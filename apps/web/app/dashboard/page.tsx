@@ -1,15 +1,15 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, Database, FileClock, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRight, Database, FileClock, RadioTower, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { MetricCard } from "@/components/metric-card";
 import { PageHeader } from "@/components/page-header";
 import { RiskPill } from "@/components/risk-pill";
 import { TelemetrySourceSwitch } from "@/components/telemetry-source-switch";
 import { TrendChart } from "@/components/trend-chart";
-import { getAuditLogs, getDevices, getRoomState, getSensorHistory, getTelemetryStatus } from "@/lib/api";
-import { formatDateTime, statusLabel } from "@/lib/format";
+import { getAuditLogs, getDevices, getRoomState, getSensorHealth, getSensorHistory, getTelemetryStatus } from "@/lib/api";
+import { formatDateTime, metricLabel, statusLabel } from "@/lib/format";
 import { normalizeTelemetrySource, telemetrySourceLabel } from "@/lib/telemetry-source";
-import type { SensorReading, TelemetryStatus } from "@/lib/types";
+import type { SensorHealth, SensorReading, TelemetryStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +25,10 @@ type DataResult<T> = {
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const params = await searchParams;
   const source = normalizeTelemetrySource(params?.source);
-  const [roomResult, co2HistoryResult, telemetryResult, devices, auditLogs] = await Promise.all([
+  const [roomResult, co2HistoryResult, sensorHealthResult, telemetryResult, devices, auditLogs] = await Promise.all([
     readData(() => getRoomState(source)),
     readData(() => getSensorHistory("co2", "15m", undefined, source)),
+    readData(() => getSensorHealth(source)),
     readData(getTelemetryStatus),
     getDevices(),
     getAuditLogs()
@@ -95,6 +96,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
         <aside className="space-y-5">
           <TelemetryStatusCard result={telemetryResult} />
+          <SensorHealthCard result={sensorHealthResult} />
 
           <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
             <div className="flex items-start gap-3">
@@ -182,6 +184,52 @@ function DataSourceNotice({ title, detail }: { title: string; detail: string }) 
   );
 }
 
+function SensorHealthCard({ result }: { result: DataResult<SensorHealth[]> }) {
+  const health = result.data ?? [];
+  const unhealthy = health.filter((item) => item.status !== "ok");
+  const label = result.error ? "不可用" : unhealthy.length ? "需关注" : health.length ? "正常" : "无数据";
+  const badgeClass = result.error
+    ? "bg-rose-50 text-rose-700"
+    : unhealthy.length
+      ? "bg-amber-50 text-amber-700"
+      : health.length
+        ? "bg-teal-50 text-teal-700"
+        : "bg-slate-100 text-slate-700";
+
+  return (
+    <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <RadioTower className="mt-0.5 text-teal-700" size={20} aria-hidden />
+          <div>
+            <h2 className="text-base font-semibold">传感器健康</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              {result.error ?? (unhealthy.length ? `${unhealthy.length} 个指标需要检查。` : "最新传感器读数在健康窗口内。")}
+            </p>
+          </div>
+        </div>
+        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${badgeClass}`}>{label}</span>
+      </div>
+
+      {health.length > 0 && (
+        <div className="mt-4 grid gap-2">
+          {health.map((item) => (
+            <div key={item.metric} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink">{metricLabel(item.metric)}</p>
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{item.message}</p>
+              </div>
+              <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${sensorHealthClass(item.status)}`}>
+                {statusLabel(item.status)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TelemetryStatusCard({ result }: { result: DataResult<TelemetryStatus> }) {
   const status = result.data;
   const label = status ? telemetryStatusLabel(status.status) : "未知";
@@ -243,6 +291,17 @@ function telemetryStatusClass(status: TelemetryStatus["status"]): string {
   const classes = {
     ok: "bg-teal-50 text-teal-700",
     empty: "bg-amber-50 text-amber-700",
+    unavailable: "bg-rose-50 text-rose-700"
+  };
+  return classes[status];
+}
+
+function sensorHealthClass(status: SensorHealth["status"]): string {
+  const classes = {
+    ok: "bg-teal-50 text-teal-700",
+    stale: "bg-amber-50 text-amber-700",
+    anomaly: "bg-rose-50 text-rose-700",
+    offline: "bg-rose-50 text-rose-700",
     unavailable: "bg-rose-50 text-rose-700"
   };
   return classes[status];

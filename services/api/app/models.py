@@ -46,6 +46,19 @@ class SensorReading(BaseModel):
     quality: Literal["ok", "stale", "anomaly"] = "ok"
 
 
+class SensorHealth(BaseModel):
+    metric: Metric
+    status: Literal["ok", "stale", "anomaly", "offline", "unavailable"]
+    source: Literal["mock", "database"]
+    device_id: str | None = None
+    last_seen_at: datetime | None = None
+    age_minutes: float | None = None
+    quality: Literal["ok", "stale", "anomaly"] | None = None
+    value: float | None = None
+    unit: str | None = None
+    message: str
+
+
 class SensorValueInput(BaseModel):
     metric: Metric
     value: float

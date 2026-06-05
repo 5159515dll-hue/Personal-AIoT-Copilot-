@@ -325,6 +325,58 @@ def test_mock_noise_history_uses_decibel_values() -> None:
     assert all(25 <= reading.value <= 95 for reading in readings)
 
 
+def test_sensor_health_mock_reports_all_metrics() -> None:
+    response = client.get("/api/sensors/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert {item["metric"] for item in payload} == {metric.value for metric in Metric}
+    assert {item["source"] for item in payload} == {"mock"}
+    assert all(item["status"] in {"ok", "anomaly"} for item in payload)
+    assert all(item["last_seen_at"] for item in payload)
+
+
+def test_sensor_health_database_marks_stale_anomaly_and_missing(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.co2: SensorReading(
+                metric=Metric.co2,
+                value=830,
+                unit="ppm",
+                timestamp=base - timedelta(hours=2),
+                device_id="db_node",
+            ),
+            Metric.temperature: SensorReading(
+                metric=Metric.temperature,
+                value=200,
+                unit="℃",
+                timestamp=base,
+                device_id="db_node",
+                quality="anomaly",
+            ),
+        }
+
+    monkeypatch.setattr(sensors_route_module, "latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    response = client.get("/api/sensors/health", params={"source": "database"})
+    assert response.status_code == 200
+    health = {item["metric"]: item for item in response.json()}
+    assert health["co2"]["status"] == "stale"
+    assert health["temperature"]["status"] == "anomaly"
+    assert health["humidity"]["status"] == "offline"
+    assert "超过 30 分钟" in health["co2"]["message"]
+
+
+def test_sensor_health_database_reports_unavailable(monkeypatch) -> None:
+    def unavailable_latest_sensor_readings_db():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr(sensors_route_module, "latest_sensor_readings_db", unavailable_latest_sensor_readings_db)
+    response = client.get("/api/sensors/health", params={"source": "database"})
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
+
+
 def test_mqtt_batch_payload_inherits_top_level_timestamp() -> None:
     request = parse_mqtt_payload(
         """
@@ -1235,6 +1287,8 @@ def test_agent_can_detect_mock_anomalies() -> None:
     assert tool["parameters"]["window"] == "last_24_hours"
     assert tool["result"]["source"] == "mock"
     assert tool["result"]["window"] == "last_24_hours"
+    assert "sensor_health" in payload["used_data"]
+    assert len(tool["result"]["sensor_health"]) == len(Metric)
     assert "co2_peak" in tool["result"]
     assert "co2_high_samples" in tool["result"]
     assert isinstance(tool["result"]["anomalies"], list)
@@ -1259,6 +1313,42 @@ def test_agent_database_anomaly_source_reports_unavailable_database(monkeypatch)
     assert tool["result"]["status"] == "unavailable"
     assert "DATABASE_URL" in tool["result"]["error"]
     assert "数据库异常检测暂不可用" in payload["message"]["content"]
+
+
+def test_agent_database_anomaly_includes_sensor_health(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.co2: SensorReading(
+                metric=Metric.co2,
+                value=860,
+                unit="ppm",
+                timestamp=base - timedelta(hours=2),
+                device_id="db_node",
+            )
+        }
+
+    def fake_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        return [
+            SensorReading(metric=Metric.co2, value=820, unit="ppm", timestamp=base - timedelta(minutes=15), device_id="db_node"),
+            SensorReading(metric=Metric.co2, value=860, unit="ppm", timestamp=base, device_id="db_node"),
+        ]
+
+    monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    monkeypatch.setattr("app.agent_tools.query_sensor_history_db", fake_query_sensor_history_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "检测最近环境异常", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert "sensor_health" in payload["used_data"]
+    health = {item["metric"]: item for item in tool["result"]["sensor_health"]}
+    assert health["co2"]["status"] == "stale"
+    assert health["humidity"]["status"] == "offline"
+    assert any(item["type"] == "sensor_health" for item in tool["result"]["anomalies"])
 
 
 def test_agent_can_search_local_device_docs() -> None:

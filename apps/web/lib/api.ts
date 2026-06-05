@@ -18,6 +18,7 @@ import type {
   PublicModelConfig,
   RuleEvaluation,
   RoomState,
+  SensorHealth,
   SensorReading,
   TelemetryStatus,
   TelemetrySource
@@ -99,6 +100,11 @@ export async function getSensorHistory(
     params.set("from", from);
   }
   return request<SensorReading[]>(`/api/sensors/history?${params.toString()}`);
+}
+
+export async function getSensorHealth(source: TelemetrySource = "mock"): Promise<SensorHealth[]> {
+  const params = source === "database" ? "?source=database" : "";
+  return request<SensorHealth[]>(`/api/sensors/health${params}`);
 }
 
 export async function getTelemetryStatus(): Promise<TelemetryStatus> {

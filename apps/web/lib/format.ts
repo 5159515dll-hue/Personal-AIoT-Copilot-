@@ -69,6 +69,7 @@ export function statusLabel(value: string): string {
     online: "在线",
     offline: "离线",
     unknown: "未知",
+    unavailable: "不可用",
     success: "成功",
     blocked: "已阻止",
     requires_confirmation: "需要确认",

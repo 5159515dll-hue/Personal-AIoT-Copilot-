@@ -24,6 +24,7 @@ from app.models import (
     ToolCall,
 )
 from app.policy import assess_device_control, detect_prompt_injection, validate_rule
+from app.sensor_health import evaluate_sensor_health
 from app.time_utils import now
 
 
@@ -499,9 +500,10 @@ async def _anomaly_response(
     end_ts = now()
     start_ts = end_ts - timedelta(hours=24)
     if data_source == "database":
-        used_data.extend(["database_latest_sensor_readings", "database_co2_24h_history", "anomaly_rules"])
+        used_data.extend(["database_latest_sensor_readings", "database_co2_24h_history", "sensor_health", "anomaly_rules"])
         try:
             latest = latest_sensor_readings_db()
+            sensor_health = evaluate_sensor_health(latest, source="database")
             co2_readings = query_sensor_history_db(Metric.co2, start_ts, end_ts, bucket="15m")
         except Exception as exc:
             error_text = _database_error_text(exc)
@@ -515,28 +517,31 @@ async def _anomaly_response(
             )
             reply = f"数据库异常检测暂不可用：{error_text}。可以切回模拟数据，或先检查 DATABASE_URL、MQTT 入站和 TimescaleDB。"
             return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
-        result = _detect_anomalies(latest, co2_readings, source="database")
+        result = _detect_anomalies(latest, co2_readings, source="database", sensor_health=sensor_health)
     else:
         room = current_room_state()
         co2_readings = query_history(Metric.co2, start_ts, end_ts, "15m")
         latest = room.metrics
-        used_data.extend(["current_room_state", "co2_24h_history", "anomaly_rules"])
-        result = _detect_anomalies(latest, co2_readings, source="mock", room_anomalies=room.anomalies)
+        sensor_health = evaluate_sensor_health(latest, source="mock")
+        used_data.extend(["current_room_state", "co2_24h_history", "sensor_health", "anomaly_rules"])
+        result = _detect_anomalies(latest, co2_readings, source="mock", room_anomalies=room.anomalies, sensor_health=sensor_health)
 
     tool_calls.append(
         ToolCall(
             name="detect_anomaly",
-            parameters={"source": data_source, "window": "last_24_hours", "rules": ["co2_high", "temperature_range", "humidity_range", "noise_high", "missing_metric"]},
+            parameters={"source": data_source, "window": "last_24_hours", "rules": ["co2_high", "temperature_range", "humidity_range", "noise_high", "sensor_health"]},
             result=result,
             created_at=now(),
         )
     )
     if result["anomalies"]:
         severe = [item for item in result["anomalies"] if item["severity"] in {"high", "medium"}]
+        unhealthy = [item for item in result.get("sensor_health", []) if item.get("status") != "ok"]
+        sensor_text = f"另有 {len(unhealthy)} 个传感器健康项需要检查。" if unhealthy else "传感器健康状态正常。"
         reply = (
             f"最近 24 小时检测到 {len(result['anomalies'])} 类异常或风险信号，"
             f"其中 {len(severe)} 类需要重点关注。最高二氧化碳为 {result['co2_peak']} ppm，"
-            f"超过 1200 ppm 的样本数为 {result['co2_high_samples']}。建议优先通风，并检查传感器在线状态。"
+            f"超过 1200 ppm 的样本数为 {result['co2_high_samples']}。{sensor_text}建议优先通风，并检查传感器在线状态。"
         )
     else:
         reply = (
@@ -1201,6 +1206,7 @@ def _detect_anomalies(
     *,
     source: str,
     room_anomalies: list[str] | None = None,
+    sensor_health: list | None = None,
 ) -> dict:
     anomalies: list[dict[str, object]] = []
     missing = [metric.value for metric in Metric if metric not in latest]
@@ -1274,6 +1280,22 @@ def _detect_anomalies(
         if all(item.get("reason") != text for item in anomalies):
             anomalies.append({"type": "room_state", "severity": "medium", "metric": "room", "reason": text})
 
+    health_payload = [item.model_dump(mode="json") for item in sensor_health or []]
+    for health in health_payload:
+        status = health.get("status")
+        if status == "ok":
+            continue
+        severity = "high" if status == "offline" else "medium"
+        anomalies.append(
+            {
+                "type": "sensor_health",
+                "severity": severity,
+                "metric": health.get("metric"),
+                "status": status,
+                "reason": health.get("message", "传感器健康状态异常。"),
+            }
+        )
+
     return {
         "source": source,
         "status": "anomaly" if anomalies else "ok",
@@ -1282,6 +1304,7 @@ def _detect_anomalies(
         "co2_avg": co2_avg,
         "co2_high_samples": co2_high_samples,
         "samples": len(co2_values),
+        "sensor_health": health_payload,
         "anomalies": anomalies,
     }
 
