@@ -132,13 +132,17 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
         api_key: trimmedKey
       });
       setSavedConfigs((current) => [saved, ...current.filter((item) => item.provider_id !== saved.provider_id)]);
+      setSwitchProviderId(saved.provider_id);
+      setSwitchEndpointId(saved.endpoint_id);
+      setModel(activeConfig?.provider_id === saved.provider_id ? activeConfig.model : keyProvider.default_model);
       setActiveConfig((current) =>
         current && current.provider_id === saved.provider_id
           ? { ...current, api_key_set: saved.api_key_set, api_key_preview: saved.api_key_preview }
           : current
       );
       setApiKey("");
-      setKeyResult(`已导入并覆盖 ${keyProvider.label} 的接口密钥。当前智能体模型没有改变。`);
+      setKeyResult(`已保存 ${keyProvider.label} 的厂商密钥；同一厂商只保留这一条，新密钥已覆盖旧密钥。当前智能体模型没有改变。`);
+      setSwitchResult(`切换工具已准备使用 ${keyProvider.label}。如需启用该厂商，请点击“设为智能体当前模型”。`);
     } catch (error) {
       setKeyResult(error instanceof Error ? error.message : "密钥导入失败");
     } finally {
@@ -198,41 +202,172 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
-      <div className="space-y-5">
+      <div className="flex flex-col gap-5">
+        <form onSubmit={onSwitchModel} className="rounded-lg border border-teal-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
+              <ArrowLeftRight size={20} aria-hidden />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold">当前模型切换工具</h2>
+              <p className="text-sm text-muted">只负责切换智能体正在使用的厂商、接口和模型；这里不会输入、保存或覆盖接口密钥。</p>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-lg border border-teal-100 bg-teal-50 p-3 text-sm leading-6 text-teal-800">
+            切换流程：选择厂商、接口和模型，系统使用该厂商已导入的密钥完成测试或切换；未导入密钥的厂商不能设为当前模型。
+          </div>
+
+          <div className="mt-5">
+            <p className="mb-2 text-sm font-semibold text-slate-700">选择要启用的厂商</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              {catalog.providers.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => changeSwitchProvider(item)}
+                  className={[
+                    "focus-ring rounded-lg border p-4 text-left transition",
+                    item.id === switchProvider.id ? "border-teal-300 bg-teal-50" : "border-line bg-white hover:border-teal-200"
+                  ].join(" ")}
+                >
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+                    {item.label}
+                    {item.id === activeConfig?.provider_id && (
+                      <span className="rounded-md bg-white px-2 py-0.5 text-xs font-semibold text-teal-700">当前生效</span>
+                    )}
+                    {findProviderKeyConfig(savedConfigs, item.id)?.api_key_set ? (
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">已有密钥</span>
+                    ) : (
+                      <span className="rounded-md bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">需先导入密钥</span>
+                    )}
+                  </span>
+                  <span className="mt-2 block text-sm leading-6 text-muted">{item.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">接口入口</span>
+              <select
+                value={switchEndpoint.id}
+                onChange={(event) => {
+                  const next = switchProvider.endpoints.find((item) => item.id === event.target.value) ?? switchProvider.endpoints[0];
+                  setSwitchEndpointId(next.id);
+                  setSwitchResult(null);
+                }}
+                className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
+              >
+                {switchProvider.endpoints.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-2 block text-xs leading-5 text-muted">{switchEndpoint.description}</span>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">模型</span>
+              <select
+                value={model}
+                onChange={(event) => {
+                  setModel(event.target.value);
+                  setSwitchResult(null);
+                }}
+                className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
+              >
+                {switchModelOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-2 block text-xs leading-5 text-muted">模型切换不会要求重新输入接口密钥。</span>
+            </label>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-line bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+            {switchSavedConfig?.api_key_set
+              ? `本次切换将使用已导入的 ${switchProvider.label} 密钥：${switchSavedConfig.api_key_preview ?? "***"}；无需重新输入接口密钥。`
+              : `尚未导入 ${switchProvider.label} 密钥，不能切换到该厂商。`}
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={switchPending !== null || !switchSavedConfig?.api_key_set}
+              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <ArrowLeftRight size={16} aria-hidden />
+              {switchPending === "switch"
+                ? "正在切换"
+                : switchSavedConfig?.api_key_set
+                  ? "设为智能体当前模型"
+                  : "先导入厂商密钥"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onTestSwitchSelection()}
+              disabled={switchPending !== null || !switchSavedConfig?.api_key_set}
+              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <TestTube2 size={16} aria-hidden />
+              用已导入密钥测试
+            </button>
+          </div>
+          {!switchMatchesActive && (
+            <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+              当前只是待切换选择。点击“设为智能体当前模型”后，智能体才会使用这个厂商、接口和模型。
+            </p>
+          )}
+
+          <ResultBox result={switchResult} />
+        </form>
+
         <form onSubmit={onImportKey} className="rounded-lg border border-line bg-white p-5 shadow-sm">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
               <KeyRound size={20} aria-hidden />
             </span>
             <div>
-              <h2 className="text-base font-semibold">密钥导入工具</h2>
-              <p className="text-sm text-muted">这里只保存厂商密钥。同一厂商只保留一条，第二次导入会覆盖第一次。</p>
+              <h2 className="text-base font-semibold">接口密钥导入工具</h2>
+              <p className="text-sm text-muted">这里只保存厂商密钥，不切换智能体当前模型。同一厂商只保留一条，第二次导入会覆盖第一次。</p>
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {catalog.providers.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => changeKeyProvider(item)}
-                className={[
-                  "focus-ring rounded-lg border p-4 text-left transition",
-                  item.id === keyProvider.id ? "border-teal-300 bg-teal-50" : "border-line bg-white hover:border-teal-200"
-                ].join(" ")}
-              >
-                <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
-                  {item.label}
-                  {item.id === keyProvider.id && (
-                    <span className="rounded-md bg-white px-2 py-0.5 text-xs font-semibold text-teal-700">正在导入</span>
-                  )}
-                  {findProviderKeyConfig(savedConfigs, item.id)?.api_key_set && (
-                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">已有密钥</span>
-                  )}
-                </span>
-                <span className="mt-2 block text-sm leading-6 text-muted">{item.description}</span>
-              </button>
-            ))}
+          <div className="mt-5 rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+            规则：按厂商保存密钥；选择模型时不会再要求输入密钥，只会读取这里已经导入的密钥。
+          </div>
+
+          <div className="mt-5">
+            <p className="mb-2 text-sm font-semibold text-slate-700">选择要导入或覆盖密钥的厂商</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              {catalog.providers.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => changeKeyProvider(item)}
+                  className={[
+                    "focus-ring rounded-lg border p-4 text-left transition",
+                    item.id === keyProvider.id ? "border-teal-300 bg-teal-50" : "border-line bg-white hover:border-teal-200"
+                  ].join(" ")}
+                >
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+                    {item.label}
+                    {item.id === keyProvider.id && (
+                      <span className="rounded-md bg-white px-2 py-0.5 text-xs font-semibold text-teal-700">正在导入</span>
+                    )}
+                    {findProviderKeyConfig(savedConfigs, item.id)?.api_key_set && (
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">已有密钥</span>
+                    )}
+                  </span>
+                  <span className="mt-2 block text-sm leading-6 text-muted">{item.description}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -286,122 +421,13 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
               className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               <PlugZap size={16} aria-hidden />
-              {keyPending ? "正在导入" : "导入或覆盖密钥"}
+              {keyPending ? "正在保存" : "保存或覆盖厂商密钥"}
             </button>
           </div>
 
           <ResultBox result={keyResult} />
         </form>
 
-        <form onSubmit={onSwitchModel} className="rounded-lg border border-line bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
-              <ArrowLeftRight size={20} aria-hidden />
-            </span>
-            <div>
-              <h2 className="text-base font-semibold">切换当前模型</h2>
-              <p className="text-sm text-muted">选择智能体正在使用的厂商、接口和模型；切换时直接使用已导入密钥。</p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {catalog.providers.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => changeSwitchProvider(item)}
-                className={[
-                  "focus-ring rounded-lg border p-4 text-left transition",
-                  item.id === switchProvider.id ? "border-slate-300 bg-slate-50" : "border-line bg-white hover:border-slate-300"
-                ].join(" ")}
-              >
-                <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
-                  {item.label}
-                  {item.id === activeConfig?.provider_id && (
-                    <span className="rounded-md bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700">当前生效</span>
-                  )}
-                  {findProviderKeyConfig(savedConfigs, item.id)?.api_key_set ? (
-                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">可切换</span>
-                  ) : (
-                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">需先导入密钥</span>
-                  )}
-                </span>
-                <span className="mt-2 block text-sm leading-6 text-muted">{item.description}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">接口入口</span>
-              <select
-                value={switchEndpoint.id}
-                onChange={(event) => {
-                  const next = switchProvider.endpoints.find((item) => item.id === event.target.value) ?? switchProvider.endpoints[0];
-                  setSwitchEndpointId(next.id);
-                  setSwitchResult(null);
-                }}
-                className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
-              >
-                {switchProvider.endpoints.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-2 block text-xs leading-5 text-muted">{switchEndpoint.description}</span>
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold text-slate-700">模型</span>
-              <select
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-                className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
-              >
-                {switchModelOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-2 block text-xs leading-5 text-muted">模型切换不会要求重新输入接口密钥。</span>
-            </label>
-          </div>
-
-          <div className="mt-4 rounded-lg border border-line bg-slate-50 p-3 text-sm leading-6 text-slate-700">
-            {switchSavedConfig?.api_key_set
-              ? `将使用已导入的 ${switchProvider.label} 密钥：${switchSavedConfig.api_key_preview ?? "***"}`
-              : `尚未导入 ${switchProvider.label} 密钥，不能切换到该厂商。`}
-          </div>
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              type="submit"
-              disabled={switchPending !== null || !switchSavedConfig?.api_key_set}
-              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <ArrowLeftRight size={16} aria-hidden />
-              {switchPending === "switch" ? "正在切换" : "切换为当前模型"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void onTestSwitchSelection()}
-              disabled={switchPending !== null || !switchSavedConfig?.api_key_set}
-              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <TestTube2 size={16} aria-hidden />
-              测试当前模型
-            </button>
-          </div>
-          {!switchMatchesActive && (
-            <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800">
-              当前只是待切换选择。点击“切换为当前模型”后，智能体才会使用这个厂商、接口和模型。
-            </p>
-          )}
-
-          <ResultBox result={switchResult} />
-        </form>
       </div>
 
       <aside className="space-y-5">
