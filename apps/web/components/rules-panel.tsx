@@ -1,8 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { BellRing, Check, CircleDashed, Play, Plus, ShieldAlert } from "lucide-react";
-import { createRule, evaluateRules } from "@/lib/api";
+import { BellRing, Check, CircleDashed, PauseCircle, Play, PlayCircle, Plus, ShieldAlert } from "lucide-react";
+import { createRule, evaluateRules, updateRule } from "@/lib/api";
 import { telemetrySourceLabel } from "@/lib/telemetry-source";
 import type { AutomationRule, RuleEvaluation, TelemetrySource } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
@@ -21,6 +21,7 @@ export function RulesPanel({
   const [confirmed, setConfirmed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [evaluating, setEvaluating] = useState(false);
+  const [updatingRuleId, setUpdatingRuleId] = useState<string | null>(null);
   const sourceLabel = telemetrySourceLabel(initialSource);
 
   useEffect(() => {
@@ -56,6 +57,21 @@ export function RulesPanel({
       setMessage(error instanceof Error ? error.message : "规则评估失败");
     } finally {
       setEvaluating(false);
+    }
+  }
+
+  async function onToggleRule(rule: AutomationRule) {
+    setUpdatingRuleId(rule.id);
+    setMessage(null);
+    try {
+      const updated = await updateRule(rule.id, { enabled: !rule.enabled });
+      setRules((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setEvaluations([]);
+      setMessage(updated.enabled ? "规则已启用，并写入审计日志。" : "规则已暂停，并写入审计日志。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "规则状态更新失败");
+    } finally {
+      setUpdatingRuleId(null);
     }
   }
 
@@ -128,10 +144,25 @@ export function RulesPanel({
                     <p className="text-sm font-semibold text-ink">如果 {rule.condition}</p>
                     <p className="mt-1 text-sm text-muted">那么 {rule.action}</p>
                   </div>
-                  <span className="inline-flex items-center gap-1 rounded-md bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700">
-                    <Check size={13} aria-hidden />
-                    {rule.enabled ? "已启用" : "已暂停"}
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold ${
+                        rule.enabled ? "bg-teal-50 text-teal-700" : "bg-amber-50 text-amber-800"
+                      }`}
+                    >
+                      <Check size={13} aria-hidden />
+                      {rule.enabled ? "已启用" : "已暂停"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void onToggleRule(rule)}
+                      disabled={updatingRuleId === rule.id}
+                      className="focus-ring inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-white px-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {rule.enabled ? <PauseCircle size={14} aria-hidden /> : <PlayCircle size={14} aria-hidden />}
+                      {updatingRuleId === rule.id ? "更新中" : rule.enabled ? "暂停规则" : "启用规则"}
+                    </button>
+                  </div>
                 </div>
                 <p className="mt-2 text-xs text-muted">创建时间：{formatDateTime(rule.created_at)}</p>
                 {evaluation && <RuleEvaluationStatus evaluation={evaluation} />}

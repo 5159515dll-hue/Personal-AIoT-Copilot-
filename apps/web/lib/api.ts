@@ -4,6 +4,7 @@ import type {
   AuditLog,
   AutomationRule,
   AutomationRuleCreate,
+  AutomationRuleUpdate,
   ControlDeviceResponse,
   Device,
   MetricName,
@@ -124,6 +125,13 @@ export async function getRules(): Promise<AutomationRule[]> {
 export async function createRule(payload: AutomationRuleCreate): Promise<AutomationRule> {
   return request<AutomationRule>("/api/rules", {
     method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateRule(id: string, payload: AutomationRuleUpdate): Promise<AutomationRule> {
+  return request<AutomationRule>(`/api/rules/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(payload)
   });
 }

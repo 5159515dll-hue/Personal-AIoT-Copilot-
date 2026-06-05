@@ -3,11 +3,11 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from app.audit import record_audit
-from app.models import AutomationRule, AutomationRuleCreate, PolicyResult, RuleEvaluation
+from app.models import AutomationRule, AutomationRuleCreate, AutomationRuleUpdate, PolicyResult, RuleEvaluation
 from app.policy import validate_rule
 from app.room_state import clean_database_error_text, current_database_room_state
 from app.rule_engine import evaluate_automation_rules
-from app.rule_store import list_rules, save_rule
+from app.rule_store import list_rules, save_rule, update_rule_enabled
 from app.time_utils import now
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
@@ -81,3 +81,18 @@ def create_rule(request: AutomationRuleCreate) -> AutomationRule:
         policy=policy,
     )
     return saved
+
+
+@router.patch("/{rule_id}", response_model=AutomationRule)
+def update_rule(rule_id: str, request: AutomationRuleUpdate) -> AutomationRule:
+    updated = update_rule_enabled(rule_id, request.enabled)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="自动化规则不存在。")
+    record_audit(
+        actor="user",
+        action="update_automation_rule",
+        result="success",
+        details="自动化规则启用状态已更新。",
+        parameters={"rule_id": updated.id, "enabled": updated.enabled},
+    )
+    return updated

@@ -82,6 +82,10 @@ export type AutomationRuleCreate = {
   confirmed: boolean;
 };
 
+export type AutomationRuleUpdate = {
+  enabled: boolean;
+};
+
 export type RuleEvaluation = {
   rule_id: string;
   condition: string;

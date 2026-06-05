@@ -552,6 +552,47 @@ def test_rule_evaluation_respects_disabled_rules() -> None:
     assert evaluation["audit_log_id"] is None
 
 
+def test_rule_enabled_status_can_be_updated_and_audited() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1 ppm",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+    rule_id = create_response.json()["id"]
+
+    pause_response = client.patch(f"/api/rules/{rule_id}", json={"enabled": False})
+    assert pause_response.status_code == 200
+    assert pause_response.json()["enabled"] is False
+
+    disabled_evaluation = client.post("/api/rules/evaluate").json()[0]
+    assert disabled_evaluation["status"] == "disabled"
+    assert disabled_evaluation["matched"] is False
+
+    enable_response = client.patch(f"/api/rules/{rule_id}", json={"enabled": True})
+    assert enable_response.status_code == 200
+    assert enable_response.json()["enabled"] is True
+
+    triggered_evaluation = client.post("/api/rules/evaluate").json()[0]
+    assert triggered_evaluation["status"] == "triggered"
+    assert triggered_evaluation["matched"] is True
+
+    audit_response = client.get("/api/audit-logs")
+    assert audit_response.status_code == 200
+    actions = [item["action"] for item in audit_response.json()]
+    assert actions.count("update_automation_rule") == 2
+
+
+def test_rule_update_reports_unknown_rule() -> None:
+    response = client.patch("/api/rules/rule_missing", json={"enabled": False})
+    assert response.status_code == 404
+    assert "规则不存在" in response.json()["detail"]
+
+
 def test_rule_evaluation_marks_unsupported_conditions() -> None:
     create_response = client.post(
         "/api/rules",

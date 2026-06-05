@@ -136,6 +136,10 @@ class AutomationRuleCreate(BaseModel):
     confirmed: bool = False
 
 
+class AutomationRuleUpdate(BaseModel):
+    enabled: bool
+
+
 class AutomationRule(BaseModel):
     id: str = Field(default_factory=lambda: f"rule_{uuid4().hex[:10]}")
     condition: str
