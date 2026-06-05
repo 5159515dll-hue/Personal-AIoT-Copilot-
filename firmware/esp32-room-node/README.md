@@ -55,7 +55,8 @@ payload 使用 batch 格式：
     { "metric": "humidity", "value": 48.0, "unit": "%", "quality": "ok" },
     { "metric": "co2", "value": 930.0, "unit": "ppm", "quality": "ok" },
     { "metric": "light", "value": 420.0, "unit": "lux", "quality": "ok" },
-    { "metric": "presence", "value": 1.0, "unit": "occupied", "quality": "ok" }
+    { "metric": "presence", "value": 1.0, "unit": "occupied", "quality": "ok" },
+    { "metric": "noise", "value": 48.5, "unit": "dB", "quality": "ok" }
   ]
 }
 ```
@@ -71,5 +72,6 @@ payload 使用 batch 格式：
 - `readCo2Ppm`
 - `readLightLux`
 - `readPresence`
+- `readNoiseDbA`
 
-接入真实硬件时，用具体驱动替换这些函数即可；MQTT topic 和 JSON 字段保持不变。
+接入真实硬件时，用具体驱动替换这些函数即可；噪声只上报分贝数值，不采集或上传原始音频。MQTT topic 和 JSON 字段保持不变。

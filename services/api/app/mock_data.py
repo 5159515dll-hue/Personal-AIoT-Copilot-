@@ -12,6 +12,7 @@ UNITS = {
     Metric.co2: "ppm",
     Metric.light: "lux",
     Metric.presence: "occupied",
+    Metric.noise: "dB",
 }
 
 
@@ -60,6 +61,14 @@ def reading_value(metric: Metric, timestamp: datetime) -> tuple[float, str]:
         return round(value), "ok"
     if metric == Metric.presence:
         return presence, "ok"
+    if metric == Metric.noise:
+        base = 36 + 4 * math.sin(2 * math.pi * phase + 0.8)
+        activity_gain = 8 * presence
+        afternoon_noise = 14 if 14 <= timestamp.hour < 16 and presence else 0
+        evening_noise = 10 if 20 <= timestamp.hour < 22 and presence else 0
+        value = base + activity_gain + afternoon_noise + evening_noise + 2 * focus_wave
+        quality = "anomaly" if value > 65 else "ok"
+        return round(value, 1), quality
     raise ValueError(f"Unsupported metric: {metric}")
 
 
@@ -116,6 +125,7 @@ def current_room_state() -> RoomState:
     temperature = metrics[Metric.temperature].value
     humidity = metrics[Metric.humidity].value
     presence = metrics[Metric.presence].value
+    noise = metrics[Metric.noise].value
 
     anomalies: list[str] = []
     if co2 > 1200:
@@ -124,6 +134,8 @@ def current_room_state() -> RoomState:
         anomalies.append("当前温度对长时间专注学习偏高。")
     if humidity < 35 or humidity > 65:
         anomalies.append("当前湿度不在舒适区间。")
+    if noise > 65:
+        anomalies.append("当前噪声等级偏高，可能影响专注学习。")
     if get_device_catalog()[0].online_state == DeviceState.offline:
         anomalies.append("主房间传感器已离线。")
 
@@ -135,6 +147,10 @@ def current_room_state() -> RoomState:
         status = "watch"
         health = 76
         recommendation = "空气质量正在变差，建议未来 20 分钟内安排通风。"
+    elif noise > 65:
+        status = "watch"
+        health = 74
+        recommendation = "噪声等级偏高，建议降低环境噪声或改用提醒模式。"
     elif presence:
         status = "good"
         health = 88
@@ -148,7 +164,7 @@ def current_room_state() -> RoomState:
         timestamp=now(),
         health_score=health,
         status=status,
-        summary=f"二氧化碳 {co2:.0f} ppm，温度 {temperature:.1f} C，湿度 {humidity:.1f}%。",
+        summary=f"二氧化碳 {co2:.0f} ppm，温度 {temperature:.1f} C，湿度 {humidity:.1f}%，噪声 {noise:.1f} dB。",
         metrics=metrics,
         anomalies=anomalies,
         recommendation=recommendation,

@@ -24,6 +24,7 @@ METRIC_ALIASES: tuple[tuple[Metric, tuple[str, ...]], ...] = (
     (Metric.humidity, ("湿度", "humidity")),
     (Metric.light, ("光照", "照度", "light", "lux")),
     (Metric.presence, ("人体存在", "有人", "presence", "occupied")),
+    (Metric.noise, ("噪声", "噪音", "分贝", "noise", "db", "decibel")),
 )
 
 

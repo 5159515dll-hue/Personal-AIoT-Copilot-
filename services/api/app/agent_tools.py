@@ -536,7 +536,7 @@ async def _anomaly_response(
     tool_calls.append(
         ToolCall(
             name="detect_anomaly",
-            parameters={"source": data_source, "window": "last_24_hours", "rules": ["co2_high", "temperature_range", "humidity_range", "missing_metric"]},
+            parameters={"source": data_source, "window": "last_24_hours", "rules": ["co2_high", "temperature_range", "humidity_range", "noise_high", "missing_metric"]},
             result=result,
             created_at=now(),
         )
@@ -576,7 +576,7 @@ async def _daily_summary_response(
             start_ts,
             end_ts,
             "1h",
-            [Metric.co2, Metric.temperature, Metric.humidity, Metric.light, Metric.presence],
+            [Metric.co2, Metric.temperature, Metric.humidity, Metric.light, Metric.presence, Metric.noise],
         )
     except Exception as exc:
         error_text = _database_error_text(exc)
@@ -636,7 +636,13 @@ async def _environment_explanation_response(
     start_ts = end_ts - timedelta(hours=24)
     used_data.extend([f"{data_source}_co2_24h_history", "environment_issue_rules"])
     try:
-        histories = _query_metric_histories(data_source, start_ts, end_ts, "15m", [Metric.co2, Metric.temperature, Metric.humidity, Metric.presence])
+        histories = _query_metric_histories(
+            data_source,
+            start_ts,
+            end_ts,
+            "15m",
+            [Metric.co2, Metric.temperature, Metric.humidity, Metric.presence, Metric.noise],
+        )
     except Exception as exc:
         error_text = _database_error_text(exc)
         tool_calls.append(
@@ -925,6 +931,7 @@ def _daily_interpretation(metrics: dict[str, dict]) -> str:
     co2 = metrics.get(Metric.co2.value, {})
     temperature = metrics.get(Metric.temperature.value, {})
     humidity = metrics.get(Metric.humidity.value, {})
+    noise = metrics.get(Metric.noise.value, {})
     notes: list[str] = []
     if co2.get("max", 0) > 1200:
         notes.append("空气最差时段已经超过 1200 ppm 专注阈值，适合加入通风提醒。")
@@ -936,6 +943,8 @@ def _daily_interpretation(metrics: dict[str, dict]) -> str:
         notes.append("温度峰值偏高，可能影响长时间学习。")
     if humidity.get("min", 50) < 35 or humidity.get("max", 50) > 65:
         notes.append("湿度曾离开 35%-65% 舒适区间。")
+    if noise.get("max", 0) > 65:
+        notes.append("噪声峰值超过 65 dB，可能影响专注学习。")
     return "".join(notes)
 
 
@@ -952,6 +961,7 @@ def _explain_environment_issue(histories: dict[Metric, list], source: str) -> di
     co2_readings = histories.get(Metric.co2, [])
     temp_readings = histories.get(Metric.temperature, [])
     humidity_readings = histories.get(Metric.humidity, [])
+    noise_readings = histories.get(Metric.noise, [])
     co2_summary = _metric_summary(co2_readings)
     co2_values = [reading.value for reading in co2_readings]
     high_samples = sum(1 for value in co2_values if value > 1200)
@@ -968,6 +978,8 @@ def _explain_environment_issue(histories: dict[Metric, list], source: str) -> di
         likely_causes.append("温度峰值偏高，会放大闷热和疲劳感。")
     if humidity_readings and (min(reading.value for reading in humidity_readings) < 35 or max(reading.value for reading in humidity_readings) > 65):
         likely_causes.append("湿度离开舒适区间，可能造成体感不适。")
+    if noise_readings and max(reading.value for reading in noise_readings) > 65:
+        likely_causes.append("噪声峰值超过 65 dB，可能干扰专注和休息。")
     if not likely_causes:
         likely_causes.append("当前环境数据没有显示强异常，更可能是作息、饮水或学习节奏等非传感器因素。")
 
@@ -984,6 +996,7 @@ def _explain_environment_issue(histories: dict[Metric, list], source: str) -> di
             "co2_high_samples": high_samples,
             "afternoon_co2_avg": afternoon_avg,
             "samples": co2_summary.get("samples", 0),
+            "noise_peak": max((reading.value for reading in noise_readings), default=0),
         },
         "evidence_summary": f"CO2 平均 {overall_avg} ppm，峰值 {co2_summary.get('max', 0)} ppm，超标样本 {high_samples} 个",
         "uncertainty": "当前只使用环境传感器数据，不能判断睡眠、饮食、运动或心理压力等个人因素。",
@@ -995,6 +1008,7 @@ def _recommend_safe_actions(metrics: dict[Metric, object]) -> dict:
     temperature = _metric_value(metrics.get(Metric.temperature))
     humidity = _metric_value(metrics.get(Metric.humidity))
     light = _metric_value(metrics.get(Metric.light))
+    noise = _metric_value(metrics.get(Metric.noise))
     actions: list[dict[str, object]] = []
     if co2 is None:
         actions.append({"title": "先检查 CO2 传感器上报", "reason": "缺少空气质量核心指标。", "risk_level": "read_only"})
@@ -1011,6 +1025,8 @@ def _recommend_safe_actions(metrics: dict[Metric, object]) -> dict:
         actions.append({"title": "调整加湿或除湿策略", "reason": "湿度不在 35%-65% 舒适区间。", "risk_level": "low"})
     if light is not None and light < 250:
         actions.append({"title": "补充桌面照明", "reason": "光照偏低可能影响阅读和专注。", "risk_level": "low"})
+    if noise is not None and noise > 65:
+        actions.append({"title": "降低环境噪声或切换到安静模式", "reason": "噪声超过 65 dB，可能影响专注。", "risk_level": "low"})
 
     return {
         "actions": actions[:4],
@@ -1192,6 +1208,19 @@ def _detect_anomalies(
             }
         )
 
+    noise = latest.get(Metric.noise)
+    if noise and getattr(noise, "value", 0) > 65:
+        anomalies.append(
+            {
+                "type": "noise_high",
+                "severity": "medium",
+                "metric": "noise",
+                "threshold": 65,
+                "observed": getattr(noise, "value", None),
+                "reason": "当前噪声等级偏高，可能影响专注或休息。",
+            }
+        )
+
     for text in room_anomalies or []:
         if all(item.get("reason") != text for item in anomalies):
             anomalies.append({"type": "room_state", "severity": "medium", "metric": "room", "reason": text})
@@ -1254,7 +1283,7 @@ async def _response(
 
 
 def _mentions_co2_or_environment(text: str) -> bool:
-    return any(token in text for token in ("co2", "二氧化碳", "空气", "环境", "temperature", "humidity", "今天", "room"))
+    return any(token in text for token in ("co2", "二氧化碳", "空气", "环境", "temperature", "humidity", "noise", "噪声", "噪音", "分贝", "今天", "room"))
 
 
 def _mentions_audit_log(text: str) -> bool:
@@ -1299,7 +1328,7 @@ def _mentions_daily_summary(text: str) -> bool:
 
 def _mentions_environment_explanation(text: str) -> bool:
     issue_tokens = ("困", "犯困", "下午", "co2 上升", "二氧化碳上升", "空气变差", "闷", "通风不足")
-    context_tokens = ("环境", "空气", "co2", "二氧化碳", "温度", "湿度", "通风")
+    context_tokens = ("环境", "空气", "co2", "二氧化碳", "温度", "湿度", "通风", "噪声", "噪音", "noise")
     return any(token in text for token in issue_tokens) or (
         any(token in text for token in ("为什么", "原因", "解释")) and any(token in text for token in context_tokens)
     )

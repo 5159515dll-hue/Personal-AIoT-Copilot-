@@ -1,4 +1,4 @@
-export type MetricName = "temperature" | "humidity" | "co2" | "light" | "presence";
+export type MetricName = "temperature" | "humidity" | "co2" | "light" | "presence" | "noise";
 
 export type SensorReading = {
   metric: MetricName;

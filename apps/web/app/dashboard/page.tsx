@@ -60,7 +60,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       {roomResult.error && <DataSourceNotice title="当前状态不可用" detail={roomResult.error} />}
 
       {metricReadings.length > 0 ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
           {metricReadings.map((reading) => (
             <MetricCard key={reading.metric} reading={reading} />
           ))}

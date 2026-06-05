@@ -41,7 +41,8 @@ export function metricLabel(value: string): string {
     humidity: "湿度",
     co2: "二氧化碳",
     light: "光照",
-    presence: "有人状态"
+    presence: "有人状态",
+    noise: "噪声"
   };
   return labels[value] ?? value;
 }

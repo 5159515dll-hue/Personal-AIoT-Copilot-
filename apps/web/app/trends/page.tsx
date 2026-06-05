@@ -13,6 +13,7 @@ const metrics: { key: MetricName; title: string; color: string; bucket: string; 
   { key: "temperature", title: "温度 24 小时", color: "#2563EB", bucket: "15m" },
   { key: "humidity", title: "湿度 24 小时", color: "#7C3AED", bucket: "15m" },
   { key: "light", title: "光照 24 小时", color: "#F59E0B", bucket: "15m" },
+  { key: "noise", title: "噪声 24 小时", color: "#E11D48", bucket: "15m" },
   { key: "presence", title: "有人状态 7 天", color: "#334155", bucket: "1h", days: 7 }
 ];
 

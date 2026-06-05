@@ -25,6 +25,7 @@ def database_room_state_from_readings(readings: dict[Metric, SensorReading]) -> 
     co2 = readings.get(Metric.co2)
     temperature = readings.get(Metric.temperature)
     humidity = readings.get(Metric.humidity)
+    noise = readings.get(Metric.noise)
     anomalies: list[str] = []
 
     if co2 and co2.value > 1200:
@@ -50,6 +51,12 @@ def database_room_state_from_readings(readings: dict[Metric, SensorReading]) -> 
         anomalies.append("数据库最新温度对长时间专注学习偏高。")
     if humidity and (humidity.value < 35 or humidity.value > 65):
         anomalies.append("数据库最新湿度不在舒适区间。")
+    if noise and noise.value > 65:
+        anomalies.append("数据库最新噪声等级偏高，可能影响专注学习。")
+        if status == "good":
+            status = "watch"
+            health = min(health, 74)
+            recommendation = "噪声等级偏高，建议降低环境噪声或调整学习节奏。"
 
     summary = "数据库最新读数：" + "，".join(
         f"{reading.metric.value} {reading.value:g} {reading.unit}"

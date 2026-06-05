@@ -57,6 +57,7 @@ def test_room_current_schema() -> None:
     payload = response.json()
     assert payload["health_score"] >= 0
     assert "co2" in payload["metrics"]
+    assert payload["metrics"]["noise"]["unit"] == "dB"
     assert payload["recommendation"]
 
 
@@ -161,7 +162,7 @@ def test_telemetry_status_route_returns_structured_summary(monkeypatch) -> None:
             sensor_table_exists=True,
             total_readings=5,
             device_count=1,
-            metric_count=5,
+            metric_count=6,
             latest_reading_at=base,
             latest_received_at=base,
             latest_metrics={
@@ -176,6 +177,7 @@ def test_telemetry_status_route_returns_structured_summary(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["total_readings"] == 5
+    assert payload["metric_count"] == 6
     assert payload["latest_metrics"]["co2"]["value"] == 930
 
 
@@ -292,6 +294,15 @@ def test_mock_history_is_deterministic_for_window() -> None:
     assert [item.value for item in first] == [item.value for item in second]
 
 
+def test_mock_noise_history_uses_decibel_values() -> None:
+    end = now().replace(minute=0, second=0, microsecond=0)
+    start = end - timedelta(hours=1)
+    readings = query_history(Metric.noise, start, end, "15m")
+    assert readings
+    assert all(reading.unit == "dB" for reading in readings)
+    assert all(25 <= reading.value <= 95 for reading in readings)
+
+
 def test_mqtt_batch_payload_inherits_top_level_timestamp() -> None:
     request = parse_mqtt_payload(
         """
@@ -323,6 +334,7 @@ def test_mqtt_example_payload_matches_device_protocol() -> None:
         Metric.co2,
         Metric.light,
         Metric.presence,
+        Metric.noise,
     ]
     assert all(item.timestamp and item.timestamp.isoformat() == "2026-06-04T17:30:00+08:00" for item in request.readings)
 
@@ -334,7 +346,7 @@ def test_firmware_room_node_publishes_protocol_metrics_without_control_subscript
 
     assert "aiot/room/" in source
     assert "/telemetry" in source
-    for metric in ("temperature", "humidity", "co2", "light", "presence"):
+    for metric in ("temperature", "humidity", "co2", "light", "presence", "noise"):
         assert f'"{metric}"' in source
     assert "mqttClient.publish" in source
     assert "mqttClient.subscribe" not in source
@@ -343,9 +355,33 @@ def test_firmware_room_node_publishes_protocol_metrics_without_control_subscript
 
 def test_mqtt_metric_map_payload_expands_readings() -> None:
     request = parse_mqtt_payload(
-        '{"device_id":"room_node_01","timestamp":"2026-06-04T17:30:00+08:00","temperature":25.4,"humidity":48.2,"co2":1180}'
+        '{"device_id":"room_node_01","timestamp":"2026-06-04T17:30:00+08:00","temperature":25.4,"humidity":48.2,"co2":1180,"noise":48.5}'
     )
-    assert [item.metric for item in request.readings] == [Metric.temperature, Metric.humidity, Metric.co2]
+    assert [item.metric for item in request.readings] == [Metric.temperature, Metric.humidity, Metric.co2, Metric.noise]
+    assert request.readings[-1].unit is None
+
+
+def test_http_ingest_accepts_noise_metric_with_default_unit(monkeypatch) -> None:
+    captured = {}
+
+    def fake_insert_sensor_readings(readings, *, source="http", ensure_schema=True):
+        captured["readings"] = readings
+        captured["source"] = source
+        return len(readings)
+
+    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings", fake_insert_sensor_readings)
+    response = client.post(
+        "/api/ingest/sensor-readings",
+        json={
+            "device_id": "room_node_01",
+            "readings": [
+                {"metric": "noise", "value": 48.5},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert captured["readings"][0].metric == Metric.noise
+    assert captured["readings"][0].unit == "dB"
 
 
 def test_mqtt_reason_code_handles_paho_v2_reason_code_objects() -> None:
@@ -530,6 +566,26 @@ def test_rule_evaluation_triggers_reminder_and_audit_log() -> None:
     assert audit_response.status_code == 200
     actions = [item["action"] for item in audit_response.json()]
     assert "trigger_automation_rule" in actions
+
+
+def test_rule_evaluation_supports_noise_threshold() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "噪声 > 1 dB",
+            "action": "发送安静提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "triggered"
+    assert evaluation["observed"]["metric"] == "noise"
+    assert evaluation["observed"]["unit"] == "dB"
 
 
 def test_rule_evaluation_respects_disabled_rules() -> None:

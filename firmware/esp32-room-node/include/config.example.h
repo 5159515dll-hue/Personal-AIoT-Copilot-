@@ -19,4 +19,5 @@
 // Optional analog pins. Replace these with your actual sensor wiring.
 #define AIOT_LIGHT_ADC_PIN 4
 #define AIOT_CO2_ADC_PIN 5
+#define AIOT_NOISE_ADC_PIN 7
 #define AIOT_PRESENCE_PIN 6

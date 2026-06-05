@@ -8,7 +8,7 @@
 
 - 公开项目页，说明系统价值与架构。
 - 使用模拟房间数据的私有控制台。
-- 最近 24 小时和 7 天环境趋势，支持模拟数据和数据库遥测切换。
+- 最近 24 小时和 7 天环境趋势，支持温度、湿度、二氧化碳、光照、人体存在和噪声分贝模拟数据与数据库遥测切换。
 - 可选 MQTT 遥测入站服务与 TimescaleDB 存储。
 - ESP32 房间传感器节点固件骨架，对齐 MQTT/HTTP 设备消息协议。
 - 带风险等级的设备清单和可持久化模拟控制。
@@ -106,7 +106,8 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
     "readings": [
       {"metric": "temperature", "value": 25.4},
       {"metric": "humidity", "value": 48.2},
-      {"metric": "co2", "value": 1180}
+      {"metric": "co2", "value": 1180},
+      {"metric": "noise", "value": 48.5}
     ]
   }'
 ```

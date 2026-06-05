@@ -15,6 +15,7 @@ DEFAULT_UNITS = {
     Metric.co2: "ppm",
     Metric.light: "lux",
     Metric.presence: "occupied",
+    Metric.noise: "dB",
 }
 
 

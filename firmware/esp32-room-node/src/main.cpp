@@ -69,6 +69,11 @@ float readPresence() {
   return digitalRead(AIOT_PRESENCE_PIN) == HIGH ? 1.0f : 0.0f;
 }
 
+float readNoiseDbA() {
+  const int raw = analogRead(AIOT_NOISE_ADC_PIN);
+  return 32.0f + (static_cast<float>(raw) / 4095.0f) * 55.0f;
+}
+
 void addReading(JsonArray readings, const char *metric, float value, const char *unit, const char *quality = "ok") {
   JsonObject reading = readings.add<JsonObject>();
   reading["metric"] = metric;
@@ -78,7 +83,7 @@ void addReading(JsonArray readings, const char *metric, float value, const char 
 }
 
 bool publishTelemetry() {
-  StaticJsonDocument<768> payload;
+  StaticJsonDocument<1024> payload;
   payload["device_id"] = AIOT_DEVICE_ID;
   JsonArray readings = payload["readings"].to<JsonArray>();
 
@@ -89,8 +94,10 @@ bool publishTelemetry() {
   addReading(readings, "co2", co2, "ppm", co2 > 1200.0f ? "anomaly" : "ok");
   addReading(readings, "light", readLightLux(), "lux");
   addReading(readings, "presence", readPresence(), "occupied");
+  const float noise = readNoiseDbA();
+  addReading(readings, "noise", noise, "dB", noise > 65.0f ? "anomaly" : "ok");
 
-  char buffer[768];
+  char buffer[1024];
   const size_t size = serializeJson(payload, buffer, sizeof(buffer));
   const String topic = telemetryTopic();
   const bool ok = mqttClient.publish(topic.c_str(), reinterpret_cast<const uint8_t *>(buffer), size, false);

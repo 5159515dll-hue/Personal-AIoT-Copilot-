@@ -29,6 +29,7 @@ V0 支持以下指标：
 | `co2` | `ppm` | 二氧化碳浓度 |
 | `light` | `lux` | 光照强度 |
 | `presence` | `occupied` | 人体存在，`1` 表示有人，`0` 表示无人 |
+| `noise` | `dB` | 噪声等级，只上报分贝数值，不上传原始音频 |
 
 `quality` 可选，允许值为 `ok`、`stale`、`anomaly`。未提供时默认为 `ok`。
 
@@ -45,7 +46,8 @@ V0 支持以下指标：
     { "metric": "humidity", "value": 48.2, "unit": "%" },
     { "metric": "co2", "value": 1180, "unit": "ppm", "quality": "ok" },
     { "metric": "light", "value": 620, "unit": "lux" },
-    { "metric": "presence", "value": 1, "unit": "occupied" }
+    { "metric": "presence", "value": 1, "unit": "occupied" },
+    { "metric": "noise", "value": 48.5, "unit": "dB" }
   ]
 }
 ```
@@ -78,7 +80,8 @@ V0 支持以下指标：
   "humidity": 48.2,
   "co2": 930,
   "light": 620,
-  "presence": 1
+  "presence": 1,
+  "noise": 48.5
 }
 ```
 
@@ -100,7 +103,8 @@ POST /api/ingest/sensor-readings
   "readings": [
     { "metric": "temperature", "value": 25.4 },
     { "metric": "humidity", "value": 48.2 },
-    { "metric": "co2", "value": 930 }
+    { "metric": "co2", "value": 930 },
+    { "metric": "noise", "value": 48.5 }
   ]
 }
 ```

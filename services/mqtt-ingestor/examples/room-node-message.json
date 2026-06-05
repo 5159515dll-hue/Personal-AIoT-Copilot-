@@ -27,6 +27,11 @@
       "metric": "presence",
       "value": 1,
       "unit": "occupied"
+    },
+    {
+      "metric": "noise",
+      "value": 48.5,
+      "unit": "dB"
     }
   ]
 }

@@ -14,6 +14,7 @@ class Metric(str, Enum):
     co2 = "co2"
     light = "light"
     presence = "presence"
+    noise = "noise"
 
 
 class RiskLevel(str, Enum):
