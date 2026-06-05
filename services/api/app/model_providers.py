@@ -90,7 +90,11 @@ PROVIDERS: list[ModelProviderDefinition] = [
 
 
 def get_catalog() -> ModelProviderCatalog:
-    return ModelProviderCatalog(providers=PROVIDERS, active_config=get_public_config())
+    return ModelProviderCatalog(
+        providers=PROVIDERS,
+        active_config=get_public_config(),
+        saved_configs=get_public_configs(),
+    )
 
 
 def get_active_config() -> ModelConfig | None:
@@ -104,6 +108,17 @@ def get_public_config() -> PublicModelConfig | None:
     return redact_config(get_active_config())
 
 
+def get_public_configs() -> list[PublicModelConfig]:
+    return [
+        redacted
+        for redacted in (
+            redact_config(config)
+            for config in sorted(config_store.list(), key=lambda item: item.updated_at, reverse=True)
+        )
+        if redacted is not None
+    ]
+
+
 def save_config(request: ModelConfigRequest) -> PublicModelConfig:
     _, endpoint = validate_model_target(
         request.provider_id,
@@ -112,7 +127,14 @@ def save_config(request: ModelConfigRequest) -> PublicModelConfig:
         request.base_url,
     )
     base_url = endpoint.base_url.rstrip("/")
-    existing = get_active_config()
+    configs = config_store.list()
+    existing = _matching_config(
+        configs,
+        provider_id=request.provider_id,
+        endpoint_id=request.endpoint_id,
+        protocol=request.protocol,
+        base_url=base_url,
+    )
     requested_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
     api_key = requested_key or _reusable_api_key(
         existing,
@@ -130,7 +152,7 @@ def save_config(request: ModelConfigRequest) -> PublicModelConfig:
         api_key=api_key,
         updated_at=now(),
     )
-    config_store.replace_all([config])
+    config_store.replace_all([config, *[item for item in configs if not _same_config_target(item, config)]])
     return redact_config(config)
 
 
@@ -152,14 +174,20 @@ async def test_connection(request: ModelConnectionTestRequest) -> ModelConnectio
             message=str(exc),
         )
 
-    active = get_active_config()
     base_url = endpoint.base_url.rstrip("/")
+    existing = _matching_config(
+        config_store.list(),
+        provider_id=request.provider_id,
+        endpoint_id=request.endpoint_id,
+        protocol=request.protocol,
+        base_url=base_url,
+    )
     requested_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
     if requested_key:
         api_key = requested_key
-    elif active:
+    elif existing:
         api_key = _reusable_api_key(
-            active,
+            existing,
             provider_id=request.provider_id,
             endpoint_id=request.endpoint_id,
             protocol=request.protocol,
@@ -362,6 +390,34 @@ def _reusable_api_key(
     ):
         return config.api_key
     return None
+
+
+def _matching_config(
+    configs: list[ModelConfig],
+    *,
+    provider_id: str,
+    endpoint_id: str,
+    protocol: ProviderProtocol,
+    base_url: str,
+) -> ModelConfig | None:
+    for config in sorted(configs, key=lambda item: item.updated_at, reverse=True):
+        if (
+            config.provider_id == provider_id
+            and config.endpoint_id == endpoint_id
+            and config.protocol == protocol
+            and config.base_url.rstrip("/") == base_url.rstrip("/")
+        ):
+            return config
+    return None
+
+
+def _same_config_target(left: ModelConfig, right: ModelConfig) -> bool:
+    return (
+        left.provider_id == right.provider_id
+        and left.endpoint_id == right.endpoint_id
+        and left.protocol == right.protocol
+        and left.base_url.rstrip("/") == right.base_url.rstrip("/")
+    )
 
 
 def _openai_headers(provider_id: str, api_key: str) -> dict[str, str]:

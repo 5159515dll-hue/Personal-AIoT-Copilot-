@@ -175,6 +175,7 @@ export type PublicModelConfig = {
 export type ModelProviderCatalog = {
   providers: ModelProviderDefinition[];
   active_config: PublicModelConfig | null;
+  saved_configs: PublicModelConfig[];
 };
 
 export type ModelConfigRequest = {

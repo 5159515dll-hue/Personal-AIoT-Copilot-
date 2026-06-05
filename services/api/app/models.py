@@ -267,6 +267,7 @@ class PublicModelConfig(BaseModel):
 class ModelProviderCatalog(BaseModel):
     providers: list[ModelProviderDefinition]
     active_config: PublicModelConfig | None
+    saved_configs: list[PublicModelConfig] = Field(default_factory=list)
 
 
 class ModelConnectionTestRequest(BaseModel):

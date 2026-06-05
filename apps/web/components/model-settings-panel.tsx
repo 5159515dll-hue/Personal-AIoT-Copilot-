@@ -8,7 +8,8 @@ import type {
   ModelConnectionTestResponse,
   ModelProviderCatalog,
   ModelProviderDefinition,
-  ProviderEndpoint
+  ProviderEndpoint,
+  PublicModelConfig
 } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 
@@ -25,6 +26,9 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
   const [model, setModel] = useState(catalog.active_config?.model ?? initialProvider.default_model);
   const [apiKey, setApiKey] = useState("");
   const [activeConfig, setActiveConfig] = useState(catalog.active_config);
+  const [savedConfigs, setSavedConfigs] = useState<PublicModelConfig[]>(
+    catalog.saved_configs.length > 0 ? catalog.saved_configs : catalog.active_config ? [catalog.active_config] : []
+  );
   const [result, setResult] = useState<ModelConnectionTestResponse | string | null>(null);
   const [pending, setPending] = useState<"save" | "test" | null>(null);
 
@@ -40,33 +44,35 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     () => catalog.providers.find((item) => item.id === activeConfig?.provider_id) ?? null,
     [activeConfig?.provider_id, catalog.providers]
   );
-  const canReuseActiveKey =
-    activeConfig?.api_key_set === true &&
-    activeConfig.provider_id === provider.id &&
-    activeConfig.endpoint_id === endpoint.id &&
-    activeConfig.protocol === endpoint.protocol &&
-    activeConfig.base_url.replace(/\/$/, "") === baseUrl.replace(/\/$/, "");
+  const savedConfig = useMemo(
+    () => findSavedConfig(savedConfigs, provider.id, endpoint.id, endpoint.protocol, baseUrl),
+    [baseUrl, endpoint.id, endpoint.protocol, provider.id, savedConfigs]
+  );
+  const canReuseSavedKey = savedConfig?.api_key_set === true;
   const selectionMatchesActive =
     activeConfig?.provider_id === provider.id &&
     activeConfig.endpoint_id === endpoint.id &&
     activeConfig.protocol === endpoint.protocol &&
     activeConfig.base_url.replace(/\/$/, "") === baseUrl.replace(/\/$/, "") &&
     activeConfig.model === model;
-  const hasUsableKey = Boolean(apiKey.trim()) || canReuseActiveKey;
+  const hasUsableKey = Boolean(apiKey.trim()) || canReuseSavedKey;
 
   function changeProvider(next: ModelProviderDefinition) {
     const nextEndpoint = next.endpoints[0];
+    const nextSaved = findSavedConfig(savedConfigs, next.id, nextEndpoint.id, nextEndpoint.protocol, nextEndpoint.base_url);
     setProviderId(next.id);
     setEndpointId(nextEndpoint.id);
     setBaseUrl(nextEndpoint.base_url);
-    setModel(next.default_model);
+    setModel(nextSaved?.model ?? next.default_model);
     setApiKey("");
     setResult(null);
   }
 
   function changeEndpoint(next: ProviderEndpoint) {
+    const nextSaved = findSavedConfig(savedConfigs, provider.id, next.id, next.protocol, next.base_url);
     setEndpointId(next.id);
     setBaseUrl(next.base_url);
+    setModel(nextSaved?.model ?? provider.default_model);
     setApiKey("");
     setResult(null);
   }
@@ -93,8 +99,9 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
     try {
       const saved = await saveModelConfig(payload());
       setActiveConfig(saved);
+      setSavedConfigs((current) => [saved, ...current.filter((item) => !sameConfigTarget(item, saved))]);
       setApiKey("");
-      setResult("已保存为智能体当前模型。密钥只保存在后端本地，不会在接口响应中回显。");
+      setResult("已保存为智能体当前模型。该厂商接口密钥后续切换回来时会自动复用，接口响应不会回显明文密钥。");
     } catch (error) {
       setResult(error instanceof Error ? error.message : "保存失败");
     } finally {
@@ -150,6 +157,9 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
                 )}
                 {item.id === activeConfig?.provider_id && (
                   <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">当前生效</span>
+                )}
+                {savedConfigs.some((config) => config.provider_id === item.id && config.api_key_set) && (
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">已导入密钥</span>
                 )}
               </span>
               <span className="mt-2 block text-sm leading-6 text-muted">{item.description}</span>
@@ -212,14 +222,14 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
               onChange={(event) => setApiKey(event.target.value)}
               type="password"
               className="focus-ring h-11 min-w-0 flex-1 rounded-lg border border-line bg-white px-3 text-sm"
-              placeholder={canReuseActiveKey ? "留空则继续使用当前接口密钥" : "粘贴当前厂商接口密钥"}
+              placeholder={canReuseSavedKey ? "留空则继续使用当前接口密钥" : "粘贴当前厂商接口密钥"}
               autoComplete="off"
             />
           </div>
           <span className="mt-2 block text-xs leading-5 text-muted">
-            {canReuseActiveKey
-              ? `当前选择可复用已导入密钥：${activeConfig.api_key_preview}`
-              : "切换厂商、协议或 Base URL 时必须导入对应平台密钥。"}
+            {canReuseSavedKey
+              ? `当前选择可复用已导入密钥：${savedConfig?.api_key_preview ?? "***"}`
+              : "该厂商接口尚未导入密钥，首次保存或测试需要粘贴对应平台密钥。"}
           </span>
         </label>
 
@@ -303,7 +313,8 @@ export function ModelSettingsPanel({ catalog }: { catalog: ModelProviderCatalog 
             <h2 className="text-base font-semibold">密钥处理规则</h2>
           </div>
           <p className="mt-3 text-sm leading-6 text-amber-800/85">
-            接口密钥只写入后端服务器本地数据目录，页面和接口只显示前后缀预览。生产环境建议改为系统环境变量或专用密钥管理服务。
+            接口密钥按厂商和接口入口写入后端服务器本地数据目录，切换回来时可复用；页面和接口只显示前后缀预览。
+            生产环境建议改为系统环境变量或专用密钥管理服务。
           </p>
         </section>
 
@@ -327,5 +338,30 @@ function Info({ label, value }: { label: string; value: string }) {
       <dt className="text-xs font-semibold text-muted">{label}</dt>
       <dd className="mt-1 break-all font-medium text-ink">{value}</dd>
     </div>
+  );
+}
+
+function findSavedConfig(
+  configs: PublicModelConfig[],
+  providerId: string,
+  endpointId: string,
+  protocol: PublicModelConfig["protocol"],
+  baseUrl: string
+): PublicModelConfig | undefined {
+  return configs.find(
+    (item) =>
+      item.provider_id === providerId &&
+      item.endpoint_id === endpointId &&
+      item.protocol === protocol &&
+      item.base_url.replace(/\/$/, "") === baseUrl.replace(/\/$/, "")
+  );
+}
+
+function sameConfigTarget(left: PublicModelConfig, right: PublicModelConfig): boolean {
+  return (
+    left.provider_id === right.provider_id &&
+    left.endpoint_id === right.endpoint_id &&
+    left.protocol === right.protocol &&
+    left.base_url.replace(/\/$/, "") === right.base_url.replace(/\/$/, "")
   );
 }

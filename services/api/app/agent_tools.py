@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
-from app.audit import record_audit
+from app.audit import list_audit_logs, record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db
 from app.device_adapter import execute_mock_control, get_mock_device
 from app.mock_data import current_room_state, query_history, summarize_metric
@@ -71,6 +71,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             policy,
             rule_draft,
             allow_model=False,
+        )
+
+    if _mentions_audit_log(lowered):
+        return await _audit_log_response(
+            session_id=session_id,
+            message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
         )
 
     if _mentions_forbidden_control(lowered):
@@ -267,6 +278,51 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
     )
 
 
+async def _audit_log_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    logs = list_audit_logs(limit=8)
+    summaries = [_audit_log_summary(log) for log in logs]
+    used_data.append("audit_logs_recent")
+    tool_calls.append(
+        ToolCall(
+            name="get_audit_log",
+            parameters={"limit": 8, "redacted_parameters": True},
+            result={"count": len(summaries), "logs": summaries},
+            created_at=now(),
+        )
+    )
+
+    if not logs:
+        reply = "当前还没有审计日志。执行一次智能体查询、设备控制或规则确认后，这里会出现可追溯记录。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    action_counts: dict[str, int] = {}
+    attention_count = 0
+    for log in logs:
+        action_counts[log.action] = action_counts.get(log.action, 0) + 1
+        if log.result in {"blocked", "requires_confirmation", "failed"} or log.policy_result == PolicyResult.denied:
+            attention_count += 1
+    action_summary = "，".join(f"{action} {count} 条" for action, count in action_counts.items())
+    latest = logs[0]
+    reply = (
+        f"最近 {len(logs)} 条审计日志中，最新记录是 {latest.actor} 发起的 {latest.action}，结果为 {latest.result}。"
+        f"动作分布：{action_summary}。"
+    )
+    if attention_count:
+        reply += f"其中 {attention_count} 条需要重点关注，包含拒绝、确认或失败结果。"
+    else:
+        reply += "最近记录没有发现失败或被策略拒绝的动作。"
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 async def _database_environment_response(
     *,
     session_id: str,
@@ -441,6 +497,19 @@ def _database_error_text(exc: Exception) -> str:
     return "数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态"
 
 
+def _audit_log_summary(log) -> dict:
+    return {
+        "id": log.id,
+        "timestamp": log.timestamp.isoformat(),
+        "actor": log.actor,
+        "action": log.action,
+        "result": log.result,
+        "policy_result": log.policy_result.value if log.policy_result else None,
+        "risk_level": log.risk_level.value if log.risk_level else None,
+        "details": log.details,
+    }
+
+
 async def _response(
     session_id: str,
     user_message: str,
@@ -488,6 +557,10 @@ async def _response(
 
 def _mentions_co2_or_environment(text: str) -> bool:
     return any(token in text for token in ("co2", "二氧化碳", "空气", "环境", "temperature", "humidity", "今天", "room"))
+
+
+def _mentions_audit_log(text: str) -> bool:
+    return any(token in text for token in ("audit", "audit log", "审计", "日志", "记录", "追溯"))
 
 
 def _mentions_rule(text: str) -> bool:

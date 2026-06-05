@@ -8,6 +8,7 @@
 - `query_sensor_history`：返回二氧化碳等指标的聚合证据；mock 和 database 使用同一套 bucket 语义。
 - `create_automation_rule`：只创建草案；保存必须通过用户确认。
 - `control_device`：将设备动作请求送入策略引擎和审计日志；允许的低风险模拟动作会写入 mock device adapter 状态。
+- `get_audit_log`：读取最近审计摘要，用于回答“刚才发生了什么”“哪些动作被拒绝”等追溯问题；工具结果不包含完整原始参数。
 - `policy_check`：记录提示注入或绕过策略的拒绝决定。
 - `llm_response_generation`：可选语言生成层，读取当前模型配置，把工具结果整理为更自然的中文解释。
 
@@ -34,6 +35,7 @@
 - 智能体先把用户问题映射到工具，再用工具返回结构化结果。
 - 设备控制类意图必须先经过策略引擎。
 - 策略拒绝、提示注入、未知插座、报警器关闭等请求不会外发给大模型。
+- 审计查询只把最近日志摘要送入模型增强层，不传递完整参数或密钥。
 - 模型调用失败、未配置密钥或返回空文本时，自动回退到本地工具链回复。
 - Kimi K2.6 默认关闭 thinking 并使用 `max_completion_tokens`，保证连接测试和智能体回复能拿到正文。
 - 小米 MiMo Token Plan OpenAI 入口同时发送 `api-key` 与 `Authorization: Bearer`，兼容不同网关认证实现。

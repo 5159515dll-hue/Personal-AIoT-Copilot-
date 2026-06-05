@@ -10,6 +10,7 @@ import type {
   ModelConfigRequest,
   ModelConnectionTestResponse,
   ModelProviderCatalog,
+  PublicModelConfig,
   RuleEvaluation,
   RoomState,
   SensorReading,
@@ -147,8 +148,8 @@ export async function getModelProviderCatalog(): Promise<ModelProviderCatalog> {
   return request<ModelProviderCatalog>("/api/model-providers");
 }
 
-export async function saveModelConfig(payload: ModelConfigRequest): Promise<ModelProviderCatalog["active_config"]> {
-  return request<ModelProviderCatalog["active_config"]>("/api/model-providers/active", {
+export async function saveModelConfig(payload: ModelConfigRequest): Promise<PublicModelConfig> {
+  return request<PublicModelConfig>("/api/model-providers/active", {
     method: "POST",
     body: JSON.stringify(payload)
   });
