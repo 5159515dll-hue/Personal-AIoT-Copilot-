@@ -4,10 +4,12 @@ import type { TelemetrySource } from "@/lib/types";
 
 export function TelemetrySourceSwitch({
   source,
-  basePath
+  basePath,
+  extraParams
 }: {
   source: TelemetrySource;
   basePath: string;
+  extraParams?: Record<string, string | undefined>;
 }) {
   const options: Array<{ value: TelemetrySource; label: string; icon: typeof Bot }> = [
     { value: "mock", label: "模拟数据", icon: Bot },
@@ -19,7 +21,7 @@ export function TelemetrySourceSwitch({
       {options.map((option) => {
         const Icon = option.icon;
         const active = source === option.value;
-        const href = option.value === "database" ? `${basePath}?source=database` : basePath;
+        const href = telemetryHref(basePath, option.value, extraParams);
         return (
           <Link
             key={option.value}
@@ -35,4 +37,20 @@ export function TelemetrySourceSwitch({
       })}
     </div>
   );
+}
+
+function telemetryHref(basePath: string, source: TelemetrySource, extraParams?: Record<string, string | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(extraParams ?? {})) {
+    if (value) {
+      params.set(key, value);
+    }
+  }
+  if (source === "database") {
+    params.set("source", "database");
+  } else {
+    params.delete("source");
+  }
+  const query = params.toString();
+  return query ? `${basePath}?${query}` : basePath;
 }
