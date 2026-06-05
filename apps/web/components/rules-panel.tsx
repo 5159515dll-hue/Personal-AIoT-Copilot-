@@ -182,6 +182,11 @@ function RuleEvaluationStatus({ evaluation }: { evaluation: RuleEvaluation }) {
   const value = typeof evaluation.observed.value === "number" ? evaluation.observed.value : null;
   const unit = typeof evaluation.observed.unit === "string" ? evaluation.observed.unit : "";
   const threshold = typeof evaluation.observed.threshold === "number" ? evaluation.observed.threshold : null;
+  const observedKind = typeof evaluation.observed.kind === "string" ? evaluation.observed.kind : null;
+  const currentTime = typeof evaluation.observed.current_time === "string" ? evaluation.observed.current_time : null;
+  const thresholdTime = typeof evaluation.observed.threshold_time === "string" ? evaluation.observed.threshold_time : null;
+  const comparator = typeof evaluation.observed.comparator === "string" ? evaluation.observed.comparator : null;
+  const timezone = typeof evaluation.observed.timezone === "string" ? evaluation.observed.timezone : "Asia/Shanghai";
   const style =
     evaluation.status === "triggered"
       ? "border-teal-100 bg-teal-50 text-teal-800"
@@ -215,6 +220,12 @@ function RuleEvaluationStatus({ evaluation }: { evaluation: RuleEvaluation }) {
         <p className="mt-1 text-xs opacity-80">
           依据：{observedSource} · {metric} {formatObservedNumber(value)} {unit}
           {threshold !== null ? `，阈值 ${formatObservedNumber(threshold)}` : ""}
+        </p>
+      )}
+      {observedKind === "time" && currentTime && thresholdTime && (
+        <p className="mt-1 text-xs opacity-80">
+          依据：{timezone} · 当前时间 {currentTime}
+          {comparator ? `，条件 ${comparator} ${thresholdTime}` : `，阈值 ${thresholdTime}`}
         </p>
       )}
       {evaluation.audit_log_id && <p className="mt-1 break-all text-xs opacity-80">审计编号：{evaluation.audit_log_id}</p>}

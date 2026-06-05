@@ -194,12 +194,28 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
 
     if _mentions_rule(lowered):
-        rule_draft = AutomationRuleCreate(
-            condition="二氧化碳 > 1200 ppm 持续 15 分钟且房间有人",
-            action="发送通风提醒",
-            enabled=True,
-            confirmed=False,
-        )
+        if _mentions_rest_time_rule(lowered):
+            rule_draft = AutomationRuleCreate(
+                condition="晚上 11 点后",
+                action="发送休息提醒",
+                enabled=True,
+                confirmed=False,
+            )
+            reply = (
+                "我起草了一条休息提醒规则：如果当前时间在晚上 11 点后，"
+                "那么发送休息提醒。在你确认之前，我不会保存这条规则。"
+            )
+        else:
+            rule_draft = AutomationRuleCreate(
+                condition="二氧化碳 > 1200 ppm 持续 15 分钟且房间有人",
+                action="发送通风提醒",
+                enabled=True,
+                confirmed=False,
+            )
+            reply = (
+                "我起草了一条提醒规则：如果二氧化碳在房间有人时持续 15 分钟高于 1200 ppm，"
+                "那么发送通风提醒。在你确认之前，我不会保存这条规则。"
+            )
         policy = validate_rule(rule_draft)
         needs_confirmation = True
         tool_calls.append(
@@ -210,10 +226,6 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
                 policy=policy,
                 created_at=now(),
             )
-        )
-        reply = (
-            "我起草了一条提醒规则：如果二氧化碳在房间有人时持续 15 分钟高于 1200 ppm，"
-            "那么发送通风提醒。在你确认之前，我不会保存这条规则。"
         )
         return await _response(
             session_id,
@@ -1379,6 +1391,12 @@ def _mentions_weekly_summary(text: str) -> bool:
 
 def _mentions_rule(text: str) -> bool:
     return any(token in text for token in ("rule", "automation", "提醒", "规则", "创建"))
+
+
+def _mentions_rest_time_rule(text: str) -> bool:
+    rest_tokens = ("休息", "睡觉", "睡眠", "rest", "sleep")
+    time_tokens = ("晚上", "晚间", "夜间", "11", "23", "十一点", "23:00", "时间")
+    return any(token in text for token in rest_tokens) and any(token in text for token in time_tokens)
 
 
 def _mentions_lamp_control(text: str) -> bool:

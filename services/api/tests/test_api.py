@@ -14,6 +14,7 @@ from app import device_adapter as device_adapter_module
 from app import device_rate_limit as device_rate_limit_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
+from app import rule_engine as rule_engine_module
 from app import rule_store as rule_store_module
 from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
 from app.ingestion import parse_mqtt_payload
@@ -635,6 +636,56 @@ def test_rule_evaluation_supports_noise_threshold() -> None:
     assert evaluation["observed"]["unit"] == "dB"
 
 
+def test_rule_evaluation_supports_evening_time_reminder(monkeypatch) -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "晚上 11 点后",
+            "action": "发送休息提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    fixed_now = now().replace(hour=23, minute=15, second=0, microsecond=0)
+    monkeypatch.setattr(rule_engine_module, "now", lambda: fixed_now)
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "triggered"
+    assert evaluation["matched"] is True
+    assert evaluation["observed"]["kind"] == "time"
+    assert evaluation["observed"]["current_time"] == "23:15"
+    assert evaluation["observed"]["threshold_time"] == "23:00"
+    assert evaluation["observed"]["timezone"] == "Asia/Shanghai"
+    assert evaluation["audit_log_id"]
+
+
+def test_rule_evaluation_time_reminder_not_matched_before_threshold(monkeypatch) -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "23:00 后",
+            "action": "发送休息提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    fixed_now = now().replace(hour=22, minute=30, second=0, microsecond=0)
+    monkeypatch.setattr(rule_engine_module, "now", lambda: fixed_now)
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "not_matched"
+    assert evaluation["matched"] is False
+    assert evaluation["observed"]["kind"] == "time"
+    assert evaluation["observed"]["current_time"] == "22:30"
+    assert evaluation["audit_log_id"] is None
+
+
 def test_rule_evaluation_respects_disabled_rules() -> None:
     create_response = client.post(
         "/api/rules",
@@ -816,6 +867,22 @@ def test_agent_can_recommend_safe_actions_without_control() -> None:
     assert tool["result"]["actions"]
     assert "未知负载智能插座" in tool["result"]["not_allowed"]
     assert "不会直接控制" in payload["message"]["content"]
+
+
+def test_agent_drafts_evening_rest_rule_without_saving() -> None:
+    response = client.post("/api/agent/chat", json={"message": "创建一个规则：晚上 11 点后提醒我休息"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["needs_confirmation"] is True
+    assert payload["rule_draft"]["condition"] == "晚上 11 点后"
+    assert payload["rule_draft"]["action"] == "发送休息提醒"
+    assert payload["tool_calls"][0]["name"] == "create_automation_rule"
+    assert payload["tool_calls"][0]["result"]["status"] == "draft"
+    assert "休息提醒规则" in payload["message"]["content"]
+
+    rules_response = client.get("/api/rules")
+    assert rules_response.status_code == 200
+    assert rules_response.json() == []
 
 
 def test_agent_can_report_left_on_devices() -> None:
