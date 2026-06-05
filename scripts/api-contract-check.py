@@ -50,6 +50,7 @@ def main() -> int:
         ("PolicyDecision 设备控制拒绝契约", lambda: check_control_policy_and_audit(client)),
         ("AutomationRule 创建和评估契约", lambda: check_rules(client)),
         ("AgentMessage 与 ToolCall 智能体契约", lambda: check_agent_chat(client)),
+        ("模型厂商目录与密钥脱敏契约", lambda: check_model_provider_catalog(client)),
         ("AuditLog 审计筛选契约", lambda: check_audit_logs(client)),
     ]
 
@@ -240,6 +241,39 @@ def check_agent_chat(client: ApiClient) -> None:
     assert_model_usage(payload["model_usage"])
 
 
+def check_model_provider_catalog(client: ApiClient) -> None:
+    catalog = client.get("/api/model-providers")
+    require_keys(catalog, {"providers", "active_config", "saved_configs"}, "ModelProviderCatalog")
+    assert_true(isinstance(catalog["providers"], list) and len(catalog["providers"]) >= 2, "模型厂商目录至少应包含两个中国区厂商")
+    provider_by_id = {provider.get("id"): provider for provider in catalog["providers"]}
+    assert_true({"xiaomi_mimo", "kimi"}.issubset(provider_by_id), "模型厂商目录缺少小米 MiMo 或 Kimi")
+
+    xiaomi = provider_by_id["xiaomi_mimo"]
+    kimi = provider_by_id["kimi"]
+    assert_model_provider_definition(xiaomi)
+    assert_model_provider_definition(kimi)
+
+    endpoint_urls = {endpoint["base_url"] for provider in catalog["providers"] for endpoint in provider.get("endpoints", [])}
+    assert_true("https://token-plan-cn.xiaomimimo.com/v1" in endpoint_urls, "缺少小米 MiMo 中国区 OpenAI 兼容入口")
+    assert_true("https://token-plan-cn.xiaomimimo.com/anthropic" in endpoint_urls, "缺少小米 MiMo 中国区 Anthropic 兼容入口")
+    assert_true("https://api.moonshot.cn/v1" in endpoint_urls, "缺少 Kimi 中国区 OpenAI 兼容入口")
+
+    assert_true("kimi-k2.6" in kimi["models"], "Kimi 模型列表缺少 kimi-k2.6")
+    assert_true("mimo-v2.5-pro" in xiaomi["models"], "小米 MiMo 模型列表缺少 mimo-v2.5-pro")
+    assert_no_plain_api_key_field(catalog, "ModelProviderCatalog")
+
+    if catalog["active_config"] is not None:
+        assert_public_model_config(catalog["active_config"])
+    assert_true(isinstance(catalog["saved_configs"], list), "saved_configs 必须是数组")
+    for config in catalog["saved_configs"]:
+        assert_public_model_config(config)
+
+    active = client.get("/api/model-providers/active")
+    if active is not None:
+        assert_public_model_config(active)
+        assert_no_plain_api_key_field(active, "PublicModelConfig")
+
+
 def check_audit_logs(client: ApiClient) -> None:
     logs = client.get("/api/audit-logs?limit=20")
     assert_true(isinstance(logs, list) and logs, "审计日志列表不能为空")
@@ -344,6 +378,30 @@ def assert_model_usage(payload: Any) -> None:
     assert_true(isinstance(payload["reason"], str) and payload["reason"], "AgentModelUsage.reason 不能为空")
 
 
+def assert_model_provider_definition(payload: Any) -> None:
+    require_keys(payload, {"id", "label", "description", "docs_url", "endpoints", "models", "default_model"}, "ModelProviderDefinition")
+    assert_true(isinstance(payload["id"], str) and payload["id"], "ModelProviderDefinition.id 不能为空")
+    assert_true(isinstance(payload["label"], str) and payload["label"], "ModelProviderDefinition.label 不能为空")
+    assert_true(isinstance(payload["endpoints"], list) and payload["endpoints"], "ModelProviderDefinition.endpoints 不能为空")
+    assert_true(isinstance(payload["models"], list) and payload["models"], "ModelProviderDefinition.models 不能为空")
+    assert_true(payload["default_model"] in payload["models"], "default_model 必须存在于 models 列表")
+    for endpoint in payload["endpoints"]:
+        require_keys(endpoint, {"id", "label", "protocol", "base_url", "description"}, "ProviderEndpoint")
+        assert_in(endpoint["protocol"], {"openai", "anthropic"}, "ProviderEndpoint.protocol")
+        assert_true(str(endpoint["base_url"]).startswith("https://"), "ProviderEndpoint.base_url 必须使用 HTTPS")
+
+
+def assert_public_model_config(payload: Any) -> None:
+    require_keys(payload, {"provider_id", "endpoint_id", "protocol", "base_url", "model", "api_key_set", "api_key_preview", "updated_at"}, "PublicModelConfig")
+    assert_true(isinstance(payload["provider_id"], str) and payload["provider_id"], "PublicModelConfig.provider_id 不能为空")
+    assert_in(payload["protocol"], {"openai", "anthropic"}, "PublicModelConfig.protocol")
+    assert_true(str(payload["base_url"]).startswith("https://"), "PublicModelConfig.base_url 必须使用 HTTPS")
+    assert_true(isinstance(payload["model"], str) and payload["model"], "PublicModelConfig.model 不能为空")
+    assert_true(isinstance(payload["api_key_set"], bool), "PublicModelConfig.api_key_set 必须是布尔值")
+    if payload["api_key_preview"] is not None:
+        assert_true(isinstance(payload["api_key_preview"], str), "PublicModelConfig.api_key_preview 必须是字符串或 null")
+
+
 def assert_audit_log(payload: Any) -> None:
     require_keys(payload, {"id", "timestamp", "actor", "action", "policy_result", "risk_level", "parameters", "result", "details"}, "AuditLog")
     assert_true(str(payload["id"]).startswith("audit_"), "AuditLog.id 格式错误")
@@ -356,6 +414,17 @@ def assert_audit_log(payload: Any) -> None:
     assert_true(isinstance(payload["parameters"], dict), "AuditLog.parameters 必须是对象")
     assert_true(isinstance(payload["result"], str) and payload["result"], "AuditLog.result 不能为空")
     assert_true(isinstance(payload["details"], str) and payload["details"], "AuditLog.details 不能为空")
+
+
+def assert_no_plain_api_key_field(payload: Any, label: str) -> None:
+    if isinstance(payload, dict):
+        if "api_key" in payload:
+            raise ContractFailure(f"{label} 不允许回显明文 api_key 字段")
+        for key, value in payload.items():
+            assert_no_plain_api_key_field(value, f"{label}.{key}")
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            assert_no_plain_api_key_field(item, f"{label}[{index}]")
 
 
 def require_keys(payload: Any, keys: set[str], label: str) -> None:

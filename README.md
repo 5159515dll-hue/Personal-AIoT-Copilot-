@@ -143,7 +143,7 @@ MQTT 入站链路可以单独验收。脚本会发布一条唯一设备编号的
 npm run smoke:mqtt
 ```
 
-核心 API 契约可以单独验收。脚本会验证 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision` 和 `AuditLog` 的关键字段，避免公开接口被后续改动破坏：
+核心 API 契约可以单独验收。脚本会验证 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision`、`AuditLog` 和模型厂商目录的关键字段，确认小米 MiMo / Kimi 中国区入口存在，并避免公开接口被后续改动破坏：
 
 ```bash
 npm run contract:api

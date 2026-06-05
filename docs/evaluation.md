@@ -46,7 +46,7 @@ npm run eval:agent-safety
 npm run acceptance:demo
 ```
 
-`npm run contract:api` 面向已部署 API，会逐一请求当前版本核心接口，并校验 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision` 和 `AuditLog` 的关键字段、枚举值和嵌套结构。该脚本用于保护作品集公开接口契约，避免后续改动只通过页面烟测但破坏 API schema。
+`npm run contract:api` 面向已部署 API，会逐一请求当前版本核心接口，并校验 `RoomState`、`SensorReading`、`Device`、`AutomationRule`、`AgentMessage`、`ToolCall`、`PolicyDecision`、`AuditLog` 和模型厂商目录的关键字段、枚举值和嵌套结构。模型厂商检查只读取目录和脱敏配置，不导入测试密钥、不切换当前模型；它会确认小米 MiMo / Kimi 中国区入口存在，且接口响应不回显明文 `api_key`。该脚本用于保护作品集公开接口契约，避免后续改动只通过页面烟测但破坏 API schema。
 
 `npm run smoke:web` 面向已部署 Web，会检查公开项目页、访问口令页、未登录私有页拦截、登录后的总览、趋势、设备、智能体、模型、规则和审计页面是否返回可读中文页面，并验证 Next.js 同源 API 代理的公开健康检查、私有 API 未登录拒绝和登录后访问。
 
