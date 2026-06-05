@@ -142,6 +142,42 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             allow_model=False,
         )
 
+    if _mentions_daily_summary(lowered):
+        return await _daily_summary_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_environment_explanation(lowered):
+        return await _environment_explanation_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_action_recommendation(lowered):
+        return await _action_recommendation_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
     if _mentions_rule(lowered):
         rule_draft = AutomationRuleCreate(
             condition="二氧化碳 > 1200 ppm 持续 15 分钟且房间有人",
@@ -164,6 +200,46 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             "我起草了一条提醒规则：如果二氧化碳在房间有人时持续 15 分钟高于 1200 ppm，"
             "那么发送通风提醒。在你确认之前，我不会保存这条规则。"
         )
+        return await _response(
+            session_id,
+            message,
+            reply,
+            used_data,
+            tool_calls,
+            needs_confirmation,
+            policy,
+            rule_draft,
+        )
+
+    if _mentions_weekly_summary(lowered):
+        if data_source == "database":
+            return await _database_weekly_response(
+                session_id=session_id,
+                message=message,
+                used_data=used_data,
+                tool_calls=tool_calls,
+                needs_confirmation=needs_confirmation,
+                policy=policy,
+                rule_draft=rule_draft,
+            )
+
+        end_ts = now()
+        readings = query_history(Metric.co2, end_ts - timedelta(days=7), end_ts, "1h")
+        values = [reading.value for reading in readings]
+        used_data.append("co2_7d_hourly")
+        tool_calls.append(
+            ToolCall(
+                name="query_sensor_history",
+                parameters={"metric": "co2", "period": "last_7_days", "bucket": "1h"},
+                result={
+                    "avg": round(sum(values) / len(values), 1),
+                    "max": max(values),
+                    "samples": len(values),
+                },
+                created_at=now(),
+            )
+        )
+        reply = "一周模式显示，二氧化碳通常在下午和深夜有人时段上升。通风提醒应重点覆盖这些时间窗口。"
         return await _response(
             session_id,
             message,
@@ -213,46 +289,6 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
         if room.anomalies:
             reply += f" 不确定性或警告：{'；'.join(room.anomalies)}"
-        return await _response(
-            session_id,
-            message,
-            reply,
-            used_data,
-            tool_calls,
-            needs_confirmation,
-            policy,
-            rule_draft,
-        )
-
-    if "7" in lowered or "week" in lowered or "一周" in lowered:
-        if data_source == "database":
-            return await _database_weekly_response(
-                session_id=session_id,
-                message=message,
-                used_data=used_data,
-                tool_calls=tool_calls,
-                needs_confirmation=needs_confirmation,
-                policy=policy,
-                rule_draft=rule_draft,
-            )
-
-        end_ts = now()
-        readings = query_history(Metric.co2, end_ts - timedelta(days=7), end_ts, "1h")
-        values = [reading.value for reading in readings]
-        used_data.append("co2_7d_hourly")
-        tool_calls.append(
-            ToolCall(
-                name="query_sensor_history",
-                parameters={"metric": "co2", "period": "last_7_days", "bucket": "1h"},
-                result={
-                    "avg": round(sum(values) / len(values), 1),
-                    "max": max(values),
-                    "samples": len(values),
-                },
-                created_at=now(),
-            )
-        )
-        reply = "一周模式显示，二氧化碳通常在下午和深夜有人时段上升。通风提醒应重点覆盖这些时间窗口。"
         return await _response(
             session_id,
             message,
@@ -441,6 +477,176 @@ async def _anomaly_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
+async def _daily_summary_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    end_ts = now()
+    start_ts = end_ts - timedelta(hours=24)
+    used_data.append(f"{data_source}_daily_environment_24h")
+    try:
+        histories = _query_metric_histories(
+            data_source,
+            start_ts,
+            end_ts,
+            "1h",
+            [Metric.co2, Metric.temperature, Metric.humidity, Metric.light, Metric.presence],
+        )
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="summarize_daily_environment",
+                parameters={"source": data_source, "window": "last_24_hours", "bucket": "1h"},
+                result={"source": data_source, "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"每日环境总结暂不可用：{error_text}。可以切回模拟数据，或先检查数据库和 MQTT 入站链路。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    metrics = {metric.value: _metric_summary(readings) for metric, readings in histories.items()}
+    co2 = metrics.get(Metric.co2.value, {})
+    result = {
+        "source": data_source,
+        "status": "ok" if any(summary["samples"] for summary in metrics.values()) else "empty",
+        "window": "last_24_hours",
+        "bucket": "1h",
+        "metrics": metrics,
+        "worst_air_time": co2.get("max_at"),
+        "interpretation": _daily_interpretation(metrics),
+    }
+    tool_calls.append(
+        ToolCall(
+            name="summarize_daily_environment",
+            parameters={"source": data_source, "window": "last_24_hours", "bucket": "1h"},
+            result=result,
+            created_at=now(),
+        )
+    )
+    if result["status"] == "empty":
+        reply = "最近 24 小时没有可总结的环境样本。请确认传感器数据已经产生，或切回模拟数据继续演示。"
+    else:
+        reply = (
+            f"最近 24 小时环境总结：二氧化碳平均 {co2.get('avg', 0)} ppm，"
+            f"峰值 {co2.get('max', 0)} ppm，最差空气时间约为 {_time_label(co2.get('max_at'))}。"
+            f"{result['interpretation']}"
+        )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
+async def _environment_explanation_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    end_ts = now()
+    start_ts = end_ts - timedelta(hours=24)
+    used_data.extend([f"{data_source}_co2_24h_history", "environment_issue_rules"])
+    try:
+        histories = _query_metric_histories(data_source, start_ts, end_ts, "15m", [Metric.co2, Metric.temperature, Metric.humidity, Metric.presence])
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="explain_environment_issue",
+                parameters={"source": data_source, "issue": "environment_discomfort", "window": "last_24_hours"},
+                result={"source": data_source, "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"环境问题解释暂不可用：{error_text}。我不会在缺少数据时假装确定原因。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    explanation = _explain_environment_issue(histories, data_source)
+    tool_calls.append(
+        ToolCall(
+            name="explain_environment_issue",
+            parameters={"source": data_source, "issue": explanation["issue"], "window": "last_24_hours"},
+            result=explanation,
+            created_at=now(),
+        )
+    )
+    reply = (
+        f"初步解释：{explanation['summary']}"
+        f"主要证据是 {explanation['evidence_summary']}。"
+        f"不确定性：{explanation['uncertainty']}"
+    )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
+async def _action_recommendation_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    used_data.append(f"{data_source}_current_room_state")
+    try:
+        if data_source == "database":
+            metrics = latest_sensor_readings_db()
+            room_payload = {"source": "database", "metrics": {metric.value: reading.model_dump(mode="json") for metric, reading in metrics.items()}}
+        else:
+            room = current_room_state()
+            metrics = room.metrics
+            room_payload = room.model_dump(mode="json")
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="recommend_action",
+                parameters={"source": data_source, "scope": "safe_environment_actions"},
+                result={"source": data_source, "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"行动建议暂不可用：{error_text}。在缺少可靠数据时，我不会建议任何自动控制动作。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    recommendation = _recommend_safe_actions(metrics)
+    result = {
+        "source": data_source,
+        "status": "ok",
+        "room_state": room_payload,
+        "actions": recommendation["actions"],
+        "safety_boundary": recommendation["safety_boundary"],
+        "not_allowed": recommendation["not_allowed"],
+    }
+    tool_calls.append(
+        ToolCall(
+            name="recommend_action",
+            parameters={"source": data_source, "scope": "safe_environment_actions"},
+            result=result,
+            created_at=now(),
+        )
+    )
+    first_action = recommendation["actions"][0]["title"] if recommendation["actions"] else "继续观察"
+    reply = (
+        f"建议优先执行：{first_action}。"
+        f"这些建议只属于提醒或低风险人工动作，不会直接控制窗户、空调、未知插座或报警器。"
+        f"安全边界：{recommendation['safety_boundary']}"
+    )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 async def _database_environment_response(
     *,
     session_id: str,
@@ -603,6 +809,140 @@ def _summarize_readings(readings: list) -> dict[str, float | int | str]:
         "avg": round(sum(values) / len(values), 1),
         "samples": len(values),
     }
+
+
+def _query_metric_histories(
+    source: str,
+    start_ts,
+    end_ts,
+    bucket: str,
+    metrics: list[Metric],
+) -> dict[Metric, list]:
+    histories: dict[Metric, list] = {}
+    for metric in metrics:
+        if source == "database":
+            histories[metric] = query_sensor_history_db(metric, start_ts, end_ts, bucket=bucket)
+        else:
+            histories[metric] = query_history(metric, start_ts, end_ts, bucket)
+    return histories
+
+
+def _metric_summary(readings: list) -> dict[str, float | int | str | None]:
+    if not readings:
+        return {"status": "empty", "min": 0, "max": 0, "avg": 0, "samples": 0, "max_at": None}
+    values = [reading.value for reading in readings]
+    peak = max(readings, key=lambda reading: reading.value)
+    return {
+        "status": "ok",
+        "min": min(values),
+        "max": max(values),
+        "avg": round(sum(values) / len(values), 1),
+        "samples": len(values),
+        "max_at": peak.timestamp.isoformat(),
+    }
+
+
+def _daily_interpretation(metrics: dict[str, dict]) -> str:
+    co2 = metrics.get(Metric.co2.value, {})
+    temperature = metrics.get(Metric.temperature.value, {})
+    humidity = metrics.get(Metric.humidity.value, {})
+    notes: list[str] = []
+    if co2.get("max", 0) > 1200:
+        notes.append("空气最差时段已经超过 1200 ppm 专注阈值，适合加入通风提醒。")
+    elif co2.get("max", 0) > 900:
+        notes.append("二氧化碳有上升趋势，但仍处于可通过定时通风管理的范围。")
+    else:
+        notes.append("二氧化碳整体保持在舒适范围。")
+    if temperature.get("max", 0) > 28:
+        notes.append("温度峰值偏高，可能影响长时间学习。")
+    if humidity.get("min", 50) < 35 or humidity.get("max", 50) > 65:
+        notes.append("湿度曾离开 35%-65% 舒适区间。")
+    return "".join(notes)
+
+
+def _time_label(value: object) -> str:
+    if not isinstance(value, str):
+        return "未知"
+    try:
+        return value[11:16]
+    except Exception:
+        return "未知"
+
+
+def _explain_environment_issue(histories: dict[Metric, list], source: str) -> dict:
+    co2_readings = histories.get(Metric.co2, [])
+    temp_readings = histories.get(Metric.temperature, [])
+    humidity_readings = histories.get(Metric.humidity, [])
+    co2_summary = _metric_summary(co2_readings)
+    co2_values = [reading.value for reading in co2_readings]
+    high_samples = sum(1 for value in co2_values if value > 1200)
+    afternoon_values = [reading.value for reading in co2_readings if 14 <= reading.timestamp.hour < 17]
+    afternoon_avg = round(sum(afternoon_values) / len(afternoon_values), 1) if afternoon_values else 0
+    overall_avg = co2_summary.get("avg", 0) if isinstance(co2_summary.get("avg"), (int, float)) else 0
+
+    likely_causes: list[str] = []
+    if afternoon_values and afternoon_avg > float(overall_avg) + 120:
+        likely_causes.append("下午 CO2 均值明显高于全天均值，常见原因是有人停留叠加通风不足。")
+    if high_samples:
+        likely_causes.append("最近 24 小时存在 CO2 超过 1200 ppm 的样本，可能带来困倦和专注下降。")
+    if temp_readings and max(reading.value for reading in temp_readings) > 28:
+        likely_causes.append("温度峰值偏高，会放大闷热和疲劳感。")
+    if humidity_readings and (min(reading.value for reading in humidity_readings) < 35 or max(reading.value for reading in humidity_readings) > 65):
+        likely_causes.append("湿度离开舒适区间，可能造成体感不适。")
+    if not likely_causes:
+        likely_causes.append("当前环境数据没有显示强异常，更可能是作息、饮水或学习节奏等非传感器因素。")
+
+    return {
+        "source": source,
+        "status": "ok",
+        "issue": "afternoon_sleepiness_or_air_quality",
+        "summary": likely_causes[0],
+        "likely_causes": likely_causes,
+        "evidence": {
+            "co2_avg": overall_avg,
+            "co2_peak": co2_summary.get("max", 0),
+            "co2_peak_at": co2_summary.get("max_at"),
+            "co2_high_samples": high_samples,
+            "afternoon_co2_avg": afternoon_avg,
+            "samples": co2_summary.get("samples", 0),
+        },
+        "evidence_summary": f"CO2 平均 {overall_avg} ppm，峰值 {co2_summary.get('max', 0)} ppm，超标样本 {high_samples} 个",
+        "uncertainty": "当前只使用环境传感器数据，不能判断睡眠、饮食、运动或心理压力等个人因素。",
+    }
+
+
+def _recommend_safe_actions(metrics: dict[Metric, object]) -> dict:
+    co2 = _metric_value(metrics.get(Metric.co2))
+    temperature = _metric_value(metrics.get(Metric.temperature))
+    humidity = _metric_value(metrics.get(Metric.humidity))
+    light = _metric_value(metrics.get(Metric.light))
+    actions: list[dict[str, object]] = []
+    if co2 is None:
+        actions.append({"title": "先检查 CO2 传感器上报", "reason": "缺少空气质量核心指标。", "risk_level": "read_only"})
+    elif co2 > 1200:
+        actions.append({"title": "立即开窗或短时通风 10 分钟", "reason": "CO2 已超过 1200 ppm 专注阈值。", "risk_level": "low"})
+    elif co2 > 900:
+        actions.append({"title": "未来 20 分钟内安排一次通风", "reason": "空气质量正在变差。", "risk_level": "low"})
+    else:
+        actions.append({"title": "保持当前通风节奏", "reason": "CO2 当前处于可接受范围。", "risk_level": "read_only"})
+
+    if temperature is not None and temperature > 28:
+        actions.append({"title": "降低室温或减少热源", "reason": "温度偏高会影响长时间专注。", "risk_level": "low"})
+    if humidity is not None and (humidity < 35 or humidity > 65):
+        actions.append({"title": "调整加湿或除湿策略", "reason": "湿度不在 35%-65% 舒适区间。", "risk_level": "low"})
+    if light is not None and light < 250:
+        actions.append({"title": "补充桌面照明", "reason": "光照偏低可能影响阅读和专注。", "risk_level": "low"})
+
+    return {
+        "actions": actions[:4],
+        "safety_boundary": "只给出建议和提醒；不会直接控制窗户、空调、未知插座、报警器或其他高风险设备。",
+        "not_allowed": ["未知负载智能插座", "烟雾报警器", "门锁", "燃气或强电设备"],
+    }
+
+
+def _metric_value(reading: object | None) -> float | None:
+    value = getattr(reading, "value", None)
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def _clean_error_text(exc: Exception) -> str:
@@ -842,6 +1182,26 @@ def _mentions_device_docs(text: str) -> bool:
 
 def _mentions_anomaly(text: str) -> bool:
     return any(token in text for token in ("异常", "离线", "不可用", "告警", "异常检测", "anomaly", "abnormal", "传感器坏", "数据缺失"))
+
+
+def _mentions_daily_summary(text: str) -> bool:
+    return any(token in text for token in ("总结今天", "今日总结", "一天", "日总结", "空气最差", "什么时候房间空气最差", "daily summary"))
+
+
+def _mentions_environment_explanation(text: str) -> bool:
+    issue_tokens = ("困", "犯困", "下午", "co2 上升", "二氧化碳上升", "空气变差", "闷", "通风不足")
+    context_tokens = ("环境", "空气", "co2", "二氧化碳", "温度", "湿度", "通风")
+    return any(token in text for token in issue_tokens) or (
+        any(token in text for token in ("为什么", "原因", "解释")) and any(token in text for token in context_tokens)
+    )
+
+
+def _mentions_action_recommendation(text: str) -> bool:
+    return any(token in text for token in ("改善", "方案", "怎么做", "怎么办", "建议我", "行动建议", "recommend", "适合专注"))
+
+
+def _mentions_weekly_summary(text: str) -> bool:
+    return "7" in text or "week" in text or "一周" in text or "7 天" in text or "七天" in text
 
 
 def _mentions_rule(text: str) -> bool:

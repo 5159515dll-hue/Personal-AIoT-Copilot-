@@ -7,6 +7,9 @@ import type { AgentChatResponse, AgentDataSource, AutomationRuleCreate } from "@
 
 const prompts = [
   "今天二氧化碳情况怎么样？",
+  "总结今天环境变化",
+  "为什么下午经常困？",
+  "给我一个改善环境方案",
   "检测最近环境异常",
   "查看设备上报协议",
   "创建一个二氧化碳通风提醒规则",

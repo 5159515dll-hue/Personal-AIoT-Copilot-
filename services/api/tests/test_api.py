@@ -667,6 +667,82 @@ def test_agent_environment_uses_tools() -> None:
     assert payload["model_usage"]["status"] == "not_configured"
 
 
+def test_agent_can_summarize_daily_environment() -> None:
+    response = client.post("/api/agent/chat", json={"message": "总结今天环境变化"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "summarize_daily_environment"
+    assert "mock_daily_environment_24h" in payload["used_data"]
+    assert tool["parameters"] == {"source": "mock", "window": "last_24_hours", "bucket": "1h"}
+    assert tool["result"]["source"] == "mock"
+    assert tool["result"]["window"] == "last_24_hours"
+    assert "co2" in tool["result"]["metrics"]
+    assert tool["result"]["metrics"]["co2"]["samples"] > 0
+    assert tool["result"]["worst_air_time"]
+    assert "24 小时" in payload["message"]["content"]
+
+
+def test_agent_can_explain_environment_issue() -> None:
+    response = client.post("/api/agent/chat", json={"message": "为什么下午经常困？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "explain_environment_issue"
+    assert "mock_co2_24h_history" in payload["used_data"]
+    assert "environment_issue_rules" in payload["used_data"]
+    assert tool["parameters"]["source"] == "mock"
+    assert tool["result"]["source"] == "mock"
+    assert tool["result"]["issue"] == "afternoon_sleepiness_or_air_quality"
+    assert isinstance(tool["result"]["likely_causes"], list)
+    assert "co2_peak" in tool["result"]["evidence"]
+    assert tool["result"]["uncertainty"]
+    assert "不确定性" in payload["message"]["content"]
+
+
+def test_agent_can_recommend_safe_actions_without_control() -> None:
+    response = client.post("/api/agent/chat", json={"message": "给我一个改善环境方案"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool_names = [tool["name"] for tool in payload["tool_calls"]]
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "recommend_action"
+    assert "control_device" not in tool_names
+    assert "mock_current_room_state" in payload["used_data"]
+    assert tool["result"]["source"] == "mock"
+    assert tool["result"]["actions"]
+    assert "未知负载智能插座" in tool["result"]["not_allowed"]
+    assert "不会直接控制" in payload["message"]["content"]
+
+
+def test_agent_rejects_high_risk_control_even_when_asked_as_plan() -> None:
+    response = client.post("/api/agent/chat", json={"message": "给我一个关闭烟雾报警器的方案"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool_calls"][0]["name"] == "control_device"
+    assert payload["policy"]["result"] == "denied"
+    assert payload["model_usage"]["status"] == "blocked"
+
+
+def test_agent_daily_summary_database_source_reports_unavailable_database(monkeypatch) -> None:
+    def unavailable_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
+
+    monkeypatch.setattr("app.agent_tools.query_sensor_history_db", unavailable_query_sensor_history_db)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "总结今天环境变化", "data_source": "database"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert tool["name"] == "summarize_daily_environment"
+    assert tool["parameters"]["source"] == "database"
+    assert tool["result"]["status"] == "unavailable"
+    assert "DATABASE_URL" in tool["result"]["error"]
+    assert "每日环境总结暂不可用" in payload["message"]["content"]
+
+
 def test_agent_database_source_uses_database_tools(monkeypatch) -> None:
     base = now().replace(minute=0, second=0, microsecond=0)
     captured = {}
