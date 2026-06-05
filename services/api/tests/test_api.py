@@ -1593,8 +1593,11 @@ def test_agent_can_detect_mock_anomalies() -> None:
     assert response.status_code == 200
     payload = response.json()
     tool = payload["tool_calls"][0]
+    event_tool = payload["tool_calls"][1]
     assert tool["name"] == "detect_anomaly"
+    assert event_tool["name"] == "get_anomaly_events"
     assert "anomaly_rules" in payload["used_data"]
+    assert "structured_anomaly_events" in payload["used_data"]
     assert tool["parameters"]["source"] == "mock"
     assert tool["parameters"]["window"] == "last_24_hours"
     assert tool["result"]["source"] == "mock"
@@ -1604,6 +1607,9 @@ def test_agent_can_detect_mock_anomalies() -> None:
     assert "co2_peak" in tool["result"]
     assert "co2_high_samples" in tool["result"]
     assert isinstance(tool["result"]["anomalies"], list)
+    assert event_tool["result"]["count"] >= 1
+    assert event_tool["result"]["events"][0]["title"]
+    assert event_tool["result"]["events"][0]["recommendation"]
     assert "二氧化碳" in payload["message"]["content"] or "异常" in payload["message"]["content"]
 
 
@@ -1619,6 +1625,7 @@ def test_agent_database_anomaly_source_reports_unavailable_database(monkeypatch)
     assert response.status_code == 200
     payload = response.json()
     tool = payload["tool_calls"][0]
+    assert len(payload["tool_calls"]) == 1
     assert tool["name"] == "detect_anomaly"
     assert tool["parameters"]["source"] == "database"
     assert tool["result"]["source"] == "database"
@@ -1656,7 +1663,12 @@ def test_agent_database_anomaly_includes_sensor_health(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     tool = payload["tool_calls"][0]
+    event_tool = payload["tool_calls"][1]
     assert "sensor_health" in payload["used_data"]
+    assert "structured_anomaly_events" in payload["used_data"]
+    assert event_tool["name"] == "get_anomaly_events"
+    assert event_tool["result"]["count"] >= 1
+    assert event_tool["result"]["events"][0]["category"] == "sensor_health"
     health = {item["metric"]: item for item in tool["result"]["sensor_health"]}
     assert health["co2"]["status"] == "stale"
     assert health["humidity"]["status"] == "offline"

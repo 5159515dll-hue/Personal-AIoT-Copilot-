@@ -33,9 +33,26 @@ def list_anomaly_events(*, source: TelemetrySource = "mock", window: AnomalyWind
         }
 
     health = evaluate_sensor_health(latest, source=source, reference_time=reference)
+    return build_anomaly_events(
+        source=source,
+        latest=latest,
+        histories=histories,
+        sensor_health=health,
+        window=window,
+    )
+
+
+def build_anomaly_events(
+    *,
+    source: TelemetrySource,
+    latest: dict[Metric, SensorReading],
+    histories: dict[Metric, list[SensorReading]],
+    sensor_health: list[SensorHealth],
+    window: AnomalyWindow = "24h",
+) -> list[AnomalyEvent]:
     events = [
         *_environment_events(source=source, histories=histories, latest=latest, window=window),
-        *_sensor_health_events(source=source, health=health, reference_time=reference),
+        *_sensor_health_events(source=source, health=sensor_health, reference_time=now()),
     ]
     return sorted(events, key=lambda item: (_severity_rank(item.severity), item.timestamp), reverse=True)[:12]
 

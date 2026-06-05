@@ -619,6 +619,23 @@ def _tool_call_for_prompt(tool: ToolCall) -> dict[str, Any]:
         }
     elif tool.name == "query_sensor_history":
         result = tool.result
+    elif tool.name == "get_anomaly_events":
+        events = tool.result.get("events") or []
+        result = {
+            "count": tool.result.get("count"),
+            "events": [
+                {
+                    "severity": event.get("severity"),
+                    "status": event.get("status"),
+                    "metric": event.get("metric"),
+                    "title": event.get("title"),
+                    "detail": event.get("detail"),
+                    "recommendation": event.get("recommendation"),
+                }
+                for event in events[:5]
+                if isinstance(event, dict)
+            ],
+        }
     elif tool.name in {"create_automation_rule", "control_device", "policy_check"}:
         result = {
             "status": tool.result.get("status"),

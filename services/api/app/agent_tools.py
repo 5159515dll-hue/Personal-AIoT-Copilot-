@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import uuid4
 
 from app.agent_history import record_agent_conversation, redact_sensitive_text, redact_tool_call
+from app.anomaly_events import build_anomaly_events
 from app.audit import list_audit_logs, record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db, telemetry_status_db
 from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
@@ -559,7 +560,7 @@ async def _anomaly_response(
     end_ts = now()
     start_ts = end_ts - timedelta(hours=24)
     if data_source == "database":
-        used_data.extend(["database_latest_sensor_readings", "database_co2_24h_history", "sensor_health", "anomaly_rules"])
+        used_data.extend(["database_latest_sensor_readings", "database_co2_24h_history", "sensor_health", "anomaly_rules", "structured_anomaly_events"])
         try:
             latest = latest_sensor_readings_db()
             sensor_health = evaluate_sensor_health(latest, source="database")
@@ -577,13 +578,27 @@ async def _anomaly_response(
             reply = f"数据库异常检测暂不可用：{error_text}。可以切回模拟数据，或先检查 DATABASE_URL、MQTT 入站和 TimescaleDB。"
             return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
         result = _detect_anomalies(latest, co2_readings, source="database", sensor_health=sensor_health)
+        events = build_anomaly_events(
+            source="database",
+            latest=latest,
+            histories={Metric.co2: co2_readings},
+            sensor_health=sensor_health,
+            window="24h",
+        )
     else:
         room = current_room_state()
         co2_readings = query_history(Metric.co2, start_ts, end_ts, "15m")
         latest = room.metrics
         sensor_health = evaluate_sensor_health(latest, source="mock")
-        used_data.extend(["current_room_state", "co2_24h_history", "sensor_health", "anomaly_rules"])
+        used_data.extend(["current_room_state", "co2_24h_history", "sensor_health", "anomaly_rules", "structured_anomaly_events"])
         result = _detect_anomalies(latest, co2_readings, source="mock", room_anomalies=room.anomalies, sensor_health=sensor_health)
+        events = build_anomaly_events(
+            source="mock",
+            latest=latest,
+            histories={Metric.co2: co2_readings},
+            sensor_health=sensor_health,
+            window="24h",
+        )
 
     tool_calls.append(
         ToolCall(
@@ -593,14 +608,25 @@ async def _anomaly_response(
             created_at=now(),
         )
     )
+    event_payload = [event.model_dump(mode="json") for event in events]
+    tool_calls.append(
+        ToolCall(
+            name="get_anomaly_events",
+            parameters={"source": data_source, "window": "last_24_hours", "structured": True},
+            result={"source": data_source, "window": "last_24_hours", "count": len(event_payload), "events": event_payload},
+            created_at=now(),
+        )
+    )
     if result["anomalies"]:
         severe = [item for item in result["anomalies"] if item["severity"] in {"high", "medium"}]
         unhealthy = [item for item in result.get("sensor_health", []) if item.get("status") != "ok"]
         sensor_text = f"另有 {len(unhealthy)} 个传感器健康项需要检查。" if unhealthy else "传感器健康状态正常。"
+        event_text = _anomaly_event_reply_text(event_payload)
         reply = (
             f"最近 24 小时检测到 {len(result['anomalies'])} 类异常或风险信号，"
             f"其中 {len(severe)} 类需要重点关注。最高二氧化碳为 {result['co2_peak']} ppm，"
-            f"超过 1200 ppm 的样本数为 {result['co2_high_samples']}。{sensor_text}建议优先通风，并检查传感器在线状态。"
+            f"超过 1200 ppm 的样本数为 {result['co2_high_samples']}。{sensor_text}{event_text}"
+            "建议优先通风，并检查传感器在线状态。"
         )
     else:
         reply = (
@@ -1387,6 +1413,20 @@ def _detect_anomalies(
         "sensor_health": health_payload,
         "anomalies": anomalies,
     }
+
+
+def _anomaly_event_reply_text(events: list[dict]) -> str:
+    if not events:
+        return ""
+    first = events[0]
+    title = first.get("title")
+    severity = first.get("severity")
+    status = first.get("status")
+    severity_label = {"critical": "严重", "warning": "需关注", "info": "提示"}.get(str(severity), str(severity))
+    status_label = {"active": "当前仍在", "observed": "历史出现", "resolved": "已恢复"}.get(str(status), str(status))
+    if not title:
+        return ""
+    return f"结构化异常事件中最高优先级为“{title}”，级别为{severity_label}，状态为{status_label}。"
 
 
 async def _response(
