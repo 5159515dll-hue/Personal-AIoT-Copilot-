@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 type OrbitNode = {
@@ -26,6 +26,7 @@ function makeRing(radius: number, color: string, rotation: [number, number, numb
 
 export function Home3DScene() {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const [showFallback, setShowFallback] = useState(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -34,6 +35,11 @@ export function Home3DScene() {
     }
 
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!window.WebGLRenderingContext) {
+      setShowFallback(true);
+      return;
+    }
+
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#03070d");
     scene.fog = new THREE.Fog("#03070d", 8, 23);
@@ -42,7 +48,13 @@ export function Home3DScene() {
     camera.position.set(0.2, 1.35, 8.2);
     camera.lookAt(0, 0.3, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+    } catch {
+      setShowFallback(true);
+      return;
+    }
     renderer.setClearColor("#03070d", 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -219,5 +231,28 @@ export function Home3DScene() {
     };
   }, []);
 
-  return <div ref={hostRef} className="absolute inset-0" aria-hidden="true" data-testid="home-3d-scene" />;
+  return (
+    <div ref={hostRef} className="absolute inset-0" aria-hidden="true" data-testid="home-3d-scene">
+      {showFallback && <Home3DFallback />}
+    </div>
+  );
+}
+
+function Home3DFallback() {
+  return (
+    <div className="absolute inset-0 overflow-hidden bg-[#03070d]" data-testid="home-3d-fallback">
+      <div className="absolute left-[58%] top-[15%] h-[68%] w-[34%] min-w-64 -translate-x-1/2">
+        <div className="absolute left-1/2 top-[16%] h-[66%] w-24 -translate-x-1/2 rounded-full border border-cyan-200/30 bg-cyan-300/10 shadow-[0_0_80px_rgba(45,212,191,0.34)]" />
+        <div className="absolute left-1/2 top-1/2 h-44 w-[26rem] -translate-x-1/2 -translate-y-1/2 rotate-[18deg] rounded-full border border-cyan-200/35" />
+        <div className="absolute left-1/2 top-1/2 h-56 w-[32rem] -translate-x-1/2 -translate-y-1/2 -rotate-[22deg] rounded-full border border-teal-200/25" />
+        <div className="absolute left-1/2 top-1/2 h-64 w-[36rem] -translate-x-1/2 -translate-y-1/2 rotate-[48deg] rounded-full border border-amber-200/20" />
+        <div className="absolute inset-x-0 bottom-[9%] h-px bg-cyan-200/25 shadow-[0_0_40px_rgba(34,211,238,0.45)]" />
+        <div className="absolute inset-x-[8%] bottom-[16%] grid grid-cols-8 gap-3 opacity-45">
+          {Array.from({ length: 24 }).map((_, index) => (
+            <span key={index} className="h-px bg-cyan-200/45" />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
