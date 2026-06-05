@@ -6,7 +6,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:8000}"
 WEB_BASE_URL="${WEB_BASE_URL:-http://127.0.0.1:3000}"
-DASHBOARD_ACCESS_CODE="${DASHBOARD_ACCESS_CODE:-admin123}"
+DASHBOARD_ACCESS_CODE="admin123"
 
 if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
   PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"

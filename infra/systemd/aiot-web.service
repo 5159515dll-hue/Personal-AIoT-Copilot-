@@ -1,0 +1,18 @@
+[Unit]
+Description=个人空间智能物联助手 Web
+After=network.target aiot-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/aiot-copilot/apps/web
+EnvironmentFile=/home/ubuntu/aiot-copilot/.dashboard-env
+Environment=NODE_ENV=production
+Environment=API_BASE_URL=http://127.0.0.1:8000
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

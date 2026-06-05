@@ -1,0 +1,18 @@
+[Unit]
+Description=个人空间智能物联助手 API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/aiot-copilot/services/api
+EnvironmentFile=/home/ubuntu/aiot-copilot/.dashboard-env
+Environment=AIOT_DATA_DIR=/home/ubuntu/aiot-copilot/services/api/.local
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/aiot-copilot/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

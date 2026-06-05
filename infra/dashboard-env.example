@@ -1,0 +1,14 @@
+# 复制为 /home/ubuntu/aiot-copilot/.dashboard-env 后按服务器实际值填写。
+# 访问口令固定为 admin123，不需要也不应该在这里配置 DASHBOARD_ACCESS_CODE。
+
+DASHBOARD_SESSION_SECRET=替换为随机会话密钥
+AIOT_INTERNAL_API_TOKEN=替换为内部服务令牌
+DASHBOARD_COOKIE_SECURE=false
+
+DATABASE_URL=postgresql://aiot:替换为数据库密码@127.0.0.1:5432/aiot_copilot
+
+MQTT_BROKER_HOST=127.0.0.1
+MQTT_BROKER_PORT=1883
+MQTT_USERNAME=
+MQTT_PASSWORD=
+MQTT_TOPIC=aiot/room/+/telemetry

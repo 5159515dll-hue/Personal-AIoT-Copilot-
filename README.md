@@ -55,7 +55,7 @@ npm run dev
 admin123
 ```
 
-部署到公网时仍应设置会话密钥和内部服务令牌：
+部署到公网时仍应设置会话密钥和内部服务令牌。访问口令固定为 `admin123`，不会从环境变量读取 `DASHBOARD_ACCESS_CODE`：
 
 ```bash
 export DASHBOARD_SESSION_SECRET="替换为随机会话密钥"
@@ -135,7 +135,7 @@ curl -X POST -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localh
 
 MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。ESP32 固件骨架见 `firmware/esp32-room-node`，默认只发布遥测，不接收设备控制指令。
 
-生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd/aiot-mqtt-ingestor.service`。服务读取私有 `.dashboard-env` 中的 `DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`，收到 MQTT 消息后会初始化表结构并写入 `sensor_readings`。
+生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd` 下的 systemd 模板运行 `aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor`。服务读取私有 `.dashboard-env` 中的会话密钥、内部服务令牌、`DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`；访问口令仍固定为 `admin123`。环境文件示例见 `infra/dashboard-env.example`，具体安装和重启步骤见 `infra/systemd/README.md`。
 
 部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、结构化异常事件、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
 

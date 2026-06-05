@@ -34,7 +34,7 @@
 - `services/api/app/audit.py`：持久化审计记录。
 - `services/mqtt-ingestor`：订阅 MQTT 遥测并写入时间序列数据库。
 - `infra/docker-compose.yml`：本地数据库、MQTT broker、API、前端和入站服务编排。
-- `infra/systemd/aiot-mqtt-ingestor.service`：生产服务器上的 MQTT 入站服务模板。
+- `infra/systemd`：生产服务器上的 API、Web 和 MQTT 入站 systemd 服务模板。
 - `docs/device-protocol.md`：MQTT 与 HTTP 遥测 payload 协议，约束后续真实 ESP32 节点接入格式。
 
 ## 默认模拟数据流
@@ -63,7 +63,7 @@
 
 `firmware/esp32-room-node` 当前只提供 V1 接入骨架，默认不参与 V0 公开演示。固件只发布温度、湿度、CO2、光照、人体存在和噪声分贝遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥；噪声只上报 dB 数值，不采集或上传原始音频。
 
-生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中 `DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。
+生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中会话密钥、内部服务令牌、`DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。私有控制台访问口令固定为 `admin123`，不依赖环境变量覆盖。
 
 ## 下一阶段替换点
 
