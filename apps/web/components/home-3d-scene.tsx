@@ -34,7 +34,8 @@ export function Home3DScene() {
       return;
     }
 
-    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const forceMotion = new URLSearchParams(window.location.search).get("motion") === "on";
+    const prefersReducedMotion = !forceMotion && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!window.WebGLRenderingContext) {
       setShowFallback(true);
       return;
