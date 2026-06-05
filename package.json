@@ -11,6 +11,7 @@
     "dev:infra": "docker compose -f infra/docker-compose.yml up db mqtt",
     "dev:ingestor": "cd services/mqtt-ingestor && PYTHONPATH=../api python -m ingestor.main",
     "dev:web": "npm --workspace apps/web run dev",
+    "smoke:server": "bash scripts/server-smoke.sh",
     "test": "npm run test:api && npm run test:web",
     "test:api": "cd services/api && python -m pytest",
     "test:web": "npm --workspace apps/web run typecheck && npm --workspace apps/web run lint"

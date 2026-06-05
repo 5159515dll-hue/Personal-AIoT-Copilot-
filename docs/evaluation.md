@@ -37,7 +37,10 @@
 npm run test:api
 npm run test:web
 npm run test
+npm run smoke:server
 ```
+
+`npm run smoke:server` 面向已部署服务器，会验证公开健康检查、固定访问口令 `admin123`、私有 API 拒绝匿名访问、内部服务令牌、HTTP 遥测入站、数据库遥测状态、审计筛选、高风险控制拒绝和智能体工具回复。脚本默认读取当前目录 `.dashboard-env` 中的 `AIOT_INTERNAL_API_TOKEN`，也可以通过环境变量显式传入。
 
 ## 后续评估指标
 

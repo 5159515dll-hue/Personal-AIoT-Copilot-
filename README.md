@@ -107,6 +107,7 @@ npm run dev:ingestor
 ```bash
 curl -X POST http://localhost:8000/api/ingest/sensor-readings \
   -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
   -d '{
     "device_id": "room_node_01",
     "readings": [
@@ -121,10 +122,10 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
 查询数据库来源的当前状态和历史数据：
 
 ```bash
-curl "http://localhost:8000/api/telemetry/status"
-curl "http://localhost:8000/api/room/current?source=database"
-curl "http://localhost:8000/api/sensors/history?metric=co2&source=database&bucket=15m&from=2026-06-04T00:00:00%2B08:00"
-curl -X POST "http://localhost:8000/api/rules/evaluate?source=database"
+curl -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localhost:8000/api/telemetry/status"
+curl -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localhost:8000/api/room/current?source=database"
+curl -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localhost:8000/api/sensors/history?metric=co2&source=database&bucket=15m&from=2026-06-04T00:00:00%2B08:00"
+curl -X POST -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localhost:8000/api/rules/evaluate?source=database"
 ```
 
 `bucket` 支持 `5m`、`15m`、`1h`、`1d`。mock 和 database 数据源使用同一套时间桶语义；database 数据源会把真实入库读数聚合后返回，避免前端趋势页直接承受原始高频点。
@@ -135,12 +136,25 @@ MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `servic
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd/aiot-mqtt-ingestor.service`。服务读取私有 `.dashboard-env` 中的 `DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`，收到 MQTT 消息后会初始化表结构并写入 `sensor_readings`。
 
+部署后可运行服务器烟测，脚本会自动禁用代理环境变量，并验证访问口令、私有 API、HTTP 入站、数据库遥测、审计筛选、高风险拒绝和智能体工具回复：
+
+```bash
+npm run smoke:server
+```
+
+如果 Web 或 API 不在本机端口，可以显式指定：
+
+```bash
+API_BASE_URL="http://82.157.148.249:8000" WEB_BASE_URL="http://82.157.148.249" AIOT_INTERNAL_API_TOKEN="内部服务令牌" npm run smoke:server
+```
+
 ## 常用命令
 
 ```bash
 npm run test:api
 npm run test:web
 npm run test
+npm run smoke:server
 ```
 
 ## 当前版本边界

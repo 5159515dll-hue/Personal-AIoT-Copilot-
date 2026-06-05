@@ -93,6 +93,7 @@ HTTP 入站接口：
 
 ```text
 POST /api/ingest/sensor-readings
+X-AIoT-Internal-Token: <内部服务令牌>
 ```
 
 请求体与 batch 格式一致：
@@ -110,6 +111,24 @@ POST /api/ingest/sensor-readings
 ```
 
 HTTP 入站用于本地调试、部署验证和脚本写入。生产公网环境下应继续放在私有 API 保护之后，或只允许内部服务令牌访问。
+
+本地或服务器可用同一条格式验证写入：
+
+```bash
+curl -X POST http://localhost:8000/api/ingest/sensor-readings \
+  -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  -d '{
+    "device_id": "room_node_01",
+    "source": "http",
+    "readings": [
+      { "metric": "temperature", "value": 25.4 },
+      { "metric": "humidity", "value": 48.2 },
+      { "metric": "co2", "value": 930 },
+      { "metric": "noise", "value": 48.5 }
+    ]
+  }'
+```
 
 ## 入库语义
 
