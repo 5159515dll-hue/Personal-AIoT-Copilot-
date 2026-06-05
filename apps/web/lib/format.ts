@@ -1,21 +1,31 @@
 export function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Asia/Shanghai"
-  }).format(new Date(value));
+  const parts = shanghaiDateParts(value);
+  if (!parts) return "时间未知";
+  return `${pad2(parts.hour)}:${pad2(parts.minute)}`;
 }
 
 export function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Asia/Shanghai"
-  }).format(new Date(value));
+  const parts = shanghaiDateParts(value);
+  if (!parts) return "时间未知";
+  return `${pad2(parts.month)}月${pad2(parts.day)}日 ${pad2(parts.hour)}:${pad2(parts.minute)}`;
+}
+
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function shanghaiDateParts(value: string): { month: number; day: number; hour: number; minute: number } | null {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return null;
+  const shifted = new Date(timestamp + SHANGHAI_OFFSET_MS);
+  return {
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes()
+  };
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, "0");
 }
 
 export function titleCase(value: string): string {
