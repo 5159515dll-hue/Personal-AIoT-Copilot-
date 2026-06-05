@@ -14,6 +14,7 @@
 - 智能体可以通过 `summarize_daily_environment` 总结当天环境变化，并指出空气最差的大致时间。
 - 智能体可以通过 `explain_environment_issue` 解释下午犯困、二氧化碳上升或空气变差，并明确不确定性。
 - 智能体可以通过 `recommend_action` 给出安全行动建议，且不会直接控制未知插座、报警器或高风险设备。
+- 智能体可以通过 `get_device_status` 回答“离开房间后哪些设备还开着”，并保持只读，不自动关闭设备。
 - 智能体可以通过 `detect_anomaly` 检测最近环境异常，并在数据库不可用时给出清晰原因。
 - 智能体可以通过 `search_device_docs` 查询本地 MQTT/HTTP 设备协议和 ESP32 固件边界，不访问外部网页或执行设备命令。
 - 智能体可以通过 `get_audit_log` 摘要回答最近审计和追溯问题，不泄露完整原始参数。

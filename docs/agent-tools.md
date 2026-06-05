@@ -9,6 +9,7 @@
 - `summarize_daily_environment`：聚合最近 24 小时温度、湿度、二氧化碳、光照和有人状态，返回每日摘要、最差空气时间和解释。
 - `explain_environment_issue`：解释下午犯困、二氧化碳上升、空气变差等问题，返回证据、可能原因和不确定性。
 - `recommend_action`：给出安全行动建议，只返回提醒或人工低风险动作，不直接控制高风险设备。
+- `get_device_status`：读取 mock device adapter 中的设备状态和风险元数据，回答哪些设备开启、离线或需要关注；该工具只读，不执行控制。
 - `detect_anomaly`：读取当前状态和最近 24 小时二氧化碳曲线，按缺失指标、CO2 阈值、温湿度范围生成异常摘要；database 不可用时返回明确不可用原因。
 - `search_device_docs`：只查询项目内设备协议和 ESP32 固件说明，返回 MQTT topic、payload、HTTP 入站、入库语义和安全边界摘要。
 - `create_automation_rule`：只创建草案；保存必须通过用户确认。

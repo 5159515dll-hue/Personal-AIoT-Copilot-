@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from app.audit import list_audit_logs, record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db
-from app.device_adapter import execute_mock_control, get_mock_device
+from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
 from app.mock_data import current_room_state, query_history, summarize_metric
 from app.model_providers import generate_agent_reply
 from app.models import (
@@ -86,6 +86,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
 
     if _mentions_device_docs(lowered):
         return await _device_docs_response(
+            session_id=session_id,
+            message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_device_status(lowered):
+        return await _device_status_response(
             session_id=session_id,
             message=message,
             used_data=used_data,
@@ -413,6 +424,74 @@ async def _device_docs_response(
     )
     if len(matches) > 1:
         reply += f"另外还有 {len(matches) - 1} 条相关边界说明可在工具调用结果里查看。"
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
+async def _device_status_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    devices = list_mock_devices()
+    room = current_room_state()
+    presence_reading = room.metrics.get(Metric.presence)
+    presence = bool(getattr(presence_reading, "value", 0))
+    powered_on = [_device_status_summary(device) for device in devices if _device_power(device) == "on"]
+    offline_devices = [_device_status_summary(device) for device in devices if device.online_state.value == "offline"]
+    controllable_on = [device for device in powered_on if device["controllable"]]
+    read_only_on = [device for device in powered_on if not device["controllable"]]
+    away_context = _mentions_away_context(message.lower()) or not presence
+    attention: list[str] = []
+    if away_context and controllable_on:
+        names = "、".join(str(device["name"]) for device in controllable_on)
+        attention.append(f"离开场景下仍有可控低/中风险设备处于开启状态：{names}。")
+    if read_only_on:
+        names = "、".join(str(device["name"]) for device in read_only_on)
+        attention.append(f"有只读或不可控设备显示为开启状态，仅作为状态提示：{names}。")
+    if offline_devices:
+        names = "、".join(str(device["name"]) for device in offline_devices)
+        attention.append(f"有设备离线，需要先恢复上报再判断状态：{names}。")
+
+    result = {
+        "source": "mock_device_adapter",
+        "status": "ok",
+        "presence_detected": presence,
+        "away_context": away_context,
+        "device_count": len(devices),
+        "powered_on_count": len(powered_on),
+        "offline_count": len(offline_devices),
+        "devices": [_device_status_summary(device) for device in devices],
+        "powered_on_devices": powered_on,
+        "offline_devices": offline_devices,
+        "attention": attention,
+        "safety_boundary": "该工具只读取设备状态和风险元数据，不会自动关闭设备；控制动作必须另走 control_device 策略链路。",
+    }
+    used_data.extend(["mock_device_states", "current_room_presence"])
+    tool_calls.append(
+        ToolCall(
+            name="get_device_status",
+            parameters={"source": "mock", "scope": "powered_on_and_presence"},
+            result=result,
+            created_at=now(),
+        )
+    )
+
+    if powered_on:
+        names = "、".join(str(device["name"]) for device in powered_on)
+        if away_context:
+            reply = f"当前检测到 {len(powered_on)} 个设备仍处于开启状态：{names}。"
+        else:
+            reply = f"当前有 {len(powered_on)} 个设备处于开启状态：{names}。"
+    else:
+        reply = "当前没有检测到处于开启状态的设备。"
+    if attention:
+        reply += f"{attention[0]}"
+    reply += "我只做状态分析，不会自动关闭任何设备；如需控制，必须经过设备风险策略和审计记录。"
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
@@ -945,6 +1024,26 @@ def _metric_value(reading: object | None) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _device_power(device) -> str | None:
+    power = device.current_state.get("power")
+    return str(power) if power is not None else None
+
+
+def _device_status_summary(device) -> dict[str, object]:
+    return {
+        "id": device.id,
+        "name": device.name,
+        "type": device.type,
+        "location": device.location,
+        "risk_level": device.risk_level.value,
+        "controllable": device.controllable,
+        "requires_confirmation": device.requires_confirmation,
+        "online_state": device.online_state.value,
+        "power": _device_power(device),
+        "connected_appliance": device.connected_appliance,
+    }
+
+
 def _clean_error_text(exc: Exception) -> str:
     return str(exc).strip().rstrip("。.")
 
@@ -1180,6 +1279,16 @@ def _mentions_device_docs(text: str) -> bool:
     )
 
 
+def _mentions_device_status(text: str) -> bool:
+    device_tokens = ("设备", "台灯", "灯", "风扇", "插座", "报警器", "device", "lamp", "fan", "plug")
+    status_tokens = ("状态", "开着", "还开", "打开着", "关了", "离开", "在线", "离线", "哪些", "powered on", "left on")
+    return any(token in text for token in device_tokens) and any(token in text for token in status_tokens)
+
+
+def _mentions_away_context(text: str) -> bool:
+    return any(token in text for token in ("离开", "不在房间", "走后", "出门", "away"))
+
+
 def _mentions_anomaly(text: str) -> bool:
     return any(token in text for token in ("异常", "离线", "不可用", "告警", "异常检测", "anomaly", "abnormal", "传感器坏", "数据缺失"))
 
@@ -1213,17 +1322,17 @@ def _mentions_lamp_control(text: str) -> bool:
 
 
 def _mentions_forbidden_control(text: str) -> bool:
-    return any(
-        token in text
-        for token in (
-            "unknown plug",
-            "smart_plug",
-            "all plugs",
-            "smoke alarm",
-            "disable alarm",
-            "未知插座",
-            "所有插座",
-            "烟雾报警",
-            "关闭报警",
-        )
+    action_tokens = ("打开", "关闭", "禁用", "控制", "turn on", "turn off", "disable", "control")
+    target_tokens = (
+        "unknown plug",
+        "smart_plug",
+        "all plugs",
+        "smoke alarm",
+        "alarm",
+        "未知插座",
+        "所有插座",
+        "烟雾报警",
+        "报警",
+        "报警器",
     )
+    return any(action in text for action in action_tokens) and any(target in text for target in target_tokens)

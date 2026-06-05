@@ -715,6 +715,45 @@ def test_agent_can_recommend_safe_actions_without_control() -> None:
     assert "不会直接控制" in payload["message"]["content"]
 
 
+def test_agent_can_report_left_on_devices() -> None:
+    control_response = client.post(
+        "/api/devices/desk_lamp_01/control",
+        json={"state": "on", "confirmed": False, "reason": "测试离开房间设备状态"},
+    )
+    assert control_response.status_code == 200
+
+    response = client.post("/api/agent/chat", json={"message": "离开房间后哪些设备还开着？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool_names = [tool["name"] for tool in payload["tool_calls"]]
+    tool = payload["tool_calls"][0]
+    powered_on_ids = {device["id"] for device in tool["result"]["powered_on_devices"]}
+    assert tool["name"] == "get_device_status"
+    assert "control_device" not in tool_names
+    assert "mock_device_states" in payload["used_data"]
+    assert "current_room_presence" in payload["used_data"]
+    assert tool["result"]["source"] == "mock_device_adapter"
+    assert tool["result"]["away_context"] is True
+    assert "desk_lamp_01" in powered_on_ids
+    assert tool["result"]["powered_on_count"] >= 1
+    assert "不会自动关闭任何设备" in payload["message"]["content"]
+
+
+def test_agent_reads_safety_alarm_status_without_control() -> None:
+    response = client.post("/api/agent/chat", json={"message": "烟雾报警器状态怎么样？"})
+    assert response.status_code == 200
+    payload = response.json()
+    tool_names = [tool["name"] for tool in payload["tool_calls"]]
+    tool = payload["tool_calls"][0]
+    device_ids = {device["id"] for device in tool["result"]["devices"]}
+    assert tool["name"] == "get_device_status"
+    assert "control_device" not in tool_names
+    assert payload["policy"] is None
+    assert payload["model_usage"]["status"] == "not_configured"
+    assert "smoke_alarm_01" in device_ids
+    assert tool["result"]["safety_boundary"].startswith("该工具只读取设备状态")
+
+
 def test_agent_rejects_high_risk_control_even_when_asked_as_plan() -> None:
     response = client.post("/api/agent/chat", json={"message": "给我一个关闭烟雾报警器的方案"})
     assert response.status_code == 200
