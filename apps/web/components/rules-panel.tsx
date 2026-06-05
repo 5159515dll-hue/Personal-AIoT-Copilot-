@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { BellRing, Check, CircleDashed, PauseCircle, Play, PlayCircle, Plus, ShieldAlert } from "lucide-react";
-import { createRule, evaluateRules, updateRule } from "@/lib/api";
+import { createRule, evaluateRules, getRules, updateRule } from "@/lib/api";
 import { telemetrySourceLabel } from "@/lib/telemetry-source";
 import type { AutomationRule, RuleEvaluation, TelemetrySource } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
@@ -46,7 +46,9 @@ export function RulesPanel({
     setMessage(null);
     try {
       const result = await evaluateRules(initialSource);
+      const refreshedRules = await getRules();
       setEvaluations(result);
+      setRules(refreshedRules);
       const triggered = result.filter((item) => item.status === "triggered").length;
       setMessage(
         triggered > 0
@@ -164,7 +166,11 @@ export function RulesPanel({
                     </button>
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-muted">创建时间：{formatDateTime(rule.created_at)}</p>
+                <div className="mt-2 grid gap-1 text-xs text-muted sm:grid-cols-3">
+                  <p>创建时间：{formatDateTime(rule.created_at)}</p>
+                  <p>触发次数：{rule.trigger_count}</p>
+                  <p>{rule.last_triggered_at ? `最近触发：${formatDateTime(rule.last_triggered_at)}` : "最近触发：暂无"}</p>
+                </div>
                 {evaluation && <RuleEvaluationStatus evaluation={evaluation} />}
               </article>
             );

@@ -716,6 +716,60 @@ def test_rule_evaluation_triggers_reminder_and_audit_log() -> None:
     assert "trigger_automation_rule" in actions
 
 
+def test_rule_trigger_updates_rule_state() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1 ppm",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+    rule_id = create_response.json()["id"]
+    assert create_response.json()["trigger_count"] == 0
+    assert create_response.json()["last_triggered_at"] is None
+
+    first_evaluate_response = client.post("/api/rules/evaluate")
+    assert first_evaluate_response.status_code == 200
+    first_evaluation = first_evaluate_response.json()[0]
+    assert first_evaluation["status"] == "triggered"
+
+    rules_response = client.get("/api/rules")
+    assert rules_response.status_code == 200
+    rule = rules_response.json()[0]
+    assert rule["id"] == rule_id
+    assert rule["trigger_count"] == 1
+    assert rule["last_triggered_at"]
+
+    second_evaluate_response = client.post("/api/rules/evaluate")
+    assert second_evaluate_response.status_code == 200
+    assert second_evaluate_response.json()[0]["status"] == "triggered"
+    assert client.get("/api/rules").json()[0]["trigger_count"] == 2
+
+
+def test_rule_not_matched_does_not_update_trigger_state() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 99999 ppm",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    assert evaluate_response.json()[0]["status"] == "not_matched"
+
+    rule = client.get("/api/rules").json()[0]
+    assert rule["trigger_count"] == 0
+    assert rule["last_triggered_at"] is None
+
+
 def test_rule_evaluation_supports_noise_threshold() -> None:
     create_response = client.post(
         "/api/rules",

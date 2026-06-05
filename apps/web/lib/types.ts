@@ -104,6 +104,8 @@ export type AutomationRule = {
   enabled: boolean;
   created_by: "user" | "agent";
   created_at: string;
+  trigger_count: number;
+  last_triggered_at: string | null;
 };
 
 export type AutomationRuleCreate = {

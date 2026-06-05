@@ -9,7 +9,7 @@ from typing import Literal
 from app.audit import record_audit
 from app.mock_data import current_room_state
 from app.models import AutomationRule, Metric, RoomState, RuleEvaluation
-from app.rule_store import list_rules
+from app.rule_store import list_rules, record_rule_trigger
 from app.time_utils import now
 
 COMPARATORS: dict[str, Callable[[float, float], bool]] = {
@@ -162,6 +162,7 @@ def _evaluate_rule(
             },
         )
         audit_log_id = audit.id
+        record_rule_trigger(rule.id, evaluated_at)
 
     return RuleEvaluation(
         rule_id=rule.id,
@@ -235,6 +236,7 @@ def _evaluate_time_rule(
             },
         )
         audit_log_id = audit.id
+        record_rule_trigger(rule.id, evaluated_at)
 
     return RuleEvaluation(
         rule_id=rule.id,

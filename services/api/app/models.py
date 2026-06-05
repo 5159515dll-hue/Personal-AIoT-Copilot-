@@ -186,6 +186,8 @@ class AutomationRule(BaseModel):
     enabled: bool = True
     created_by: Literal["user", "agent"] = "user"
     created_at: datetime
+    trigger_count: int = 0
+    last_triggered_at: datetime | None = None
 
 
 class RuleEvaluation(BaseModel):
