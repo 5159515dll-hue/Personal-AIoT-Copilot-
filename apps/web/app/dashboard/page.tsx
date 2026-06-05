@@ -251,28 +251,66 @@ function TelemetryStatusCard({ result }: { result: DataResult<TelemetryStatus> }
       </div>
 
       {status && (
-        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-xs font-semibold text-muted">样本数</dt>
-            <dd className="mt-1 font-medium text-ink">{status.total_readings}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-semibold text-muted">设备 / 指标</dt>
-            <dd className="mt-1 font-medium text-ink">
-              {status.device_count} / {status.metric_count}
-            </dd>
-          </div>
-          <div className="col-span-2">
-            <dt className="text-xs font-semibold text-muted">最新入库</dt>
-            <dd className="mt-1 font-medium text-ink">
-              {status.latest_received_at ? formatDateTime(status.latest_received_at) : "暂无"}
-            </dd>
-          </div>
-          <div className="col-span-2">
-            <dt className="text-xs font-semibold text-muted">Timescale</dt>
-            <dd className="mt-1 font-medium text-ink">{timescaleStatusText(status)}</dd>
-          </div>
-        </dl>
+        <>
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-xs font-semibold text-muted">样本数</dt>
+              <dd className="mt-1 font-medium text-ink">{status.total_readings}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold text-muted">设备 / 指标</dt>
+              <dd className="mt-1 font-medium text-ink">
+                {status.device_count} / {status.metric_count}
+              </dd>
+            </div>
+            <div className="col-span-2">
+              <dt className="text-xs font-semibold text-muted">最新入库</dt>
+              <dd className="mt-1 font-medium text-ink">
+                {status.latest_received_at ? formatDateTime(status.latest_received_at) : "暂无"}
+              </dd>
+            </div>
+            <div className="col-span-2">
+              <dt className="text-xs font-semibold text-muted">Timescale</dt>
+              <dd className="mt-1 font-medium text-ink">{timescaleStatusText(status)}</dd>
+            </div>
+          </dl>
+
+          {status.sources.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-muted">入站来源</p>
+              <div className="mt-2 grid gap-2">
+                {status.sources.map((item) => (
+                  <div key={item.source} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 p-3">
+                    <div>
+                      <p className="text-sm font-semibold text-ink">{telemetrySourceName(item.source)}</p>
+                      <p className="mt-1 text-xs text-muted">{item.device_count} 个设备</p>
+                    </div>
+                    <p className="shrink-0 text-sm font-semibold text-ink">{item.total_readings} 条</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {status.devices.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-muted">最近设备</p>
+              <div className="mt-2 space-y-2">
+                {status.devices.slice(0, 3).map((item) => (
+                  <div key={item.device_id} className="rounded-lg bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="min-w-0 truncate text-sm font-semibold text-ink">{item.device_id}</p>
+                      <p className="shrink-0 text-xs font-semibold text-slate-600">{item.metric_count} 指标</p>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      {item.total_readings} 条 · {item.latest_received_at ? formatDateTime(item.latest_received_at) : "暂无入库时间"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
@@ -318,4 +356,13 @@ function timescaleStatusText(status: TelemetryStatus): string {
     return "扩展可用，尚未启用";
   }
   return "扩展不可用，使用 PostgreSQL 表";
+}
+
+function telemetrySourceName(source: string): string {
+  const labels: Record<string, string> = {
+    mqtt: "MQTT",
+    http: "HTTP",
+    test: "测试写入"
+  };
+  return labels[source] ?? source;
 }

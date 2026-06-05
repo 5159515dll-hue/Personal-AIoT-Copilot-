@@ -46,8 +46,26 @@ export type TelemetryStatus = {
   latest_reading_at: string | null;
   latest_received_at: string | null;
   latest_metrics: Partial<Record<MetricName, SensorReading>>;
+  sources: TelemetrySourceSummary[];
+  devices: TelemetryDeviceSummary[];
   status: "ok" | "empty" | "unavailable";
   message: string;
+};
+
+export type TelemetrySourceSummary = {
+  source: string;
+  total_readings: number;
+  device_count: number;
+  latest_reading_at: string | null;
+  latest_received_at: string | null;
+};
+
+export type TelemetryDeviceSummary = {
+  device_id: string;
+  total_readings: number;
+  metric_count: number;
+  latest_reading_at: string | null;
+  latest_received_at: string | null;
 };
 
 export type Device = {

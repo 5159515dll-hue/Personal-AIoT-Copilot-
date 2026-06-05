@@ -3,7 +3,13 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from app.models import Metric, SensorReading, TelemetryStatus
+from app.models import (
+    Metric,
+    SensorReading,
+    TelemetryDeviceSummary,
+    TelemetrySourceSummary,
+    TelemetryStatus,
+)
 from app.time_utils import bucket_to_delta, ensure_tz, floor_to_bucket, now
 
 SCHEMA_SQL = """
@@ -166,6 +172,33 @@ def telemetry_status_db(*, url: str | None = None) -> TelemetryStatus:
                 FROM sensor_readings
                 """
             ).fetchone()
+            source_rows = conn.execute(
+                """
+                SELECT
+                    source,
+                    COUNT(*)::int AS total_readings,
+                    COUNT(DISTINCT device_id)::int AS device_count,
+                    MAX(time) AS latest_reading_at,
+                    MAX(received_at) AS latest_received_at
+                FROM sensor_readings
+                GROUP BY source
+                ORDER BY total_readings DESC, source ASC
+                """
+            ).fetchall()
+            device_rows = conn.execute(
+                """
+                SELECT
+                    device_id,
+                    COUNT(*)::int AS total_readings,
+                    COUNT(DISTINCT metric)::int AS metric_count,
+                    MAX(time) AS latest_reading_at,
+                    MAX(received_at) AS latest_received_at
+                FROM sensor_readings
+                GROUP BY device_id
+                ORDER BY latest_received_at DESC, device_id ASC
+                LIMIT 8
+                """
+            ).fetchall()
             latest_metrics = latest_sensor_readings_db(url=db_url)
             total = int(summary["total_readings"] or 0)
             return TelemetryStatus(
@@ -181,6 +214,26 @@ def telemetry_status_db(*, url: str | None = None) -> TelemetryStatus:
                 latest_reading_at=summary["latest_reading_at"],
                 latest_received_at=summary["latest_received_at"],
                 latest_metrics=latest_metrics,
+                sources=[
+                    TelemetrySourceSummary(
+                        source=row["source"],
+                        total_readings=int(row["total_readings"] or 0),
+                        device_count=int(row["device_count"] or 0),
+                        latest_reading_at=row["latest_reading_at"],
+                        latest_received_at=row["latest_received_at"],
+                    )
+                    for row in source_rows
+                ],
+                devices=[
+                    TelemetryDeviceSummary(
+                        device_id=row["device_id"],
+                        total_readings=int(row["total_readings"] or 0),
+                        metric_count=int(row["metric_count"] or 0),
+                        latest_reading_at=row["latest_reading_at"],
+                        latest_received_at=row["latest_received_at"],
+                    )
+                    for row in device_rows
+                ],
                 status="ok" if total else "empty",
                 message="数据库遥测链路已有入库数据。" if total else "数据库已连接，但暂无传感器读数。",
             )

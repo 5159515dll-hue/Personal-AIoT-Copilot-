@@ -190,6 +190,31 @@ def test_telemetry_status_route_returns_structured_summary(monkeypatch) -> None:
             latest_metrics={
                 Metric.co2: SensorReading(metric=Metric.co2, value=930, unit="ppm", timestamp=base, device_id="db_node")
             },
+            sources=[
+                {
+                    "source": "mqtt",
+                    "total_readings": 4,
+                    "device_count": 1,
+                    "latest_reading_at": base,
+                    "latest_received_at": base,
+                },
+                {
+                    "source": "http",
+                    "total_readings": 1,
+                    "device_count": 1,
+                    "latest_reading_at": base,
+                    "latest_received_at": base,
+                },
+            ],
+            devices=[
+                {
+                    "device_id": "db_node",
+                    "total_readings": 5,
+                    "metric_count": 6,
+                    "latest_reading_at": base,
+                    "latest_received_at": base,
+                }
+            ],
             status="ok",
             message="数据库遥测链路已有入库数据。",
         )
@@ -201,6 +226,10 @@ def test_telemetry_status_route_returns_structured_summary(monkeypatch) -> None:
     assert payload["total_readings"] == 5
     assert payload["metric_count"] == 6
     assert payload["latest_metrics"]["co2"]["value"] == 930
+    assert payload["sources"][0]["source"] == "mqtt"
+    assert payload["sources"][0]["total_readings"] == 4
+    assert payload["devices"][0]["device_id"] == "db_node"
+    assert payload["devices"][0]["metric_count"] == 6
 
 
 def test_sensor_history_rejects_bad_bucket() -> None:

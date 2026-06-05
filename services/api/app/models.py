@@ -80,6 +80,22 @@ class SensorIngestResponse(BaseModel):
     message: str
 
 
+class TelemetrySourceSummary(BaseModel):
+    source: str
+    total_readings: int
+    device_count: int
+    latest_reading_at: datetime | None = None
+    latest_received_at: datetime | None = None
+
+
+class TelemetryDeviceSummary(BaseModel):
+    device_id: str
+    total_readings: int
+    metric_count: int
+    latest_reading_at: datetime | None = None
+    latest_received_at: datetime | None = None
+
+
 class TelemetryStatus(BaseModel):
     source: Literal["database"] = "database"
     configured: bool
@@ -94,6 +110,8 @@ class TelemetryStatus(BaseModel):
     latest_reading_at: datetime | None = None
     latest_received_at: datetime | None = None
     latest_metrics: dict[Metric, SensorReading] = Field(default_factory=dict)
+    sources: list[TelemetrySourceSummary] = Field(default_factory=list)
+    devices: list[TelemetryDeviceSummary] = Field(default_factory=list)
     status: Literal["ok", "empty", "unavailable"]
     message: str
 

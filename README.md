@@ -129,7 +129,7 @@ curl -X POST "http://localhost:8000/api/rules/evaluate?source=database"
 
 `bucket` 支持 `5m`、`15m`、`1h`、`1d`。mock 和 database 数据源使用同一套时间桶语义；database 数据源会把真实入库读数聚合后返回，避免前端趋势页直接承受原始高频点。
 
-`/dashboard`、`/trends`、`/agent` 和 `/rules` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。总览页的“遥测链路”卡片会展示数据库连接、样本数、最新入库时间和 Timescale 扩展状态。
+`/dashboard`、`/trends`、`/agent` 和 `/rules` 页面都可以切换到“数据库遥测”。数据库模式会使用已入库的最新传感器读数和历史曲线；如果未配置 `DATABASE_URL` 或暂无数据，控制台会显示明确的不可用或空数据提示。总览页的“遥测链路”卡片会展示数据库连接、样本数、最新入库时间、Timescale 扩展状态、HTTP/MQTT 入站来源分布和最近设备摘要。
 
 MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。ESP32 固件骨架见 `firmware/esp32-room-node`，默认只发布遥测，不接收设备控制指令。
 
