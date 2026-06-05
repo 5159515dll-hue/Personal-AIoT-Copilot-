@@ -130,6 +130,35 @@ export type AgentChatResponse = {
   rule_draft: AutomationRuleCreate | null;
 };
 
+export type AgentConversationEntry = {
+  id: string;
+  session_id: string;
+  data_source: AgentDataSource;
+  user_message: {
+    role: "user";
+    content: string;
+    created_at: string;
+  };
+  assistant_message: {
+    role: "assistant";
+    content: string;
+    created_at: string;
+  };
+  used_data: string[];
+  tool_calls: ToolCall[];
+  needs_confirmation: boolean;
+  model_usage: AgentChatResponse["model_usage"];
+  policy: PolicyDecision | null;
+  rule_draft: AutomationRuleCreate | null;
+  created_at: string;
+};
+
+export type AgentConversationDeleteResponse = {
+  deleted: boolean;
+  id: string;
+  audit_log_id: string | null;
+};
+
 export type TelemetrySource = "mock" | "database";
 export type AgentDataSource = TelemetrySource;
 

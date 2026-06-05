@@ -1,6 +1,8 @@
 import type {
   AgentDataSource,
   AgentChatResponse,
+  AgentConversationDeleteResponse,
+  AgentConversationEntry,
   AuditLog,
   AutomationRule,
   AutomationRuleCreate,
@@ -147,6 +149,20 @@ export async function chat(message: string, sessionId?: string, dataSource: Agen
   return request<AgentChatResponse>("/api/agent/chat", {
     method: "POST",
     body: JSON.stringify({ message, session_id: sessionId, data_source: dataSource })
+  });
+}
+
+export async function getAgentHistory(limit = 12, sessionId?: string): Promise<AgentConversationEntry[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (sessionId) {
+    params.set("session_id", sessionId);
+  }
+  return request<AgentConversationEntry[]>(`/api/agent/history?${params.toString()}`);
+}
+
+export async function deleteAgentHistoryEntry(id: string): Promise<AgentConversationDeleteResponse> {
+  return request<AgentConversationDeleteResponse>(`/api/agent/history/${id}`, {
+    method: "DELETE"
   });
 }
 

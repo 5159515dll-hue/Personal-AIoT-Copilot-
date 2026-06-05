@@ -211,6 +211,27 @@ class AgentChatResponse(BaseModel):
     rule_draft: AutomationRuleCreate | None = None
 
 
+class AgentConversationEntry(BaseModel):
+    id: str = Field(default_factory=lambda: f"agent_history_{uuid4().hex[:12]}")
+    session_id: str
+    data_source: Literal["mock", "database"]
+    user_message: AgentMessage
+    assistant_message: AgentMessage
+    used_data: list[str]
+    tool_calls: list[ToolCall]
+    needs_confirmation: bool
+    model_usage: AgentModelUsage
+    policy: PolicyDecision | None = None
+    rule_draft: AutomationRuleCreate | None = None
+    created_at: datetime
+
+
+class AgentConversationDeleteResponse(BaseModel):
+    deleted: bool
+    id: str
+    audit_log_id: str | None = None
+
+
 class AuditLog(BaseModel):
     id: str = Field(default_factory=lambda: f"audit_{uuid4().hex[:12]}")
     timestamp: datetime

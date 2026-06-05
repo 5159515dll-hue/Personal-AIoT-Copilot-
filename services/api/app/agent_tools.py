@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Literal
 from uuid import uuid4
 
+from app.agent_history import record_agent_conversation, redact_sensitive_text, redact_tool_call
 from app.audit import list_audit_logs, record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db
 from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
@@ -49,13 +51,13 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             action="agent_refusal",
             result="blocked",
             details=policy.reason,
-            parameters={"message": message},
+            parameters={"message": redact_sensitive_text(message)},
             policy=policy,
         )
         tool_calls.append(
             ToolCall(
                 name="policy_check",
-                parameters={"message": message},
+                parameters={"message": redact_sensitive_text(message)},
                 result={"audit_log_id": audit.id, "decision": policy.model_dump(mode="json")},
                 policy=policy,
                 created_at=now(),
@@ -1296,15 +1298,17 @@ async def _response(
     allow_model: bool = True,
 ) -> AgentChatResponse:
     final_reply, model_usage = await generate_agent_reply(
-        user_message=user_message,
+        user_message=redact_sensitive_text(user_message),
         fallback_reply=reply,
         used_data=used_data,
-        tool_calls=tool_calls,
+        tool_calls=[redact_tool_call(tool) for tool in tool_calls],
         needs_confirmation=needs_confirmation,
         policy=policy,
         rule_draft=rule_draft,
         allow_model=allow_model,
     )
+    safe_tool_calls = [redact_tool_call(tool) for tool in tool_calls]
+    safe_reply = redact_sensitive_text(final_reply)
     record_audit(
         actor="agent",
         action="agent_chat",
@@ -1312,21 +1316,36 @@ async def _response(
         details=f"智能体回复已通过受约束工具流程生成。模型状态：{model_usage.status}。",
         parameters={
             "session_id": session_id,
-            "tool_calls": [tool.name for tool in tool_calls],
+            "tool_calls": [tool.name for tool in safe_tool_calls],
             "model_usage": model_usage.model_dump(mode="json"),
         },
         policy=policy,
     )
-    return AgentChatResponse(
+    response = AgentChatResponse(
         session_id=session_id,
-        message=AgentMessage(role="assistant", content=final_reply, created_at=now()),
+        message=AgentMessage(role="assistant", content=safe_reply, created_at=now()),
         used_data=used_data,
-        tool_calls=tool_calls,
+        tool_calls=safe_tool_calls,
         needs_confirmation=needs_confirmation,
         model_usage=model_usage,
         policy=policy,
         rule_draft=rule_draft,
     )
+    record_agent_conversation(
+        session_id=session_id,
+        data_source=_conversation_data_source(tool_calls),
+        user_message=user_message,
+        response=response,
+    )
+    return response
+
+
+def _conversation_data_source(tool_calls: list[ToolCall]) -> Literal["mock", "database"]:
+    for tool in tool_calls:
+        source = tool.parameters.get("source")
+        if source in {"mock", "database"}:
+            return source
+    return "mock"
 
 
 def _mentions_co2_or_environment(text: str) -> bool:

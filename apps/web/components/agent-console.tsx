@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { Bot, BrainCircuit, Check, Database, Send, ShieldCheck, Wrench } from "lucide-react";
-import { chat, createRule } from "@/lib/api";
-import type { AgentChatResponse, AgentDataSource, AutomationRuleCreate } from "@/lib/types";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { Bot, BrainCircuit, Check, Database, History, Send, ShieldCheck, Trash2, Wrench } from "lucide-react";
+import { chat, createRule, deleteAgentHistoryEntry, getAgentHistory } from "@/lib/api";
+import type { AgentChatResponse, AgentConversationEntry, AgentDataSource, AutomationRuleCreate } from "@/lib/types";
+import { formatDateTime } from "@/lib/format";
 
 const prompts = [
   "今天二氧化碳情况怎么样？",
@@ -29,9 +30,29 @@ export function AgentConsole() {
   const [input, setInput] = useState(prompts[0]);
   const [dataSource, setDataSource] = useState<AgentDataSource>("mock");
   const [responses, setResponses] = useState<AgentChatResponse[]>([]);
+  const [history, setHistory] = useState<AgentConversationEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(null);
   const [draftSaves, setDraftSaves] = useState<Record<string, DraftSaveState>>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const refreshHistory = useCallback(async () => {
+    setHistoryError(null);
+    try {
+      const entries = await getAgentHistory(12);
+      setHistory(entries);
+    } catch (caught) {
+      setHistoryError(caught instanceof Error ? caught.message : "对话记录读取失败");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshHistory();
+  }, [refreshHistory]);
 
   async function submit(message: string) {
     if (!message.trim()) return;
@@ -42,6 +63,7 @@ export function AgentConsole() {
       setSessionId(response.session_id);
       setResponses((current) => [response, ...current]);
       setInput("");
+      void refreshHistory();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "智能体请求失败");
     } finally {
@@ -71,6 +93,19 @@ export function AgentConsole() {
         ...current,
         [key]: { status: "error", message: caught instanceof Error ? caught.message : "规则保存失败" }
       }));
+    }
+  }
+
+  async function removeHistoryEntry(entry: AgentConversationEntry) {
+    setDeletingHistoryId(entry.id);
+    setHistoryError(null);
+    try {
+      await deleteAgentHistoryEntry(entry.id);
+      setHistory((current) => current.filter((item) => item.id !== entry.id));
+    } catch (caught) {
+      setHistoryError(caught instanceof Error ? caught.message : "对话记录删除失败");
+    } finally {
+      setDeletingHistoryId(null);
     }
   }
 
@@ -158,29 +193,68 @@ export function AgentConsole() {
         </div>
       </section>
 
-      <aside className="rounded-lg border border-line bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-2">
-          <Wrench size={18} className="text-teal-700" aria-hidden />
-          <h2 className="text-base font-semibold">最近工具调用</h2>
-        </div>
-        <div className="mt-4 space-y-3">
-          {responses[0]?.tool_calls.map((tool) => (
-            <div key={tool.id} className="rounded-lg border border-line bg-slate-50 p-3">
-              <p className="text-sm font-semibold text-ink">{tool.name}</p>
-              <pre className="mt-2 max-h-40 overflow-auto text-xs leading-5 text-slate-600">
-                {JSON.stringify(
-                  {
-                    parameters: tool.parameters,
-                    result: tool.result,
-                    policy: tool.policy
-                  },
-                  null,
-                  2
-                )}
-              </pre>
-            </div>
-          )) ?? <p className="text-sm leading-6 text-muted">第一次智能体回复后会显示工具依据。</p>}
-        </div>
+      <aside className="space-y-5">
+        <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Wrench size={18} className="text-teal-700" aria-hidden />
+            <h2 className="text-base font-semibold">最近工具调用</h2>
+          </div>
+          <div className="mt-4 space-y-3">
+            {responses[0]?.tool_calls.map((tool) => (
+              <div key={tool.id} className="rounded-lg border border-line bg-slate-50 p-3">
+                <p className="text-sm font-semibold text-ink">{tool.name}</p>
+                <pre className="mt-2 max-h-40 overflow-auto text-xs leading-5 text-slate-600">
+                  {JSON.stringify(
+                    {
+                      parameters: tool.parameters,
+                      result: tool.result,
+                      policy: tool.policy
+                    },
+                    null,
+                    2
+                  )}
+                </pre>
+              </div>
+            )) ?? <p className="text-sm leading-6 text-muted">第一次智能体回复后会显示工具依据。</p>}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <History size={18} className="text-teal-700" aria-hidden />
+            <h2 className="text-base font-semibold">最近对话记录</h2>
+          </div>
+          <div className="mt-4 space-y-3">
+            {historyLoading && <p className="text-sm leading-6 text-muted">正在读取对话记录...</p>}
+            {historyError && <p className="rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700">{historyError}</p>}
+            {!historyLoading && history.length === 0 && !historyError && (
+              <p className="text-sm leading-6 text-muted">暂无可追溯的智能体对话记录。</p>
+            )}
+            {history.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-line bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-semibold leading-6 text-ink">{entry.user_message.content}</p>
+                    <p className="mt-1 text-xs leading-5 text-muted">
+                      {formatDateTime(entry.created_at)} · {entry.data_source === "database" ? "数据库遥测" : "模拟数据"} · {entry.tool_calls.length} 个工具
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    title="删除对话记录"
+                    onClick={() => void removeHistoryEntry(entry)}
+                    disabled={deletingHistoryId === entry.id}
+                    className="focus-ring inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-line bg-white px-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Trash2 size={13} aria-hidden />
+                    删除
+                  </button>
+                </div>
+                <p className="mt-2 max-h-24 overflow-auto text-xs leading-5 text-slate-600">{entry.assistant_message.content}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       </aside>
     </div>
   );
