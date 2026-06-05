@@ -17,6 +17,7 @@
     "smoke:web": "python3 scripts/web-route-smoke.py",
     "smoke:mqtt": "if [ -x .venv/bin/python ]; then .venv/bin/python scripts/mqtt-telemetry-smoke.py; else python3 scripts/mqtt-telemetry-smoke.py; fi",
     "smoke:server": "bash scripts/server-smoke.sh",
+    "verify:release": "bash scripts/release-check.sh",
     "test": "npm run test:api && npm run test:web",
     "test:api": "cd services/api && python -m pytest",
     "test:web": "npm --workspace apps/web run typecheck && npm --workspace apps/web run lint"

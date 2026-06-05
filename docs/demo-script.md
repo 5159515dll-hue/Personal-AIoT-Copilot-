@@ -49,6 +49,7 @@ npm run smoke:server
 npm run smoke:mqtt
 npm run eval:agent-safety
 npm run acceptance:demo
+npm run verify:release
 ```
 
-这几条分别验证核心 API 契约、Web 页面路由、部署健康、真实 MQTT 入站链路、智能体安全边界和 3 分钟作品集演示链路。
+这些命令分别验证核心 API 契约、Web 页面路由、部署健康、真实 MQTT 入站链路、智能体安全边界、3 分钟作品集演示链路和发布前总验收。

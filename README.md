@@ -173,6 +173,12 @@ npm run eval:agent-safety
 npm run acceptance:demo
 ```
 
+发布前可以运行总验收入口。它会串联后端单元测试、前端类型检查 / lint / 生产构建、API 契约、Web 页面、MQTT、服务器烟测、智能体安全评测和 3 分钟演示验收：
+
+```bash
+npm run verify:release
+```
+
 如果 Web 或 API 不在本机端口，可以显式指定：
 
 ```bash
@@ -193,6 +199,7 @@ npm run smoke:mqtt
 npm run smoke:server
 npm run eval:agent-safety
 npm run acceptance:demo
+npm run verify:release
 ```
 
 ## 当前版本边界
