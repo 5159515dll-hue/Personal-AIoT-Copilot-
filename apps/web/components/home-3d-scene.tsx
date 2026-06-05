@@ -34,8 +34,7 @@ export function Home3DScene() {
       return;
     }
 
-    const forceMotion = new URLSearchParams(window.location.search).get("motion") === "on";
-    const prefersReducedMotion = !forceMotion && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const pauseMotion = new URLSearchParams(window.location.search).get("motion") === "off";
     if (!window.WebGLRenderingContext) {
       setShowFallback(true);
       return;
@@ -172,7 +171,7 @@ export function Home3DScene() {
     const resize = () => {
       const width = host.clientWidth || window.innerWidth;
       const height = host.clientHeight || window.innerHeight;
-      renderer.setSize(width, height, false);
+      renderer.setSize(width, height);
       camera.aspect = width / height;
       camera.position.x = width < 720 ? 0 : 0.2;
       rig.position.x = width < 720 ? 0.45 : 1.55;
@@ -187,7 +186,7 @@ export function Home3DScene() {
     const startedAt = performance.now();
     const render = () => {
       const elapsed = (performance.now() - startedAt) / 1000;
-      const motion = prefersReducedMotion ? 0.18 : elapsed;
+      const motion = pauseMotion ? 0.18 : elapsed;
       core.rotation.y = motion * 0.38;
       inner.rotation.y = -motion * 0.62;
       ringGroup.rotation.y = motion * 0.2;
@@ -207,7 +206,7 @@ export function Home3DScene() {
       });
 
       renderer.render(scene, camera);
-      if (!prefersReducedMotion) {
+      if (!pauseMotion) {
         animationFrame = window.requestAnimationFrame(render);
       }
     };

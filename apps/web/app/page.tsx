@@ -66,7 +66,7 @@ export default function HomePage() {
     <main className="bg-white text-ink">
       <section className="relative min-h-[92svh] overflow-hidden bg-[#03070d] text-white">
         <Home3DScene />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_72%_45%,rgba(26,207,217,0.14)_0%,rgba(3,7,13,0)_44%),linear-gradient(90deg,rgba(3,7,13,0.98)_0%,rgba(3,7,13,0.72)_43%,rgba(3,7,13,0.18)_100%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_72%_45%,rgba(36,230,238,0.1)_0%,rgba(3,7,13,0)_42%),linear-gradient(90deg,rgba(3,7,13,0.9)_0%,rgba(3,7,13,0.54)_39%,rgba(3,7,13,0.04)_100%)]" />
         <div className="absolute inset-x-0 top-0 z-10 px-5 py-5 sm:px-8 lg:px-12">
           <nav className="mx-auto flex max-w-7xl items-center justify-between gap-4 text-sm">
             <Link href="/" className="focus-ring font-semibold tracking-normal text-white">
