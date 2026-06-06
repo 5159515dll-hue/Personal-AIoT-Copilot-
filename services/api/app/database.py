@@ -245,19 +245,100 @@ def upsert_device_connection_db(
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, now())
             ON CONFLICT (device_id) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                device_type = EXCLUDED.device_type,
-                transport = EXCLUDED.transport,
-                protocol_version = EXCLUDED.protocol_version,
-                firmware_version = EXCLUDED.firmware_version,
-                hardware_revision = EXCLUDED.hardware_revision,
-                location = EXCLUDED.location,
-                capabilities = EXCLUDED.capabilities,
-                metadata = EXCLUDED.metadata,
-                online_state = EXCLUDED.online_state,
-                last_seen_at = EXCLUDED.last_seen_at,
-                last_message_id = EXCLUDED.last_message_id,
-                last_sequence = EXCLUDED.last_sequence,
+                display_name = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.display_name
+                    ELSE EXCLUDED.display_name
+                END,
+                device_type = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.device_type
+                    ELSE EXCLUDED.device_type
+                END,
+                transport = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.transport
+                    ELSE EXCLUDED.transport
+                END,
+                protocol_version = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.protocol_version
+                    ELSE EXCLUDED.protocol_version
+                END,
+                firmware_version = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.firmware_version
+                    ELSE EXCLUDED.firmware_version
+                END,
+                hardware_revision = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.hardware_revision
+                    ELSE EXCLUDED.hardware_revision
+                END,
+                location = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.location
+                    ELSE EXCLUDED.location
+                END,
+                capabilities = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.capabilities
+                    ELSE EXCLUDED.capabilities
+                END,
+                metadata = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.metadata
+                    ELSE EXCLUDED.metadata
+                END,
+                online_state = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.online_state
+                    ELSE EXCLUDED.online_state
+                END,
+                last_seen_at = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.last_seen_at
+                    WHEN device_connections.last_seen_at IS NULL THEN EXCLUDED.last_seen_at
+                    WHEN EXCLUDED.last_seen_at IS NULL THEN device_connections.last_seen_at
+                    WHEN EXCLUDED.last_seen_at > device_connections.last_seen_at THEN EXCLUDED.last_seen_at
+                    ELSE device_connections.last_seen_at
+                END,
+                last_message_id = CASE
+                    WHEN EXCLUDED.last_sequence IS NOT NULL
+                     AND device_connections.last_sequence IS NOT NULL
+                     AND EXCLUDED.last_sequence <= device_connections.last_sequence
+                    THEN device_connections.last_message_id
+                    WHEN EXCLUDED.last_message_id IS NULL THEN device_connections.last_message_id
+                    ELSE EXCLUDED.last_message_id
+                END,
+                last_sequence = CASE
+                    WHEN EXCLUDED.last_sequence IS NULL THEN device_connections.last_sequence
+                    WHEN device_connections.last_sequence IS NULL THEN EXCLUDED.last_sequence
+                    WHEN EXCLUDED.last_sequence > device_connections.last_sequence THEN EXCLUDED.last_sequence
+                    ELSE device_connections.last_sequence
+                END,
                 updated_at = now()
             RETURNING
                 device_id,

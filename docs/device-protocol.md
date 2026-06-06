@@ -149,6 +149,7 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
 
 - 入站服务会初始化 `sensor_readings` 表。
 - 入站服务会同步更新 `device_connections` 表，记录设备类型、传输方式、固件版本、能力声明、最近消息编号和最后在线时间。
+- 设备连接状态按递增 `sequence` 单调更新；旧序号或重复序号的消息不会覆盖更新的在线状态、最后消息编号和最后在线时间。
 - PostgreSQL 可直接使用；如果 TimescaleDB 扩展可用，会自动尝试创建 hypertable。
 - 每条读数会记录 `time`、`received_at`、`device_id`、`metric`、`value`、`unit`、`quality` 和 `source`。
 - 当前版本不从遥测 payload 执行任何设备控制动作。

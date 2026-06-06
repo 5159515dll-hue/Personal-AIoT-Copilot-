@@ -39,7 +39,8 @@ INGEST_BODY="$(mktemp)"
 DEVICE_CONNECT_BODY="$(mktemp)"
 DEVICE_HEARTBEAT_BODY="$(mktemp)"
 DEVICE_TELEMETRY_BODY="$(mktemp)"
-trap 'rm -f "$COOKIE_JAR" "$BODY_FILE" "$INGEST_BODY" "$DEVICE_CONNECT_BODY" "$DEVICE_HEARTBEAT_BODY" "$DEVICE_TELEMETRY_BODY"' EXIT
+DEVICE_OLD_HEARTBEAT_BODY="$(mktemp)"
+trap 'rm -f "$COOKIE_JAR" "$BODY_FILE" "$INGEST_BODY" "$DEVICE_CONNECT_BODY" "$DEVICE_HEARTBEAT_BODY" "$DEVICE_TELEMETRY_BODY" "$DEVICE_OLD_HEARTBEAT_BODY"' EXIT
 
 SMOKE_DEVICE_ID="${SMOKE_DEVICE_ID:-room_node_http_smoke}"
 UNKNOWN_DEVICE_ID="${UNKNOWN_DEVICE_ID:-unknown_plug_smoke}"
@@ -240,6 +241,35 @@ status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
   "$API_BASE_URL/api/device-connections?limit=50")"
 expect_status "$status" "200" "设备连接列表可读取"
 assert_json "$BODY_FILE" "any(item[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and item[\"protocol_version\"] == \"aiot.v1\" for item in payload)" "设备连接列表包含烟测设备"
+
+cat > "$DEVICE_OLD_HEARTBEAT_BODY" <<JSON
+{
+  "status": "offline",
+  "transport": "mqtt",
+  "protocol_version": "aiot.v1",
+  "firmware_version": "0.1.0",
+  "uptime_seconds": 120,
+  "battery_percent": 12.5,
+  "rssi_dbm": -88,
+  "message_id": "$EMBEDDED_DEVICE_ID-hb-old",
+  "sequence": 9,
+  "sent_at": "2026-01-01T00:00:00+08:00"
+}
+JSON
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -X POST "$API_BASE_URL/api/device-connections/$EMBEDDED_DEVICE_ID/heartbeat" \
+  -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  --data-binary "@$DEVICE_OLD_HEARTBEAT_BODY")"
+expect_status "$status" "200" "乱序旧心跳可被接收"
+assert_json "$BODY_FILE" 'payload["online_state"] == "online"' "乱序旧心跳不会覆盖当前在线状态"
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  "$API_BASE_URL/api/device-connections?limit=50")"
+expect_status "$status" "200" "乱序旧心跳后设备连接列表可读取"
+assert_json "$BODY_FILE" "any(item[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and item.get(\"last_sequence\") == 11 and item.get(\"last_message_id\") == \"$EMBEDDED_DEVICE_ID-telemetry\" and item.get(\"online_state\") == \"online\" for item in payload)" "乱序旧心跳不会回滚设备连接序号和最新消息"
 
 status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
   -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
