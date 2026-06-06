@@ -1,7 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.audit import record_audit
-from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
+from app.device_adapter import (
+    DeviceRegistryUnavailable,
+    execute_device_control,
+    get_device,
+    list_devices as list_registered_devices,
+)
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.models import (
     ControlDeviceRequest,
@@ -15,13 +22,24 @@ router = APIRouter(prefix="/api/devices", tags=["devices"])
 
 
 @router.get("", response_model=list[Device])
-def list_devices() -> list[Device]:
-    return list_mock_devices()
+def list_devices(source: Literal["auto", "mock", "database"] = Query("auto")) -> list[Device]:
+    try:
+        return list_registered_devices(source)
+    except DeviceRegistryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/{device_id}/control", response_model=ControlDeviceResponse)
-def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDeviceResponse:
-    device = get_mock_device(device_id)
+def control_device(
+    device_id: str,
+    request: ControlDeviceRequest,
+    source: Literal["auto", "mock", "database"] = Query("auto"),
+) -> ControlDeviceResponse:
+    try:
+        device = get_device(device_id, source)
+    except DeviceRegistryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     if device is None:
         policy = assess_device_control(
             device=None,
@@ -64,7 +82,7 @@ def control_device(device_id: str, request: ControlDeviceRequest) -> ControlDevi
                 parameters={"device_id": device_id, **request.model_dump()},
                 policy=policy,
             )
-        device = execute_mock_control(device, request.state)
+        device = execute_device_control(device, request.state, source)
         record_device_control_execution(device.id, "user")
         result = "success"
         details = "模拟设备状态已更新。"

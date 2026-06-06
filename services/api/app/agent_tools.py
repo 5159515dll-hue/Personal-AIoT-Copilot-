@@ -8,7 +8,12 @@ from app.agent_history import record_agent_conversation, redact_sensitive_text, 
 from app.anomaly_events import build_anomaly_events
 from app.audit import list_audit_logs, record_audit
 from app.database import latest_sensor_readings_db, query_sensor_history_db, telemetry_status_db
-from app.device_adapter import execute_mock_control, get_mock_device, list_mock_devices
+from app.device_adapter import (
+    DeviceRegistryUnavailable,
+    execute_device_control,
+    get_device as get_registered_device,
+    list_devices as list_registered_devices,
+)
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.mock_data import current_room_state, query_history, summarize_metric
 from app.model_providers import generate_agent_reply
@@ -115,6 +120,7 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         return await _device_status_response(
             session_id=session_id,
             message=message,
+            data_source=data_source,
             used_data=used_data,
             tool_calls=tool_calls,
             needs_confirmation=needs_confirmation,
@@ -136,7 +142,7 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
 
     if _mentions_forbidden_control(lowered):
         device_id = "smoke_alarm_01" if "smoke" in lowered or "烟雾" in lowered else "smart_plug_01"
-        control = _control_tool(device_id, "on", False, message)
+        control = _control_tool(device_id, "on", False, message, "database" if data_source == "database" else "mock")
         tool_calls.append(control)
         policy = control.policy
         reply = f"我不能执行该控制动作。{policy.reason if policy else '策略引擎已阻止。'}"
@@ -153,7 +159,7 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         )
 
     if _mentions_lamp_control(lowered):
-        control = _control_tool("desk_lamp_01", "on", True, message)
+        control = _control_tool("desk_lamp_01", "on", True, message, "database" if data_source == "database" else "mock")
         tool_calls.append(control)
         policy = control.policy
         if control.result.get("execution_result") == "success":
@@ -482,13 +488,29 @@ async def _device_status_response(
     *,
     session_id: str,
     message: str,
+    data_source: str,
     used_data: list[str],
     tool_calls: list[ToolCall],
     needs_confirmation: bool,
     policy: PolicyDecision | None,
     rule_draft: AutomationRuleCreate | None,
 ) -> AgentChatResponse:
-    devices = list_mock_devices()
+    device_source = "database" if data_source == "database" else "mock"
+    try:
+        devices = list_registered_devices(device_source)
+    except DeviceRegistryUnavailable as exc:
+        used_data.append("database_device_registry")
+        tool_calls.append(
+            ToolCall(
+                name="get_device_status",
+                parameters={"source": "database", "scope": "powered_on_and_presence"},
+                result={"source": "database_device_registry", "status": "unavailable", "error": str(exc)},
+                created_at=now(),
+            )
+        )
+        reply = f"数据库设备注册表暂不可用：{exc} 可以切回模拟数据继续查看设备状态。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
     room = current_room_state()
     presence_reading = room.metrics.get(Metric.presence)
     presence = bool(getattr(presence_reading, "value", 0))
@@ -509,7 +531,7 @@ async def _device_status_response(
         attention.append(f"有设备离线，需要先恢复上报再判断状态：{names}。")
 
     result = {
-        "source": "mock_device_adapter",
+        "source": "database_device_registry" if device_source == "database" else "mock_device_adapter",
         "status": "ok",
         "presence_detected": presence,
         "away_context": away_context,
@@ -522,11 +544,11 @@ async def _device_status_response(
         "attention": attention,
         "safety_boundary": "该工具只读取设备状态和风险元数据，不会自动关闭设备；控制动作必须另走 control_device 策略链路。",
     }
-    used_data.extend(["mock_device_states", "current_room_presence"])
+    used_data.extend(["database_device_registry" if device_source == "database" else "mock_device_states", "current_room_presence"])
     tool_calls.append(
         ToolCall(
             name="get_device_status",
-            parameters={"source": "mock", "scope": "powered_on_and_presence"},
+            parameters={"source": device_source, "scope": "powered_on_and_presence"},
             result=result,
             created_at=now(),
         )
@@ -957,8 +979,33 @@ async def _database_environment_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
-def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> ToolCall:
-    device = get_mock_device(device_id)
+def _control_tool(device_id: str, state: str, confirmed: bool, intent: str, source: str = "mock") -> ToolCall:
+    try:
+        device = get_registered_device(device_id, "database" if source == "database" else "mock")
+    except DeviceRegistryUnavailable as exc:
+        policy = PolicyDecision(
+            result=PolicyResult.denied,
+            risk_level=RiskLevel.high,
+            requires_confirmation=False,
+            reason=str(exc),
+            constraints=["数据库设备注册表不可用时不能执行控制动作。"],
+        )
+        audit = record_audit(
+            actor="agent",
+            action="control_device",
+            result="failed",
+            details=policy.reason,
+            parameters={"device_id": device_id, "state": state, "confirmed": confirmed, "source": source},
+            policy=policy,
+        )
+        return ToolCall(
+            name="control_device",
+            parameters={"device_id": device_id, "state": state, "confirmed": confirmed, "source": source},
+            result={"execution_result": "failed", "audit_log_id": audit.id, "device": None},
+            policy=policy,
+            created_at=now(),
+        )
+
     policy = assess_device_control(
         device=device,
         requested_state=state,
@@ -970,19 +1017,19 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str) -> T
     execution_result = "success" if policy.result == PolicyResult.allowed else "blocked"
     controlled_device = None
     if device and policy.result == PolicyResult.allowed and state in {"on", "off"}:
-        controlled_device = execute_mock_control(device, state)
+        controlled_device = execute_device_control(device, state, "database" if source == "database" else "mock")
         record_device_control_execution(device.id, "agent")
     audit = record_audit(
         actor="agent",
         action="control_device",
         result=execution_result,
         details=policy.reason,
-        parameters={"device_id": device_id, "state": state, "confirmed": confirmed},
+        parameters={"device_id": device_id, "state": state, "confirmed": confirmed, "source": source},
         policy=policy,
     )
     return ToolCall(
         name="control_device",
-        parameters={"device_id": device_id, "state": state, "confirmed": confirmed},
+        parameters={"device_id": device_id, "state": state, "confirmed": confirmed, "source": source},
         result={
             "execution_result": execution_result,
             "audit_log_id": audit.id,

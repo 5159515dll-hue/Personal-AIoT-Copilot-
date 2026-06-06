@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
+import json
 from datetime import datetime
 
 from app.models import (
+    Device,
+    DeviceState,
     Metric,
+    RiskLevel,
     SensorReading,
     TelemetryDeviceSummary,
     TelemetrySourceSummary,
@@ -31,6 +35,26 @@ CREATE INDEX IF NOT EXISTS idx_sensor_readings_device_time
     ON sensor_readings (device_id, time DESC);
 """
 
+DEVICE_REGISTRY_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS device_registry (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    location TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    controllable BOOLEAN NOT NULL,
+    requires_confirmation BOOLEAN NOT NULL,
+    online_state TEXT NOT NULL,
+    current_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+    connected_appliance TEXT,
+    max_active_duration_minutes INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_registry_risk
+    ON device_registry (risk_level);
+"""
+
 
 def database_url() -> str | None:
     return os.getenv("DATABASE_URL")
@@ -42,7 +66,166 @@ def init_db(url: str | None = None) -> None:
     with psycopg.connect(db_url, autocommit=True) as conn:
         _try_enable_timescale(conn)
         conn.execute(SCHEMA_SQL)
+        conn.execute(DEVICE_REGISTRY_SCHEMA_SQL)
         _try_create_hypertable(conn)
+
+
+def init_device_registry_db(url: str | None = None) -> None:
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        conn.execute(DEVICE_REGISTRY_SCHEMA_SQL)
+
+
+def seed_device_registry_db(
+    devices: list[Device],
+    *,
+    url: str | None = None,
+    ensure_schema: bool = True,
+) -> int:
+    if ensure_schema:
+        init_device_registry_db(url)
+    if not devices:
+        return 0
+
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        count = _device_registry_count(conn)
+        if count:
+            return 0
+        return _upsert_device_rows(conn, devices)
+
+
+def list_device_registry_db(
+    *,
+    seed_devices: list[Device] | None = None,
+    url: str | None = None,
+) -> list[Device]:
+    init_device_registry_db(url)
+    if seed_devices is not None:
+        seed_device_registry_db(seed_devices, url=url, ensure_schema=False)
+
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                name,
+                type,
+                location,
+                risk_level,
+                controllable,
+                requires_confirmation,
+                online_state,
+                current_state,
+                connected_appliance,
+                max_active_duration_minutes
+            FROM device_registry
+            ORDER BY
+                CASE risk_level
+                    WHEN 'read_only' THEN 0
+                    WHEN 'low' THEN 1
+                    WHEN 'medium' THEN 2
+                    WHEN 'high' THEN 3
+                    WHEN 'forbidden' THEN 4
+                    ELSE 5
+                END,
+                id ASC
+            """
+        ).fetchall()
+    return [_row_to_device(row) for row in rows]
+
+
+def get_device_registry_db(
+    device_id: str,
+    *,
+    seed_devices: list[Device] | None = None,
+    url: str | None = None,
+) -> Device | None:
+    init_device_registry_db(url)
+    if seed_devices is not None:
+        seed_device_registry_db(seed_devices, url=url, ensure_schema=False)
+
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                id,
+                name,
+                type,
+                location,
+                risk_level,
+                controllable,
+                requires_confirmation,
+                online_state,
+                current_state,
+                connected_appliance,
+                max_active_duration_minutes
+            FROM device_registry
+            WHERE id = %s
+            """,
+            (device_id,),
+        ).fetchone()
+    return _row_to_device(row) if row else None
+
+
+def upsert_device_registry_db(
+    devices: list[Device],
+    *,
+    url: str | None = None,
+    ensure_schema: bool = True,
+) -> int:
+    if ensure_schema:
+        init_device_registry_db(url)
+    if not devices:
+        return 0
+
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        return _upsert_device_rows(conn, devices)
+
+
+def update_device_registry_state_db(
+    device_id: str,
+    state: dict,
+    *,
+    url: str | None = None,
+) -> Device | None:
+    init_device_registry_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            UPDATE device_registry
+            SET current_state = %s::jsonb,
+                updated_at = now()
+            WHERE id = %s
+            RETURNING
+                id,
+                name,
+                type,
+                location,
+                risk_level,
+                controllable,
+                requires_confirmation,
+                online_state,
+                current_state,
+                connected_appliance,
+                max_active_duration_minutes
+            """,
+            (json.dumps(state, ensure_ascii=False), device_id),
+        ).fetchone()
+    return _row_to_device(row) if row else None
 
 
 def insert_sensor_readings(
@@ -264,6 +447,22 @@ def _row_to_reading(row: dict) -> SensorReading:
     )
 
 
+def _row_to_device(row: dict) -> Device:
+    return Device(
+        id=row["id"],
+        name=row["name"],
+        type=row["type"],
+        location=row["location"],
+        risk_level=RiskLevel(row["risk_level"]),
+        controllable=bool(row["controllable"]),
+        requires_confirmation=bool(row["requires_confirmation"]),
+        online_state=DeviceState(row["online_state"]),
+        current_state=_json_object(row["current_state"]),
+        connected_appliance=row["connected_appliance"],
+        max_active_duration_minutes=row["max_active_duration_minutes"],
+    )
+
+
 def bucket_sensor_readings(readings: list[SensorReading], bucket: str) -> list[SensorReading]:
     bucket_to_delta(bucket)
     grouped: dict[datetime, list[SensorReading]] = {}
@@ -296,6 +495,78 @@ def _require_url(url: str | None) -> str:
     if not db_url:
         raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
     return db_url
+
+
+def _device_registry_count(conn) -> int:
+    row = conn.execute("SELECT COUNT(*)::int AS count FROM device_registry").fetchone()
+    if isinstance(row, dict):
+        return int(row["count"] or 0)
+    return int(row[0] or 0)
+
+
+def _upsert_device_rows(conn, devices: list[Device]) -> int:
+    rows = [
+        (
+            device.id,
+            device.name,
+            device.type,
+            device.location,
+            device.risk_level.value,
+            device.controllable,
+            device.requires_confirmation,
+            device.online_state.value,
+            json.dumps(device.current_state, ensure_ascii=False),
+            device.connected_appliance,
+            device.max_active_duration_minutes,
+        )
+        for device in devices
+    ]
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO device_registry (
+                id,
+                name,
+                type,
+                location,
+                risk_level,
+                controllable,
+                requires_confirmation,
+                online_state,
+                current_state,
+                connected_appliance,
+                max_active_duration_minutes,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, now())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                type = EXCLUDED.type,
+                location = EXCLUDED.location,
+                risk_level = EXCLUDED.risk_level,
+                controllable = EXCLUDED.controllable,
+                requires_confirmation = EXCLUDED.requires_confirmation,
+                online_state = EXCLUDED.online_state,
+                current_state = EXCLUDED.current_state,
+                connected_appliance = EXCLUDED.connected_appliance,
+                max_active_duration_minutes = EXCLUDED.max_active_duration_minutes,
+                updated_at = now()
+            """,
+            rows,
+        )
+    return len(rows)
+
+
+def _json_object(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
 
 
 def _import_psycopg():

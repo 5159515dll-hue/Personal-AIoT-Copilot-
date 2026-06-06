@@ -5,9 +5,21 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
 
+from app.database import (
+    database_url,
+    get_device_registry_db,
+    list_device_registry_db,
+    update_device_registry_state_db,
+)
 from app.mock_data import get_device_catalog
 from app.models import Device
 from app.storage import data_dir
+
+DeviceSource = Literal["auto", "mock", "database"]
+
+
+class DeviceRegistryUnavailable(RuntimeError):
+    pass
 
 
 class MockDeviceStateStore:
@@ -47,17 +59,61 @@ device_state_store = MockDeviceStateStore()
 
 
 def list_mock_devices() -> list[Device]:
-    devices = get_device_catalog()
-    states = device_state_store.list_states()
-    for device in devices:
-        saved_state = states.get(device.id)
-        if saved_state:
-            device.current_state = {**device.current_state, **saved_state}
-    return devices
+    return _overlay_saved_states(get_device_catalog())
 
 
 def get_mock_device(device_id: str) -> Device | None:
     return next((device for device in list_mock_devices() if device.id == device_id), None)
+
+
+def list_devices(source: DeviceSource = "auto") -> list[Device]:
+    if source in {"auto", "database"}:
+        if not database_url():
+            if source == "database":
+                raise DeviceRegistryUnavailable("未配置 DATABASE_URL，无法访问设备注册表。")
+        else:
+            try:
+                devices = list_device_registry_db(seed_devices=get_device_catalog())
+                return _overlay_saved_states(devices)
+            except RuntimeError as exc:
+                if source == "database":
+                    raise DeviceRegistryUnavailable(_clean_registry_error(exc)) from exc
+            except Exception as exc:
+                if source == "database":
+                    raise DeviceRegistryUnavailable("设备注册表数据库连接或查询失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+    return list_mock_devices()
+
+
+def get_device(device_id: str, source: DeviceSource = "auto") -> Device | None:
+    if source in {"auto", "database"}:
+        if not database_url():
+            if source == "database":
+                raise DeviceRegistryUnavailable("未配置 DATABASE_URL，无法访问设备注册表。")
+        else:
+            try:
+                device = get_device_registry_db(device_id, seed_devices=get_device_catalog())
+                if device is None:
+                    return None
+                return _overlay_saved_states([device])[0]
+            except RuntimeError as exc:
+                if source == "database":
+                    raise DeviceRegistryUnavailable(_clean_registry_error(exc)) from exc
+            except Exception as exc:
+                if source == "database":
+                    raise DeviceRegistryUnavailable("设备注册表数据库连接或查询失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+    return get_mock_device(device_id)
+
+
+def execute_device_control(device: Device, state: Literal["on", "off"], source: DeviceSource = "auto") -> Device:
+    updated = execute_mock_control(device, state)
+    if source in {"auto", "database"} and database_url():
+        try:
+            registry_device = update_device_registry_state_db(updated.id, updated.current_state)
+            if registry_device is not None:
+                return registry_device
+        except Exception:
+            pass
+    return updated
 
 
 def execute_mock_control(device: Device, state: Literal["on", "off"]) -> Device:
@@ -65,3 +121,17 @@ def execute_mock_control(device: Device, state: Literal["on", "off"]) -> Device:
     updated.current_state["power"] = state
     device_state_store.save_state(updated.id, updated.current_state)
     return updated
+
+
+def _overlay_saved_states(devices: list[Device]) -> list[Device]:
+    result = [device.model_copy(deep=True) for device in devices]
+    states = device_state_store.list_states()
+    for device in result:
+        saved_state = states.get(device.id)
+        if saved_state:
+            device.current_state = {**device.current_state, **saved_state}
+    return result
+
+
+def _clean_registry_error(exc: Exception) -> str:
+    return str(exc).strip().rstrip("。.") + "。"

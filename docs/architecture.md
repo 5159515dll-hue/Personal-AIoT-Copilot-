@@ -23,10 +23,10 @@
 - `firmware/esp32-room-node`：ESP32 房间传感器节点固件，读取真实环境传感器并发布符合设备协议的 MQTT 遥测。
 - `services/api/app/routes`：前端使用的后端接口。
 - `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
-- `services/api/app/mock_data.py`：确定性传感器与设备数据。
-- `services/api/app/device_adapter.py`：可持久化的模拟设备控制适配器，供 API 和智能体共用。
+- `services/api/app/mock_data.py`：确定性传感器数据和设备注册表种子数据。
+- `services/api/app/device_adapter.py`：设备注册表适配器；有数据库时读取 `device_registry`，无数据库时回退到模拟清单，并继续持久化模拟控制状态。
 - `services/api/app/ingestion.py`：HTTP 与 MQTT payload 转换为统一传感器读数。
-- `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、写入和查询。
+- `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、传感器读写、设备注册表读写和查询。
 - `services/api/app/anomaly_events.py`：从当前读数、历史曲线和传感器健康状态推导结构化异常事件。
 - `services/api/app/agent_tools.py`：工具优先的智能体编排。
 - `services/api/app/policy.py`：风险分级、确认要求和拒绝逻辑。
@@ -43,7 +43,7 @@
 2. 后端根据时间窗口返回模拟读数。
 3. 智能体请求会被映射到受约束工具。
 4. 工具返回结构化数据和必要的策略判断。
-5. 控制尝试会被允许、要求确认或拒绝；允许的模拟动作通过 mock device adapter 更新状态。
+5. 设备 API 和智能体先读取设备注册表视图；控制尝试会被允许、要求确认或拒绝；允许的模拟动作通过 device adapter 更新状态。
 6. 已确认规则可手动评估，默认使用模拟状态，必要时也可以切换到数据库遥测。
 7. 关键事件持久化到 `services/api/.local/`。
 
@@ -57,7 +57,8 @@
 6. `GET /api/sensors/history?source=database&bucket=15m&from=...` 从数据库读取并聚合历史曲线。
 7. `POST /api/rules/evaluate?source=database` 使用数据库最新房间状态评估已确认规则。
 8. `/dashboard`、`/trends`、`/agent` 和 `/rules` 可选择 database 数据源，用入库最新读数和历史曲线展示、回答环境问题或评估提醒规则。
-9. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
+9. `GET /api/devices?source=database` 会初始化并读取 `device_registry` 表；表为空时用当前安全种子设备填充，未知负载插座和报警器仍保持不可控。
+10. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
 
 ## ESP32 固件边界
 
@@ -69,6 +70,6 @@
 
 - 烧录并接线真实 ESP32 节点，让真实传感器数据持续写入数据库。
 - 基于真实硬件运行长时间离线、乱序和异常读数测试。
-- 用数据库设备注册表替换静态设备清单。
+- 为数据库设备注册表增加后台管理界面、真实硬件绑定字段和设备下线流程。
 - 用 PostgreSQL 或 TimescaleDB 替换本地规则与审计 JSON 持久化。
 - 保持智能体、策略和审计接口稳定。

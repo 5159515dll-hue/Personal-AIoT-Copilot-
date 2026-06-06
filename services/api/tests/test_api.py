@@ -19,11 +19,14 @@ from app import room_state as room_state_module
 from app import rule_engine as rule_engine_module
 from app import rule_store as rule_store_module
 from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
+from app.device_adapter import DeviceRegistryUnavailable
 from app.ingestion import parse_mqtt_payload
 from app.main import app
 from app.models import (
     AgentModelUsage,
     AutomationRuleCreate,
+    Device,
+    DeviceState,
     Metric,
     ModelConfigRequest,
     PolicyDecision,
@@ -37,6 +40,7 @@ from app.models import (
 from app.mock_data import query_history
 from app.policy import assess_device_control, validate_rule
 from app.mock_data import get_device
+from app.routes import devices as devices_route_module
 from app.routes import ingest as ingest_route_module
 from app.routes import sensors as sensors_route_module
 from app.routes import telemetry as telemetry_route_module
@@ -648,6 +652,88 @@ def test_policy_blocks_prompt_injection() -> None:
     assert decision.result == PolicyResult.denied
 
 
+def test_device_list_database_source_uses_registry(monkeypatch) -> None:
+    captured = {}
+
+    def fake_list_registered_devices(source="auto"):
+        captured["source"] = source
+        return [
+            Device(
+                id="db_lamp_01",
+                name="数据库台灯",
+                type="smart_light",
+                location="desk",
+                risk_level=RiskLevel.low,
+                controllable=True,
+                requires_confirmation=False,
+                online_state=DeviceState.online,
+                current_state={"power": "off"},
+                connected_appliance="led_lamp",
+            )
+        ]
+
+    monkeypatch.setattr(devices_route_module, "list_registered_devices", fake_list_registered_devices)
+    response = client.get("/api/devices", params={"source": "database"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["source"] == "database"
+    assert payload[0]["id"] == "db_lamp_01"
+    assert payload[0]["risk_level"] == "low"
+
+
+def test_device_list_database_source_reports_unavailable(monkeypatch) -> None:
+    def unavailable_registry(source="auto"):
+        raise DeviceRegistryUnavailable("未配置 DATABASE_URL，无法访问设备注册表。")
+
+    monkeypatch.setattr(devices_route_module, "list_registered_devices", unavailable_registry)
+    response = client.get("/api/devices", params={"source": "database"})
+
+    assert response.status_code == 503
+    assert "设备注册表" in response.json()["detail"]
+
+
+def test_device_control_database_source_updates_registry_state(monkeypatch) -> None:
+    device = Device(
+        id="db_lamp_01",
+        name="数据库台灯",
+        type="smart_light",
+        location="desk",
+        risk_level=RiskLevel.low,
+        controllable=True,
+        requires_confirmation=False,
+        online_state=DeviceState.online,
+        current_state={"power": "off"},
+        connected_appliance="led_lamp",
+    )
+    captured = {}
+
+    def fake_get_device(device_id, source="auto"):
+        captured["get_source"] = source
+        return device if device_id == "db_lamp_01" else None
+
+    def fake_execute_device_control(target, state, source="auto"):
+        captured["execute_source"] = source
+        updated = target.model_copy(deep=True)
+        updated.current_state["power"] = state
+        return updated
+
+    monkeypatch.setattr(devices_route_module, "get_device", fake_get_device)
+    monkeypatch.setattr(devices_route_module, "execute_device_control", fake_execute_device_control)
+    response = client.post(
+        "/api/devices/db_lamp_01/control",
+        params={"source": "database"},
+        json={"state": "on", "confirmed": False, "reason": "数据库设备注册表测试"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["get_source"] == "database"
+    assert captured["execute_source"] == "database"
+    assert payload["execution_result"] == "success"
+    assert payload["device"]["current_state"]["power"] == "on"
+
+
 def test_device_control_persists_low_risk_mock_state() -> None:
     response = client.post(
         "/api/devices/desk_lamp_01/control",
@@ -1215,6 +1301,42 @@ def test_agent_can_report_left_on_devices() -> None:
     assert "desk_lamp_01" in powered_on_ids
     assert tool["result"]["powered_on_count"] >= 1
     assert "不会自动关闭任何设备" in payload["message"]["content"]
+
+
+def test_agent_device_status_database_source_uses_registry(monkeypatch) -> None:
+    captured = {}
+
+    def fake_list_registered_devices(source="auto"):
+        captured["source"] = source
+        return [
+            Device(
+                id="db_lamp_01",
+                name="数据库台灯",
+                type="smart_light",
+                location="desk",
+                risk_level=RiskLevel.low,
+                controllable=True,
+                requires_confirmation=False,
+                online_state=DeviceState.online,
+                current_state={"power": "on"},
+                connected_appliance="led_lamp",
+            )
+        ]
+
+    monkeypatch.setattr("app.agent_tools.list_registered_devices", fake_list_registered_devices)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "离开房间后哪些设备还开着？", "data_source": "database"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    tool = payload["tool_calls"][0]
+    assert captured["source"] == "database"
+    assert "database_device_registry" in payload["used_data"]
+    assert tool["parameters"]["source"] == "database"
+    assert tool["result"]["source"] == "database_device_registry"
+    assert tool["result"]["powered_on_devices"][0]["id"] == "db_lamp_01"
 
 
 def test_agent_reads_safety_alarm_status_without_control() -> None:
