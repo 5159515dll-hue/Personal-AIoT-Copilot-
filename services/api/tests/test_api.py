@@ -12,6 +12,7 @@ from app import audit as audit_module
 from app import agent_history as agent_history_module
 from app import anomaly_events as anomaly_events_module
 from app import database as database_module
+from app import device_connections as device_connections_module
 from app import device_adapter as device_adapter_module
 from app import device_rate_limit as device_rate_limit_module
 from app import model_providers as model_provider_module
@@ -26,6 +27,8 @@ from app.models import (
     AgentModelUsage,
     AutomationRuleCreate,
     Device,
+    DeviceCapability,
+    DeviceConnectionRecord,
     DeviceState,
     Metric,
     ModelConfigRequest,
@@ -41,6 +44,7 @@ from app.mock_data import query_history
 from app.policy import assess_device_control, validate_rule
 from app.mock_data import get_device
 from app.routes import devices as devices_route_module
+from app.routes import device_connections as device_connections_route_module
 from app.routes import ingest as ingest_route_module
 from app.routes import sensors as sensors_route_module
 from app.routes import telemetry as telemetry_route_module
@@ -538,6 +542,45 @@ def test_mqtt_example_payload_matches_device_protocol() -> None:
     assert all(item.timestamp and item.timestamp.isoformat() == "2026-06-04T17:30:00+08:00" for item in request.readings)
 
 
+def test_aiot_v1_mqtt_envelope_preserves_device_identity_and_capabilities() -> None:
+    request = parse_mqtt_payload(
+        """
+        {
+          "protocol_version": "aiot.v1",
+          "message_id": "esp32-001-42",
+          "sequence": 42,
+          "sent_at": "2026-06-04T17:31:00+08:00",
+          "device": {
+            "id": "esp32_room_node_01",
+            "type": "esp32",
+            "firmware_version": "0.2.0",
+            "hardware_revision": "s3-devkit",
+            "capabilities": [
+              {"kind": "telemetry", "metrics": ["temperature", "humidity", "co2"]}
+            ]
+          },
+          "telemetry": {
+            "readings": [
+              {"metric": "temperature", "value": 25.4},
+              {"metric": "co2", "value": 930}
+            ]
+          }
+        }
+        """
+    )
+
+    assert request.protocol_version == "aiot.v1"
+    assert request.device_id == "esp32_room_node_01"
+    assert request.device_type == "esp32"
+    assert request.firmware_version == "0.2.0"
+    assert request.hardware_revision == "s3-devkit"
+    assert request.message_id == "esp32-001-42"
+    assert request.sequence == 42
+    assert request.capabilities[0].kind == "telemetry"
+    assert [metric.value for metric in request.capabilities[0].metrics] == ["temperature", "humidity", "co2"]
+    assert all(item.timestamp is None for item in request.readings)
+
+
 def test_firmware_room_node_publishes_protocol_metrics_without_control_subscription() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     source = (repo_root / "firmware/esp32-room-node/src/main.cpp").read_text(encoding="utf-8")
@@ -732,6 +775,109 @@ def test_device_control_database_source_updates_registry_state(monkeypatch) -> N
     assert captured["execute_source"] == "database"
     assert payload["execution_result"] == "success"
     assert payload["device"]["current_state"]["power"] == "on"
+
+
+def test_device_registration_creates_read_only_registry_entry(monkeypatch) -> None:
+    captured = {}
+
+    def fake_upsert_device_connection_db(record):
+        captured["connection"] = record
+        return record
+
+    def fake_get_device_registry_db(device_id):
+        captured["registry_lookup"] = device_id
+        return None
+
+    def fake_upsert_device_registry_db(devices):
+        captured["registry_device"] = devices[0]
+        return len(devices)
+
+    monkeypatch.setattr(device_connections_module, "upsert_device_connection_db", fake_upsert_device_connection_db)
+    monkeypatch.setattr(device_connections_module, "get_device_registry_db", fake_get_device_registry_db)
+    monkeypatch.setattr(device_connections_module, "upsert_device_registry_db", fake_upsert_device_registry_db)
+
+    response = client.post(
+        "/api/device-connections/register",
+        json={
+            "device_id": "stm32_lab_node_01",
+            "display_name": "STM32 实验节点",
+            "device_type": "stm32",
+            "transport": "mqtt",
+            "protocol_version": "aiot.v1",
+            "firmware_version": "0.1.0",
+            "location": "lab",
+            "capabilities": [{"kind": "telemetry", "metrics": ["temperature", "humidity"]}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    registry_device = captured["registry_device"]
+    assert payload["device_id"] == "stm32_lab_node_01"
+    assert payload["device_type"] == "stm32"
+    assert captured["registry_lookup"] == "stm32_lab_node_01"
+    assert registry_device.risk_level == RiskLevel.read_only
+    assert registry_device.controllable is False
+    assert registry_device.requires_confirmation is False
+
+
+def test_device_connection_telemetry_endpoint_records_ingest_connection(monkeypatch) -> None:
+    captured = {}
+
+    def fake_insert_sensor_readings(readings, *, source="http", ensure_schema=True):
+        captured["readings"] = readings
+        captured["source"] = source
+        captured["ensure_schema"] = ensure_schema
+        return len(readings)
+
+    def fake_record_ingest_connection(request, *, transport):
+        captured["connection_request"] = request
+        captured["transport"] = transport
+        return DeviceConnectionRecord(
+            device_id=request.device_id,
+            display_name=request.device_id,
+            device_type=request.device_type or "sensor_node",
+            transport=transport,
+            protocol_version=request.protocol_version,
+            firmware_version=request.firmware_version,
+            location="unknown",
+            capabilities=request.capabilities,
+            metadata=request.metadata,
+            online_state=DeviceState.online,
+            last_seen_at=now(),
+            updated_at=now(),
+        )
+
+    monkeypatch.setattr(device_connections_route_module, "insert_sensor_readings", fake_insert_sensor_readings)
+    monkeypatch.setattr(device_connections_route_module, "record_ingest_connection", fake_record_ingest_connection)
+
+    response = client.post(
+        "/api/device-connections/raspi_gateway_01/telemetry",
+        json={
+            "protocol_version": "aiot.v1",
+            "message_id": "raspi-77",
+            "sequence": 77,
+            "sent_at": now().isoformat(),
+            "firmware_version": "2026.6",
+            "readings": [
+                {"metric": "co2", "value": 930},
+                {"metric": "noise", "value": 48.5},
+            ],
+            "capabilities": [{"kind": "gateway", "metrics": ["co2", "noise"]}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["device_id"] == "raspi_gateway_01"
+    assert payload["accepted"] == 2
+    assert payload["stored"] == 2
+    assert payload["message_id"] == "raspi-77"
+    assert captured["source"] == "http"
+    assert captured["ensure_schema"] is True
+    assert captured["transport"] == "http"
+    assert captured["connection_request"].sequence == 77
+    assert captured["readings"][0].device_id == "raspi_gateway_01"
 
 
 def test_device_control_persists_low_risk_mock_state() -> None:

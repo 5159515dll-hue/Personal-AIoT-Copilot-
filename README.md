@@ -13,6 +13,7 @@
 - 传感器健康状态检查，识别缺失、过期和异常质量读数。
 - 可选 MQTT 遥测入站服务与 TimescaleDB 存储。
 - ESP32 房间传感器节点固件，支持 SHT31、BH1750、SCD40 / SCD41、GPIO 存在传感器和可选 ADC 后备，对齐 MQTT/HTTP 设备消息协议。
+- 统一设备连接接口，支持 ESP32、STM32、树莓派和 Linux 网关以 `aiot.v1` 协议注册、心跳、声明能力和上报遥测。
 - 带风险等级的设备注册表和可持久化模拟控制；配置数据库时会使用 `device_registry`，否则回退到安全模拟清单。
 - 受工具约束的智能体对话，可在模拟数据和数据库遥测之间切换，支持日总结、原因解释、安全行动建议、设备状态分析、结构化异常事件解释、本地设备协议查询，并可选调用当前大模型增强分析。
 - 中国区模型厂商配置页，预置小米 MiMo 和 Kimi 接口，并可选择智能体当前模型。
@@ -135,7 +136,7 @@ curl -X POST -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localh
 
 设备清单支持 `source=mock|database|auto`。显式请求 `GET /api/devices?source=database` 时，后端会初始化 `device_registry` 表；如果表为空，会用当前安全种子设备填充。未知负载智能插座和报警器仍保持高风险或禁止状态，不会因为进入数据库而变成可控设备。
 
-MQTT/HTTP 消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。ESP32 固件见 `firmware/esp32-room-node`，默认只发布遥测，不接收设备控制指令；未接入或读取失败的传感器不会伪造成正常读数。
+统一设备接入接口见 `docs/device-connection-interface.md`，传感器消息协议见 `docs/device-protocol.md`，可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`。ESP32 固件见 `firmware/esp32-room-node`，默认只发布遥测，不接收设备控制指令；未接入或读取失败的传感器不会伪造成正常读数。
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd` 下的 systemd 模板运行 `aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor`。服务读取私有 `.dashboard-env` 中的会话密钥、内部服务令牌、`DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`；访问口令仍固定为 `admin123`。环境文件示例见 `infra/dashboard-env.example`，具体安装和重启步骤见 `infra/systemd/README.md`。
 
@@ -215,6 +216,7 @@ npm run verify:release
 
 - 数据由确定性模拟器根据时间窗口生成。
 - 数据库和 MQTT 已有本地开发骨架；公开演示默认仍使用模拟数据，控制台总览、趋势页、Agent 和规则评估可手动切换到数据库遥测。
+- 真实设备接入使用 `aiot.v1` 统一协议；设备可注册、心跳、声明遥测能力和批量上报 readings，但不能通过自注册获得控制权限。
 - 规则、审计日志、智能体对话记录和模拟设备状态保存在 `services/api/.local/`；配置数据库后，设备风险元数据会保存在 `device_registry` 表，智能体对话记录保留最近 30 天，可在页面手动删除单条记录。
 - 智能体可以建议自动化规则，但创建规则必须经过用户确认。
 - 已确认规则可在 `/rules` 启用、暂停和手动评估，并可选择模拟数据或数据库遥测；V0 支持指标阈值、人体存在和简单时间提醒条件，只触发提醒类动作，不执行设备控制，并记录触发次数与最近触发时间。

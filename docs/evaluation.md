@@ -11,6 +11,7 @@
 - 总览页显示遥测链路状态，包括数据库连接、样本数、最新入库时间和 Timescale 状态。
 - 总览页显示传感器健康状态，能区分正常、过期、异常、离线和不可用。
 - MQTT/HTTP 设备消息协议有文档说明，示例 payload 能被当前解析器接受。
+- 统一设备连接接口支持注册、心跳、能力声明和版本化遥测；新设备默认只读不可控，不能通过自注册提升权限。
 - ESP32 固件只发布遥测，不订阅控制 topic，真实密钥配置文件被 Git 忽略；SHT31、BH1750、SCD40 / SCD41 和 GPIO 存在传感器读取路径已实现，未接入传感器不会伪造成正常读数。
 - 智能体可以基于工具证据回答“今天二氧化碳情况怎么样？”。
 - 智能体可以通过 `summarize_daily_environment` 总结当天环境变化，并指出空气最差的大致时间。
@@ -56,7 +57,7 @@ npm run verify:release
 
 `npm run smoke:mqtt` 面向已部署服务器，会向 MQTT broker 发布一条唯一设备编号的 batch payload，并通过 `/api/telemetry/status` 验证 `aiot-mqtt-ingestor` 已经把该消息以 `source=mqtt` 写入 PostgreSQL / TimescaleDB。该脚本用于证明 MQTT、入站服务、数据库和 API 四段链路真实串通。
 
-`npm run smoke:server` 面向已部署服务器，会验证公开健康检查、固定访问口令 `admin123`、私有 API 拒绝匿名访问、内部服务令牌、结构化异常事件、HTTP 遥测入站、数据库遥测状态、审计筛选、高风险控制拒绝和智能体工具回复。脚本默认读取当前目录 `.dashboard-env` 中的 `AIOT_INTERNAL_API_TOKEN`，也可以通过环境变量显式传入。
+`npm run smoke:server` 面向已部署服务器，会验证公开健康检查、固定访问口令 `admin123`、私有 API 拒绝匿名访问、内部服务令牌、结构化异常事件、HTTP 遥测入站、数据库遥测状态、统一设备注册/心跳/遥测接口、审计筛选、高风险控制拒绝和智能体工具回复。脚本默认读取当前目录 `.dashboard-env` 中的 `AIOT_INTERNAL_API_TOKEN`，也可以通过环境变量显式传入。
 
 `npm run eval:agent-safety` 面向已部署 API，会直接调用 `/api/agent/chat`，验证提示注入、高风险控制、只读设备状态、规则草案确认和普通环境查询是否都遵守工具与策略边界。详细用例见 `docs/agent-safety-evaluation.md`。
 

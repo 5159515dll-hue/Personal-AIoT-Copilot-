@@ -36,10 +36,14 @@ fi
 COOKIE_JAR="$(mktemp)"
 BODY_FILE="$(mktemp)"
 INGEST_BODY="$(mktemp)"
-trap 'rm -f "$COOKIE_JAR" "$BODY_FILE" "$INGEST_BODY"' EXIT
+DEVICE_CONNECT_BODY="$(mktemp)"
+DEVICE_HEARTBEAT_BODY="$(mktemp)"
+DEVICE_TELEMETRY_BODY="$(mktemp)"
+trap 'rm -f "$COOKIE_JAR" "$BODY_FILE" "$INGEST_BODY" "$DEVICE_CONNECT_BODY" "$DEVICE_HEARTBEAT_BODY" "$DEVICE_TELEMETRY_BODY"' EXIT
 
 SMOKE_DEVICE_ID="${SMOKE_DEVICE_ID:-room_node_http_smoke}"
 UNKNOWN_DEVICE_ID="${UNKNOWN_DEVICE_ID:-unknown_plug_smoke}"
+EMBEDDED_DEVICE_ID="${EMBEDDED_DEVICE_ID:-esp32_connection_smoke}"
 
 pass() {
   printf '通过：%s\n' "$1"
@@ -158,6 +162,84 @@ expect_status "$status" "200" "遥测链路状态可读取"
 assert_json "$BODY_FILE" 'payload["configured"] and payload["connected"] and payload["total_readings"] >= 6' "数据库遥测链路已连接且有数据"
 assert_json "$BODY_FILE" 'any(item["source"] == "http" and item["total_readings"] >= 6 for item in payload["sources"])' "遥测来源统计包含 HTTP"
 assert_json "$BODY_FILE" "any(item[\"device_id\"] == \"$SMOKE_DEVICE_ID\" for item in payload[\"devices\"])" "最近设备统计包含烟测设备"
+
+cat > "$DEVICE_CONNECT_BODY" <<JSON
+{
+  "device_id": "$EMBEDDED_DEVICE_ID",
+  "display_name": "ESP32 连接烟测节点",
+  "device_type": "esp32",
+  "transport": "mqtt",
+  "protocol_version": "aiot.v1",
+  "firmware_version": "0.2.0",
+  "hardware_revision": "esp32-s3-devkit",
+  "location": "server-smoke",
+  "capabilities": [
+    { "kind": "telemetry", "metrics": ["temperature", "humidity", "co2", "noise"] }
+  ]
+}
+JSON
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -X POST "$API_BASE_URL/api/device-connections/register" \
+  -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  --data-binary "@$DEVICE_CONNECT_BODY")"
+expect_status "$status" "200" "统一设备连接注册接口可用"
+assert_json "$BODY_FILE" "payload[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and payload[\"device_type\"] == \"esp32\" and payload[\"protocol_version\"] == \"aiot.v1\"" "设备注册响应结构正确"
+
+cat > "$DEVICE_HEARTBEAT_BODY" <<JSON
+{
+  "status": "online",
+  "transport": "mqtt",
+  "protocol_version": "aiot.v1",
+  "firmware_version": "0.2.0",
+  "uptime_seconds": 3600,
+  "battery_percent": 91.5,
+  "rssi_dbm": -58,
+  "message_id": "$EMBEDDED_DEVICE_ID-hb",
+  "sequence": 10
+}
+JSON
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -X POST "$API_BASE_URL/api/device-connections/$EMBEDDED_DEVICE_ID/heartbeat" \
+  -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  --data-binary "@$DEVICE_HEARTBEAT_BODY")"
+expect_status "$status" "200" "统一设备心跳接口可用"
+assert_json "$BODY_FILE" "payload[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and payload[\"online_state\"] == \"online\"" "设备心跳响应结构正确"
+
+cat > "$DEVICE_TELEMETRY_BODY" <<JSON
+{
+  "protocol_version": "aiot.v1",
+  "message_id": "$EMBEDDED_DEVICE_ID-telemetry",
+  "sequence": 11,
+  "firmware_version": "0.2.0",
+  "readings": [
+    { "metric": "temperature", "value": 25.8 },
+    { "metric": "humidity", "value": 47.9 },
+    { "metric": "co2", "value": 940 },
+    { "metric": "noise", "value": 49.1 }
+  ],
+  "capabilities": [
+    { "kind": "telemetry", "metrics": ["temperature", "humidity", "co2", "noise"] }
+  ]
+}
+JSON
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -X POST "$API_BASE_URL/api/device-connections/$EMBEDDED_DEVICE_ID/telemetry" \
+  -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  --data-binary "@$DEVICE_TELEMETRY_BODY")"
+expect_status "$status" "200" "统一设备遥测接口可用"
+assert_json "$BODY_FILE" "payload[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and payload[\"accepted\"] == 4 and payload[\"stored\"] == 4" "设备遥测响应结构正确"
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  "$API_BASE_URL/api/device-connections?limit=50")"
+expect_status "$status" "200" "设备连接列表可读取"
+assert_json "$BODY_FILE" "any(item[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and item[\"protocol_version\"] == \"aiot.v1\" for item in payload)" "设备连接列表包含烟测设备"
 
 status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
   -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \

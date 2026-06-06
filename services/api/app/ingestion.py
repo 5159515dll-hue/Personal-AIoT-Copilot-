@@ -20,12 +20,13 @@ DEFAULT_UNITS = {
 
 
 def readings_from_request(request: SensorIngestRequest) -> list[SensorReading]:
+    inherited_timestamp = request.sent_at
     return [
         SensorReading(
             metric=item.metric,
             value=item.value,
             unit=item.unit or DEFAULT_UNITS[item.metric],
-            timestamp=item.timestamp or now(),
+            timestamp=item.timestamp or inherited_timestamp or now(),
             device_id=request.device_id,
             quality=item.quality,
         )
@@ -38,6 +39,7 @@ def parse_mqtt_payload(payload: bytes | str) -> SensorIngestRequest:
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("MQTT 消息必须是 JSON object")
+    data = _normalize_device_envelope(data)
 
     if "readings" in data:
         timestamp = data.get("timestamp")
@@ -81,6 +83,24 @@ def _expand_metric_map(data: dict[str, Any]) -> list[SensorValueInput]:
                 )
             )
     return readings
+
+
+def _normalize_device_envelope(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    device = normalized.get("device")
+    if isinstance(device, dict):
+        normalized.setdefault("device_id", device.get("id") or device.get("device_id"))
+        normalized.setdefault("device_type", device.get("type") or device.get("device_type"))
+        normalized.setdefault("firmware_version", device.get("firmware_version"))
+        normalized.setdefault("hardware_revision", device.get("hardware_revision"))
+        normalized.setdefault("capabilities", device.get("capabilities") or [])
+    telemetry = normalized.get("telemetry")
+    if isinstance(telemetry, dict):
+        normalized.setdefault("readings", telemetry.get("readings"))
+        normalized.setdefault("timestamp", telemetry.get("timestamp"))
+    normalized.setdefault("protocol_version", normalized.get("version") or "aiot.v1")
+    normalized.setdefault("sent_at", normalized.get("sent_at") or normalized.get("timestamp"))
+    return normalized
 
 
 def _parse_timestamp(value: Any) -> datetime | None:

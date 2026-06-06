@@ -1,6 +1,6 @@
 # 设备消息协议
 
-当前版本已经包含 ESP32 房间传感器节点固件、MQTT 入站服务和 HTTP 调试入站协议。该文档定义传感器消息格式；真实硬件、脚本和服务器烟测都应保持这些字段稳定。
+当前版本已经包含 ESP32 房间传感器节点固件、MQTT 入站服务和 HTTP 调试入站协议。该文档定义传感器消息格式；真实硬件、脚本和服务器烟测都应保持这些字段稳定。设备注册、心跳、能力声明和高并发连接策略见 `docs/device-connection-interface.md`。
 
 ## MQTT Topic
 
@@ -10,6 +10,13 @@
 aiot/room/+/telemetry
 ```
 
+推荐新设备使用版本化 topic：
+
+```text
+aiot/v1/devices/{device_id}/telemetry
+aiot/v1/devices/{device_id}/heartbeat
+```
+
 示例：
 
 ```text
@@ -17,6 +24,8 @@ aiot/room/001/telemetry
 ```
 
 MQTT 入站服务会从消息体读取 `device_id`，不会从 topic 反推设备编号。这样可以让 topic 只负责路由，设备身份仍由 payload 明确声明。
+
+标准 `aiot.v1` envelope 可以携带 `message_id`、`sequence`、`sent_at`、设备类型、固件版本和能力声明；解析器仍兼容旧 batch、单指标和 metric map 格式。
 
 ## 指标
 
@@ -96,6 +105,12 @@ POST /api/ingest/sensor-readings
 X-AIoT-Internal-Token: <内部服务令牌>
 ```
 
+推荐真实设备或边缘网关使用版本化接口：
+
+```text
+POST /api/device-connections/{device_id}/telemetry
+```
+
 请求体与 batch 格式一致：
 
 ```json
@@ -133,6 +148,7 @@ curl -X POST http://localhost:8000/api/ingest/sensor-readings \
 ## 入库语义
 
 - 入站服务会初始化 `sensor_readings` 表。
+- 入站服务会同步更新 `device_connections` 表，记录设备类型、传输方式、固件版本、能力声明、最近消息编号和最后在线时间。
 - PostgreSQL 可直接使用；如果 TimescaleDB 扩展可用，会自动尝试创建 hypertable。
 - 每条读数会记录 `time`、`received_at`、`device_id`、`metric`、`value`、`unit`、`quality` 和 `source`。
 - 当前版本不从遥测 payload 执行任何设备控制动作。

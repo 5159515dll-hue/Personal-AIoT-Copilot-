@@ -67,16 +67,104 @@ class SensorValueInput(BaseModel):
     quality: Literal["ok", "stale", "anomaly"] = "ok"
 
 
+class DeviceCapability(BaseModel):
+    kind: Literal["telemetry", "control", "gateway", "diagnostic"] = "telemetry"
+    metrics: list[Metric] = Field(default_factory=list, max_length=16)
+    description: str | None = Field(default=None, max_length=160)
+
+
 class SensorIngestRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=80)
     readings: list[SensorValueInput] = Field(min_length=1, max_length=64)
     source: Literal["http", "mqtt", "test"] = "http"
+    protocol_version: str = Field(default="aiot.v1", max_length=32)
+    message_id: str | None = Field(default=None, max_length=120)
+    sequence: int | None = Field(default=None, ge=0)
+    sent_at: datetime | None = None
+    device_type: str | None = Field(default=None, max_length=40)
+    firmware_version: str | None = Field(default=None, max_length=80)
+    hardware_revision: str | None = Field(default=None, max_length=80)
+    capabilities: list[DeviceCapability] = Field(default_factory=list, max_length=32)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SensorIngestResponse(BaseModel):
     accepted: int
     stored: int
     source: str
+    message: str
+
+
+class DeviceRegistrationRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=80)
+    display_name: str | None = Field(default=None, max_length=120)
+    device_type: Literal["esp32", "stm32", "raspberry_pi", "linux_gateway", "sensor_node", "other"] = "other"
+    transport: Literal["mqtt", "http", "serial_gateway", "edge_gateway"] = "mqtt"
+    protocol_version: str = Field(default="aiot.v1", max_length=32)
+    firmware_version: str | None = Field(default=None, max_length=80)
+    hardware_revision: str | None = Field(default=None, max_length=80)
+    location: str = Field(default="unknown", max_length=80)
+    capabilities: list[DeviceCapability] = Field(default_factory=list, max_length=32)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceHeartbeatRequest(BaseModel):
+    status: Literal["online", "degraded", "offline"] = "online"
+    transport: Literal["mqtt", "http", "serial_gateway", "edge_gateway"] = "http"
+    protocol_version: str = Field(default="aiot.v1", max_length=32)
+    firmware_version: str | None = Field(default=None, max_length=80)
+    uptime_seconds: int | None = Field(default=None, ge=0)
+    battery_percent: float | None = Field(default=None, ge=0, le=100)
+    rssi_dbm: float | None = None
+    message_id: str | None = Field(default=None, max_length=120)
+    sequence: int | None = Field(default=None, ge=0)
+    sent_at: datetime | None = None
+    metrics: dict[str, float | int | str | bool] = Field(default_factory=dict)
+
+
+class DeviceTelemetryRequest(BaseModel):
+    protocol_version: str = Field(default="aiot.v1", max_length=32)
+    message_id: str | None = Field(default=None, max_length=120)
+    sequence: int | None = Field(default=None, ge=0)
+    sent_at: datetime | None = None
+    readings: list[SensorValueInput] = Field(min_length=1, max_length=64)
+    firmware_version: str | None = Field(default=None, max_length=80)
+    capabilities: list[DeviceCapability] = Field(default_factory=list, max_length=32)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceTelemetryResponse(BaseModel):
+    device_id: str
+    accepted: int
+    stored: int
+    source: Literal["http", "mqtt", "test"]
+    message_id: str | None = None
+    received_at: datetime
+    message: str
+
+
+class DeviceConnectionRecord(BaseModel):
+    device_id: str
+    display_name: str
+    device_type: str
+    transport: str
+    protocol_version: str
+    firmware_version: str | None = None
+    hardware_revision: str | None = None
+    location: str
+    capabilities: list[DeviceCapability] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    online_state: DeviceState = DeviceState.unknown
+    last_seen_at: datetime | None = None
+    last_message_id: str | None = None
+    last_sequence: int | None = None
+    updated_at: datetime
+
+
+class DeviceHeartbeatResponse(BaseModel):
+    device_id: str
+    online_state: DeviceState
+    last_seen_at: datetime
     message: str
 
 

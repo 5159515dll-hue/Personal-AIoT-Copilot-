@@ -10,6 +10,7 @@
     -> HTTP 传感器写入接口
     -> MQTT 入站服务
     -> PostgreSQL / TimescaleDB
+    -> 设备连接注册与心跳
     -> 智能体工具层
     -> 策略引擎
     -> 本地规则与审计日志
@@ -25,8 +26,9 @@
 - `services/api/app/auth.py`：私有 API 登录 cookie 和内部服务令牌校验。
 - `services/api/app/mock_data.py`：确定性传感器数据和设备注册表种子数据。
 - `services/api/app/device_adapter.py`：设备注册表适配器；有数据库时读取 `device_registry`，无数据库时回退到模拟清单，并继续持久化模拟控制状态。
+- `services/api/app/device_connections.py`：统一设备连接服务，处理注册、心跳、能力声明和遥测入站后的连接状态更新。
 - `services/api/app/ingestion.py`：HTTP 与 MQTT payload 转换为统一传感器读数。
-- `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、传感器读写、设备注册表读写和查询。
+- `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、传感器读写、设备注册表、设备连接表读写和查询。
 - `services/api/app/anomaly_events.py`：从当前读数、历史曲线和传感器健康状态推导结构化异常事件。
 - `services/api/app/agent_tools.py`：工具优先的智能体编排。
 - `services/api/app/policy.py`：风险分级、确认要求和拒绝逻辑。
@@ -58,7 +60,8 @@
 7. `POST /api/rules/evaluate?source=database` 使用数据库最新房间状态评估已确认规则。
 8. `/dashboard`、`/trends`、`/agent` 和 `/rules` 可选择 database 数据源，用入库最新读数和历史曲线展示、回答环境问题或评估提醒规则。
 9. `GET /api/devices?source=database` 会初始化并读取 `device_registry` 表；表为空时用当前安全种子设备填充，未知负载插座和报警器仍保持不可控。
-10. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
+10. `POST /api/device-connections/register`、`/heartbeat` 和 `/{device_id}/telemetry` 提供统一设备接入接口，ESP32、STM32、树莓派和 Linux 网关都使用 `aiot.v1` envelope。
+11. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
 
 ## ESP32 固件边界
 
@@ -71,5 +74,6 @@
 - 烧录并接线真实 ESP32 节点，让真实传感器数据持续写入数据库。
 - 基于真实硬件运行长时间离线、乱序和异常读数测试。
 - 为数据库设备注册表增加后台管理界面、真实硬件绑定字段和设备下线流程。
+- 为设备连接表增加去重窗口、乱序补偿和大规模 broker 分片压测。
 - 用 PostgreSQL 或 TimescaleDB 替换本地规则与审计 JSON 持久化。
 - 保持智能体、策略和审计接口稳定。

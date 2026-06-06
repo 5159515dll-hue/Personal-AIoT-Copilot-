@@ -6,6 +6,8 @@ from datetime import datetime
 
 from app.models import (
     Device,
+    DeviceCapability,
+    DeviceConnectionRecord,
     DeviceState,
     Metric,
     RiskLevel,
@@ -55,6 +57,32 @@ CREATE INDEX IF NOT EXISTS idx_device_registry_risk
     ON device_registry (risk_level);
 """
 
+DEVICE_CONNECTION_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS device_connections (
+    device_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    device_type TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    protocol_version TEXT NOT NULL,
+    firmware_version TEXT,
+    hardware_revision TEXT,
+    location TEXT NOT NULL,
+    capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    online_state TEXT NOT NULL DEFAULT 'unknown',
+    last_seen_at TIMESTAMPTZ,
+    last_message_id TEXT,
+    last_sequence BIGINT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_connections_last_seen
+    ON device_connections (last_seen_at DESC NULLS LAST);
+
+CREATE INDEX IF NOT EXISTS idx_device_connections_type
+    ON device_connections (device_type);
+"""
+
 
 def database_url() -> str | None:
     return os.getenv("DATABASE_URL")
@@ -67,6 +95,7 @@ def init_db(url: str | None = None) -> None:
         _try_enable_timescale(conn)
         conn.execute(SCHEMA_SQL)
         conn.execute(DEVICE_REGISTRY_SCHEMA_SQL)
+        conn.execute(DEVICE_CONNECTION_SCHEMA_SQL)
         _try_create_hypertable(conn)
 
 
@@ -75,6 +104,13 @@ def init_device_registry_db(url: str | None = None) -> None:
     db_url = _require_url(url)
     with psycopg.connect(db_url, autocommit=True) as conn:
         conn.execute(DEVICE_REGISTRY_SCHEMA_SQL)
+
+
+def init_device_connections_db(url: str | None = None) -> None:
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        conn.execute(DEVICE_CONNECTION_SCHEMA_SQL)
 
 
 def seed_device_registry_db(
@@ -174,6 +210,182 @@ def get_device_registry_db(
             (device_id,),
         ).fetchone()
     return _row_to_device(row) if row else None
+
+
+def upsert_device_connection_db(
+    record: DeviceConnectionRecord,
+    *,
+    url: str | None = None,
+    ensure_schema: bool = True,
+) -> DeviceConnectionRecord:
+    if ensure_schema:
+        init_device_connections_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            INSERT INTO device_connections (
+                device_id,
+                display_name,
+                device_type,
+                transport,
+                protocol_version,
+                firmware_version,
+                hardware_revision,
+                location,
+                capabilities,
+                metadata,
+                online_state,
+                last_seen_at,
+                last_message_id,
+                last_sequence,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, now())
+            ON CONFLICT (device_id) DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                device_type = EXCLUDED.device_type,
+                transport = EXCLUDED.transport,
+                protocol_version = EXCLUDED.protocol_version,
+                firmware_version = EXCLUDED.firmware_version,
+                hardware_revision = EXCLUDED.hardware_revision,
+                location = EXCLUDED.location,
+                capabilities = EXCLUDED.capabilities,
+                metadata = EXCLUDED.metadata,
+                online_state = EXCLUDED.online_state,
+                last_seen_at = EXCLUDED.last_seen_at,
+                last_message_id = EXCLUDED.last_message_id,
+                last_sequence = EXCLUDED.last_sequence,
+                updated_at = now()
+            RETURNING
+                device_id,
+                display_name,
+                device_type,
+                transport,
+                protocol_version,
+                firmware_version,
+                hardware_revision,
+                location,
+                capabilities,
+                metadata,
+                online_state,
+                last_seen_at,
+                last_message_id,
+                last_sequence,
+                updated_at
+            """,
+            _device_connection_params(record),
+        ).fetchone()
+    return _row_to_device_connection(row)
+
+
+def get_device_connection_db(
+    device_id: str,
+    *,
+    url: str | None = None,
+) -> DeviceConnectionRecord | None:
+    init_device_connections_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                device_id,
+                display_name,
+                device_type,
+                transport,
+                protocol_version,
+                firmware_version,
+                hardware_revision,
+                location,
+                capabilities,
+                metadata,
+                online_state,
+                last_seen_at,
+                last_message_id,
+                last_sequence,
+                updated_at
+            FROM device_connections
+            WHERE device_id = %s
+            """,
+            (device_id,),
+        ).fetchone()
+    return _row_to_device_connection(row) if row else None
+
+
+def list_device_connections_db(
+    *,
+    url: str | None = None,
+    limit: int = 500,
+) -> list[DeviceConnectionRecord]:
+    init_device_connections_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                device_id,
+                display_name,
+                device_type,
+                transport,
+                protocol_version,
+                firmware_version,
+                hardware_revision,
+                location,
+                capabilities,
+                metadata,
+                online_state,
+                last_seen_at,
+                last_message_id,
+                last_sequence,
+                updated_at
+            FROM device_connections
+            ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC, device_id ASC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+    return [_row_to_device_connection(row) for row in rows]
+
+
+def record_device_heartbeat_db(
+    device_id: str,
+    *,
+    transport: str,
+    protocol_version: str,
+    firmware_version: str | None,
+    status: str,
+    last_seen_at: datetime,
+    message_id: str | None = None,
+    sequence: int | None = None,
+    metrics: dict | None = None,
+    url: str | None = None,
+) -> DeviceConnectionRecord:
+    existing = get_device_connection_db(device_id, url=url)
+    record = DeviceConnectionRecord(
+        device_id=device_id,
+        display_name=existing.display_name if existing else device_id,
+        device_type=existing.device_type if existing else "other",
+        transport=transport or (existing.transport if existing else "http"),
+        protocol_version=protocol_version or (existing.protocol_version if existing else "aiot.v1"),
+        firmware_version=firmware_version or (existing.firmware_version if existing else None),
+        hardware_revision=existing.hardware_revision if existing else None,
+        location=existing.location if existing else "unknown",
+        capabilities=existing.capabilities if existing else [],
+        metadata={**(existing.metadata if existing else {}), "heartbeat": metrics or {}},
+        online_state=_heartbeat_status_to_device_state(status),
+        last_seen_at=last_seen_at,
+        last_message_id=message_id,
+        last_sequence=sequence,
+        updated_at=last_seen_at,
+    )
+    return upsert_device_connection_db(record, url=url, ensure_schema=False)
 
 
 def upsert_device_registry_db(
@@ -463,6 +675,30 @@ def _row_to_device(row: dict) -> Device:
     )
 
 
+def _row_to_device_connection(row: dict) -> DeviceConnectionRecord:
+    return DeviceConnectionRecord(
+        device_id=row["device_id"],
+        display_name=row["display_name"],
+        device_type=row["device_type"],
+        transport=row["transport"],
+        protocol_version=row["protocol_version"],
+        firmware_version=row["firmware_version"],
+        hardware_revision=row["hardware_revision"],
+        location=row["location"],
+        capabilities=[
+            DeviceCapability.model_validate(item)
+            for item in _json_array(row["capabilities"])
+            if isinstance(item, dict)
+        ],
+        metadata=_json_object(row["metadata"]),
+        online_state=DeviceState(row["online_state"]),
+        last_seen_at=row["last_seen_at"],
+        last_message_id=row["last_message_id"],
+        last_sequence=row["last_sequence"],
+        updated_at=row["updated_at"],
+    )
+
+
 def bucket_sensor_readings(readings: list[SensorReading], bucket: str) -> list[SensorReading]:
     bucket_to_delta(bucket)
     grouped: dict[datetime, list[SensorReading]] = {}
@@ -557,6 +793,33 @@ def _upsert_device_rows(conn, devices: list[Device]) -> int:
     return len(rows)
 
 
+def _device_connection_params(record: DeviceConnectionRecord) -> tuple:
+    return (
+        record.device_id,
+        record.display_name,
+        record.device_type,
+        record.transport,
+        record.protocol_version,
+        record.firmware_version,
+        record.hardware_revision,
+        record.location,
+        json.dumps([item.model_dump(mode="json") for item in record.capabilities], ensure_ascii=False),
+        json.dumps(record.metadata, ensure_ascii=False, default=str),
+        record.online_state.value,
+        record.last_seen_at,
+        record.last_message_id,
+        record.last_sequence,
+    )
+
+
+def _heartbeat_status_to_device_state(status: str) -> DeviceState:
+    if status == "offline":
+        return DeviceState.offline
+    if status in {"online", "degraded"}:
+        return DeviceState.online
+    return DeviceState.unknown
+
+
 def _json_object(value) -> dict:
     if isinstance(value, dict):
         return value
@@ -567,6 +830,18 @@ def _json_object(value) -> dict:
             return {}
         return decoded if isinstance(decoded, dict) else {}
     return {}
+
+
+def _json_array(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return decoded if isinstance(decoded, list) else []
+    return []
 
 
 def _import_psycopg():

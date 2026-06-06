@@ -8,6 +8,7 @@ import sys
 from paho.mqtt import client as mqtt
 
 from app.database import init_db, insert_sensor_readings
+from app.device_connections import record_ingest_connection
 from app.ingestion import readings_from_request, safe_parse_mqtt_payload
 
 LOGGER = logging.getLogger("aiot.mqtt_ingestor")
@@ -44,6 +45,10 @@ def main() -> int:
             return
         readings = readings_from_request(request)
         stored = insert_sensor_readings(readings, source="mqtt")
+        try:
+            record_ingest_connection(request, transport="mqtt")
+        except Exception as exc:
+            LOGGER.warning("MQTT 遥测已写入，但设备连接状态更新失败 device_id=%s error=%s", request.device_id, exc)
         LOGGER.info(
             "已写入 MQTT 遥测 topic=%s device_id=%s stored=%s",
             message.topic,
