@@ -7,7 +7,7 @@ import sys
 
 from paho.mqtt import client as mqtt
 
-from app.database import init_db, insert_sensor_readings
+from app.database import init_db, insert_sensor_readings_idempotent
 from app.device_connections import record_ingest_connection
 from app.ingestion import readings_from_request, safe_parse_mqtt_payload
 
@@ -44,7 +44,14 @@ def main() -> int:
             LOGGER.warning("丢弃非法 MQTT 消息 topic=%s error=%s", message.topic, error)
             return
         readings = readings_from_request(request)
-        stored = insert_sensor_readings(readings, source="mqtt")
+        stored = insert_sensor_readings_idempotent(
+            readings,
+            source="mqtt",
+            device_id=request.device_id,
+            message_id=request.message_id,
+            sequence=request.sequence,
+            protocol_version=request.protocol_version,
+        )
         try:
             record_ingest_connection(request, transport="mqtt")
         except Exception as exc:

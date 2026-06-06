@@ -42,9 +42,10 @@ DEVICE_TELEMETRY_BODY="$(mktemp)"
 DEVICE_OLD_HEARTBEAT_BODY="$(mktemp)"
 trap 'rm -f "$COOKIE_JAR" "$BODY_FILE" "$INGEST_BODY" "$DEVICE_CONNECT_BODY" "$DEVICE_HEARTBEAT_BODY" "$DEVICE_TELEMETRY_BODY" "$DEVICE_OLD_HEARTBEAT_BODY"' EXIT
 
-SMOKE_DEVICE_ID="${SMOKE_DEVICE_ID:-room_node_http_smoke}"
-UNKNOWN_DEVICE_ID="${UNKNOWN_DEVICE_ID:-unknown_plug_smoke}"
-EMBEDDED_DEVICE_ID="${EMBEDDED_DEVICE_ID:-esp32_connection_smoke}"
+SMOKE_RUN_ID="${SMOKE_RUN_ID:-$(date +%s)}"
+SMOKE_DEVICE_ID="${SMOKE_DEVICE_ID:-room_node_http_smoke_$SMOKE_RUN_ID}"
+UNKNOWN_DEVICE_ID="${UNKNOWN_DEVICE_ID:-unknown_plug_smoke_$SMOKE_RUN_ID}"
+EMBEDDED_DEVICE_ID="${EMBEDDED_DEVICE_ID:-esp32_connection_smoke_$SMOKE_RUN_ID}"
 
 pass() {
   printf '通过：%s\n' "$1"
@@ -235,6 +236,14 @@ status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
   --data-binary "@$DEVICE_TELEMETRY_BODY")"
 expect_status "$status" "200" "统一设备遥测接口可用"
 assert_json "$BODY_FILE" "payload[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and payload[\"accepted\"] == 4 and payload[\"stored\"] == 4" "设备遥测响应结构正确"
+
+status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+  -X POST "$API_BASE_URL/api/device-connections/$EMBEDDED_DEVICE_ID/telemetry" \
+  -H "content-type: application/json" \
+  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
+  --data-binary "@$DEVICE_TELEMETRY_BODY")"
+expect_status "$status" "200" "重复设备遥测消息可被幂等处理"
+assert_json "$BODY_FILE" "payload[\"device_id\"] == \"$EMBEDDED_DEVICE_ID\" and payload[\"accepted\"] == 4 and payload[\"stored\"] == 0" "重复设备遥测不会重复写入时间序列"
 
 status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
   -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \

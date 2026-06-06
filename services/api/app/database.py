@@ -35,6 +35,22 @@ CREATE INDEX IF NOT EXISTS idx_sensor_readings_metric_time
 
 CREATE INDEX IF NOT EXISTS idx_sensor_readings_device_time
     ON sensor_readings (device_id, time DESC);
+
+CREATE TABLE IF NOT EXISTS ingest_messages (
+    source TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    sequence BIGINT,
+    protocol_version TEXT,
+    reading_count INTEGER NOT NULL DEFAULT 0,
+    stored_count INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (source, device_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_messages_device_seen
+    ON ingest_messages (device_id, last_seen_at DESC);
 """
 
 DEVICE_REGISTRY_SCHEMA_SQL = """
@@ -535,29 +551,79 @@ def insert_sensor_readings(
 
     psycopg = _import_psycopg()
     db_url = _require_url(url)
-    rows = [
-        (
-            ensure_tz(item.timestamp),
-            now(),
-            item.device_id,
-            item.metric.value,
-            item.value,
-            item.unit,
-            item.quality,
-            source,
-        )
-        for item in readings
-    ]
+    rows = _sensor_reading_rows(readings, source)
     with psycopg.connect(db_url, autocommit=True) as conn:
         with conn.cursor() as cur:
-            cur.executemany(
-                """
-                INSERT INTO sensor_readings
-                    (time, received_at, device_id, metric, value, unit, quality, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                rows,
+            _insert_sensor_reading_rows(cur, rows)
+    return len(rows)
+
+
+def insert_sensor_readings_idempotent(
+    readings: list[SensorReading],
+    *,
+    source: str,
+    device_id: str,
+    message_id: str | None,
+    sequence: int | None = None,
+    protocol_version: str | None = None,
+    url: str | None = None,
+    ensure_schema: bool = False,
+) -> int:
+    if not message_id:
+        return insert_sensor_readings(readings, source=source, url=url, ensure_schema=ensure_schema)
+    if ensure_schema:
+        init_db(url)
+    if not readings:
+        return 0
+
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    rows = _sensor_reading_rows(readings, source)
+    with psycopg.connect(db_url) as conn:
+        marker = conn.execute(
+            """
+            INSERT INTO ingest_messages (
+                source,
+                device_id,
+                message_id,
+                sequence,
+                protocol_version,
+                reading_count,
+                stored_count,
+                first_seen_at,
+                last_seen_at
             )
+            VALUES (%s, %s, %s, %s, %s, %s, 0, now(), now())
+            ON CONFLICT (source, device_id, message_id) DO NOTHING
+            RETURNING message_id
+            """,
+            (source, device_id, message_id, sequence, protocol_version, len(readings)),
+        ).fetchone()
+        if marker is None:
+            conn.execute(
+                """
+                UPDATE ingest_messages
+                SET last_seen_at = now()
+                WHERE source = %s
+                  AND device_id = %s
+                  AND message_id = %s
+                """,
+                (source, device_id, message_id),
+            )
+            return 0
+
+        with conn.cursor() as cur:
+            _insert_sensor_reading_rows(cur, rows)
+        conn.execute(
+            """
+            UPDATE ingest_messages
+            SET stored_count = %s
+            WHERE source = %s
+              AND device_id = %s
+              AND message_id = %s
+            """,
+            (len(rows), source, device_id, message_id),
+        )
     return len(rows)
 
 
@@ -890,6 +956,33 @@ def _device_connection_params(record: DeviceConnectionRecord) -> tuple:
         record.last_seen_at,
         record.last_message_id,
         record.last_sequence,
+    )
+
+
+def _sensor_reading_rows(readings: list[SensorReading], source: str) -> list[tuple]:
+    return [
+        (
+            ensure_tz(item.timestamp),
+            now(),
+            item.device_id,
+            item.metric.value,
+            item.value,
+            item.unit,
+            item.quality,
+            source,
+        )
+        for item in readings
+    ]
+
+
+def _insert_sensor_reading_rows(cur, rows: list[tuple]) -> None:
+    cur.executemany(
+        """
+        INSERT INTO sensor_readings
+            (time, received_at, device_id, metric, value, unit, quality, source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        rows,
     )
 
 

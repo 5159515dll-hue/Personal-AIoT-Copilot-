@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Literal
 from urllib.parse import urljoin
 
@@ -30,6 +31,7 @@ from app.time_utils import now
 
 config_store = JsonListStore("model_config.json", ModelConfig)
 active_selection_store = JsonListStore("active_model_selection.json", ActiveModelSelection)
+DEFAULT_AGENT_MODEL_TIMEOUT_SECONDS = 12.0
 
 AGENT_SYSTEM_PROMPT = """你是“个人空间智能物联助手”的受约束分析层。你不能直接控制设备，也不能绕过策略引擎。
 
@@ -559,10 +561,21 @@ def _openai_agent_payload(provider_id: str, model: str, prompt: str) -> dict[str
 
 
 async def _call_agent_model(config: ModelConfig, prompt: str) -> str:
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=_agent_model_timeout_seconds()) as client:
         if config.protocol == ProviderProtocol.openai:
             return await _openai_agent_completion(client, config, prompt)
         return await _anthropic_agent_completion(client, config, prompt)
+
+
+def _agent_model_timeout_seconds() -> float:
+    raw = os.getenv("AIOT_AGENT_MODEL_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_AGENT_MODEL_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return DEFAULT_AGENT_MODEL_TIMEOUT_SECONDS
+    return max(1.0, timeout)
 
 
 def _agent_user_prompt(

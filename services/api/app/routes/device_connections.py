@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.audit import record_audit
-from app.database import insert_sensor_readings
+from app.database import insert_sensor_readings_idempotent
 from app.device_connections import (
     list_connections,
     record_heartbeat,
@@ -101,7 +101,15 @@ def ingest_device_telemetry(device_id: str, request: DeviceTelemetryRequest) -> 
     )
     readings = readings_from_request(ingest)
     try:
-        stored = insert_sensor_readings(readings, source="http", ensure_schema=True)
+        stored = insert_sensor_readings_idempotent(
+            readings,
+            source="http",
+            device_id=device_id,
+            message_id=request.message_id,
+            sequence=request.sequence,
+            protocol_version=request.protocol_version,
+            ensure_schema=True,
+        )
         record_ingest_connection(ingest, transport="http")
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -120,6 +128,9 @@ def ingest_device_telemetry(device_id: str, request: DeviceTelemetryRequest) -> 
             "stored": stored,
         },
     )
+    message = "设备遥测已写入时间序列数据库。"
+    if request.message_id and stored == 0:
+        message = "该设备遥测消息已处理过，未重复写入时间序列数据库。"
     return DeviceTelemetryResponse(
         device_id=device_id,
         accepted=len(readings),
@@ -127,5 +138,5 @@ def ingest_device_telemetry(device_id: str, request: DeviceTelemetryRequest) -> 
         source="http",
         message_id=request.message_id,
         received_at=now(),
-        message="设备遥测已写入时间序列数据库。",
+        message=message,
     )

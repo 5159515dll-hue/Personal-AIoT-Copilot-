@@ -31,6 +31,7 @@ from app.models import (
     DeviceConnectionRecord,
     DeviceState,
     Metric,
+    ModelConfig,
     ModelConfigRequest,
     PolicyDecision,
     PolicyResult,
@@ -606,16 +607,32 @@ def test_mqtt_metric_map_payload_expands_readings() -> None:
 def test_http_ingest_accepts_noise_metric_with_default_unit(monkeypatch) -> None:
     captured = {}
 
-    def fake_insert_sensor_readings(readings, *, source="http", ensure_schema=True):
+    def fake_insert_sensor_readings(
+        readings,
+        *,
+        source="http",
+        device_id=None,
+        message_id=None,
+        sequence=None,
+        protocol_version=None,
+        ensure_schema=True,
+    ):
         captured["readings"] = readings
         captured["source"] = source
+        captured["device_id"] = device_id
+        captured["message_id"] = message_id
+        captured["sequence"] = sequence
+        captured["protocol_version"] = protocol_version
         return len(readings)
 
-    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings", fake_insert_sensor_readings)
+    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings_idempotent", fake_insert_sensor_readings)
     response = client.post(
         "/api/ingest/sensor-readings",
         json={
             "device_id": "room_node_01",
+            "protocol_version": "aiot.v1",
+            "message_id": "room-node-message-1",
+            "sequence": 1,
             "readings": [
                 {"metric": "noise", "value": 48.5},
             ],
@@ -624,6 +641,34 @@ def test_http_ingest_accepts_noise_metric_with_default_unit(monkeypatch) -> None
     assert response.status_code == 200
     assert captured["readings"][0].metric == Metric.noise
     assert captured["readings"][0].unit == "dB"
+    assert captured["device_id"] == "room_node_01"
+    assert captured["message_id"] == "room-node-message-1"
+    assert captured["sequence"] == 1
+    assert captured["protocol_version"] == "aiot.v1"
+
+
+def test_http_ingest_reports_duplicate_message_without_rewriting(monkeypatch) -> None:
+    def fake_insert_sensor_readings(*args, **kwargs):
+        return 0
+
+    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings_idempotent", fake_insert_sensor_readings)
+    response = client.post(
+        "/api/ingest/sensor-readings",
+        json={
+            "device_id": "room_node_01",
+            "message_id": "room-node-duplicate",
+            "sequence": 7,
+            "readings": [
+                {"metric": "co2", "value": 880},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accepted"] == 1
+    assert payload["stored"] == 0
+    assert "已处理过" in payload["message"]
 
 
 def test_mqtt_reason_code_handles_paho_v2_reason_code_objects() -> None:
@@ -649,7 +694,7 @@ def test_http_ingest_reports_database_write_failure(monkeypatch) -> None:
     def broken_insert_sensor_readings(*args, **kwargs):
         raise ConnectionError("connection refused")
 
-    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings", broken_insert_sensor_readings)
+    monkeypatch.setattr(ingest_route_module, "insert_sensor_readings_idempotent", broken_insert_sensor_readings)
     response = client.post(
         "/api/ingest/sensor-readings",
         json={
@@ -824,9 +869,22 @@ def test_device_registration_creates_read_only_registry_entry(monkeypatch) -> No
 def test_device_connection_telemetry_endpoint_records_ingest_connection(monkeypatch) -> None:
     captured = {}
 
-    def fake_insert_sensor_readings(readings, *, source="http", ensure_schema=True):
+    def fake_insert_sensor_readings(
+        readings,
+        *,
+        source="http",
+        device_id=None,
+        message_id=None,
+        sequence=None,
+        protocol_version=None,
+        ensure_schema=True,
+    ):
         captured["readings"] = readings
         captured["source"] = source
+        captured["device_id"] = device_id
+        captured["message_id"] = message_id
+        captured["sequence"] = sequence
+        captured["protocol_version"] = protocol_version
         captured["ensure_schema"] = ensure_schema
         return len(readings)
 
@@ -848,7 +906,7 @@ def test_device_connection_telemetry_endpoint_records_ingest_connection(monkeypa
             updated_at=now(),
         )
 
-    monkeypatch.setattr(device_connections_route_module, "insert_sensor_readings", fake_insert_sensor_readings)
+    monkeypatch.setattr(device_connections_route_module, "insert_sensor_readings_idempotent", fake_insert_sensor_readings)
     monkeypatch.setattr(device_connections_route_module, "record_ingest_connection", fake_record_ingest_connection)
 
     response = client.post(
@@ -874,6 +932,10 @@ def test_device_connection_telemetry_endpoint_records_ingest_connection(monkeypa
     assert payload["stored"] == 2
     assert payload["message_id"] == "raspi-77"
     assert captured["source"] == "http"
+    assert captured["device_id"] == "raspi_gateway_01"
+    assert captured["message_id"] == "raspi-77"
+    assert captured["sequence"] == 77
+    assert captured["protocol_version"] == "aiot.v1"
     assert captured["ensure_schema"] is True
     assert captured["transport"] == "http"
     assert captured["connection_request"].sequence == 77
@@ -2115,6 +2177,44 @@ def test_model_provider_sanitizes_markdown_agent_reply(monkeypatch) -> None:
     )
     assert reply == "二氧化碳分析\n当前读数 536 ppm，建议保持观察。"
     assert usage.status == "used"
+
+
+def test_model_provider_agent_model_timeout_uses_env(monkeypatch) -> None:
+    captured = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def fake_completion(client_arg, config, prompt):
+        captured["client"] = client_arg
+        return "模型回复"
+
+    monkeypatch.setenv("AIOT_AGENT_MODEL_TIMEOUT_SECONDS", "5")
+    monkeypatch.setattr(model_provider_module.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(model_provider_module, "_openai_agent_completion", fake_completion)
+
+    config = ModelConfig(
+        provider_id="kimi",
+        endpoint_id="kimi_cn_openai",
+        protocol=ProviderProtocol.openai,
+        base_url="https://api.moonshot.cn/v1",
+        model="kimi-k2.6",
+        api_key="sk-test-model-key",
+        updated_at=now(),
+    )
+
+    reply = asyncio.run(model_provider_module._call_agent_model(config, "prompt"))
+
+    assert reply == "模型回复"
+    assert captured["timeout"] == 5.0
+    assert isinstance(captured["client"], FakeAsyncClient)
 
 
 def test_model_provider_catalog_uses_china_endpoints() -> None:
