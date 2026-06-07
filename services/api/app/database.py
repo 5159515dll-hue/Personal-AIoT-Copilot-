@@ -156,6 +156,84 @@ CREATE INDEX IF NOT EXISTS idx_agent_conversations_session
 
 CREATE INDEX IF NOT EXISTS idx_agent_conversations_created
     ON agent_conversations (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS device_credentials (
+    device_id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    token_preview TEXT NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS device_events (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    protocol_version TEXT NOT NULL,
+    message_id TEXT,
+    sequence BIGINT,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    confidence DOUBLE PRECISION,
+    space_id TEXT NOT NULL,
+    zone TEXT,
+    captured_at TIMESTAMPTZ NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL,
+    attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+    media_ids JSONB NOT NULL DEFAULT '[]'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_events_space_time
+    ON device_events (space_id, captured_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_device_events_device_time
+    ON device_events (device_id, captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS media_assets (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    space_id TEXT NOT NULL,
+    zone TEXT,
+    media_type TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_size_bytes BIGINT NOT NULL,
+    sha256 TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    content_url TEXT NOT NULL,
+    event_id TEXT,
+    captured_at TIMESTAMPTZ NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL,
+    retention_policy TEXT NOT NULL,
+    retention_days INTEGER NOT NULL,
+    privacy_level TEXT NOT NULL,
+    analysis_status TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_assets_space_time
+    ON media_assets (space_id, received_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_media_assets_sha256
+    ON media_assets (sha256);
+
+CREATE TABLE IF NOT EXISTS stream_sources (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    space_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    rtsp_url TEXT NOT NULL,
+    hls_url TEXT NOT NULL,
+    stream_key TEXT NOT NULL,
+    zone TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT NOT NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stream_sources_space
+    ON stream_sources (space_id, updated_at DESC);
 """
 
 

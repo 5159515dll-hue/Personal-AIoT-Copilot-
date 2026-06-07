@@ -32,6 +32,7 @@ run_step "核心 API 契约检查" npm run contract:api
 run_step "ESP32 固件协议检查" npm run check:firmware
 run_step "Web 页面路由烟测" npm run smoke:web
 run_step "MQTT 遥测入站烟测" npm run smoke:mqtt
+run_step "媒体事件与实时流烟测" npm run smoke:media
 run_step "服务器部署烟测" npm run smoke:server
 run_step "智能体安全评测" npm run eval:agent-safety
 run_step "3 分钟演示验收" npm run acceptance:demo

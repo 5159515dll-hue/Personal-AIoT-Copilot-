@@ -56,6 +56,8 @@ POST  /api/devices/batch-management
 
 ```text
 POST /api/device-connections/{device_id}/telemetry
+POST /api/device-connections/{device_id}/events
+POST /api/device-connections/{device_id}/media
 ```
 
 旧调试入口仍保留：
@@ -65,6 +67,7 @@ POST /api/ingest/sensor-readings
 ```
 
 所有接口都受私有 API 保护。服务器部署时由内部服务令牌或已登录控制台访问；生产设备应通过网关或 broker 层做设备级 token 校验，避免把内部服务令牌直接烧进大量终端。
+事件和媒体上报额外要求设备令牌：后台在 `/devices` 为每台设备生成或轮换 `X-AIoT-Device-Token`，服务端只保存哈希。
 
 ## 注册 payload
 
@@ -199,6 +202,33 @@ POST /api/ingest/sensor-readings
 
 单次上报最多 64 条 readings。高频节点应合并短窗口数据批量上报，避免每个指标单独建立 HTTP 请求。
 
+## 边缘事件与媒体
+
+树莓派摄像头、ESP32-CAM 快照和后续视觉网关不要把图片或视频放进 readings。统一使用：
+
+```text
+POST /api/device-connections/{device_id}/events
+POST /api/device-connections/{device_id}/media
+```
+
+事件 payload 示例：
+
+```json
+{
+  "event_type": "presence_detected",
+  "severity": "info",
+  "confidence": 0.91,
+  "space_id": "space_study_001",
+  "zone": "门口",
+  "attributes": {
+    "person_count": 1,
+    "edge_model": "local-yolo-lite"
+  }
+}
+```
+
+媒体上传使用 `multipart/form-data`，支持 JPEG、PNG 和 MP4。空间必须先在 `/spaces` 中启用 `local_only` 摄像头、本地隐私模式和事件媒体策略。实时视频流在 `/vision` 中登记 RTSP 地址，由服务器代理 HLS 给浏览器。
+
 ## MQTT Topic
 
 推荐统一 topic：
@@ -259,6 +289,7 @@ MQTT payload 支持标准 envelope：
 - ESP32：`firmware/esp32-room-node/src/main.cpp`，真实 MQTT 遥测固件。
 - STM32：`firmware/stm32-room-node/src/main.cpp`，C/C++ HTTP/串口网关接入模板。
 - 树莓派：`examples/raspberry-pi-gateway/aiot_gateway.py`，Python 网关直连服务器 IP 示例。
+- 视觉媒体：`docs/media-streaming.md`，树莓派边缘事件、快照上传和 RTSP/HLS 实时流说明。
 
 ## 当前落地状态
 
@@ -266,6 +297,10 @@ MQTT payload 支持标准 envelope：
 - `/api/device-connections/register` 用于设备注册。
 - `/api/device-connections/{device_id}/heartbeat` 用于设备心跳。
 - `/api/device-connections/{device_id}/telemetry` 用于版本化 HTTP 遥测。
+- `/api/device-connections/{device_id}/events` 用于边缘识别事件。
+- `/api/device-connections/{device_id}/media` 用于事件图片或短视频上传。
+- `/api/streams` 用于实时流登记和 HLS 代理。
+- `/api/devices/{device_id}/credentials` 用于生成或轮换设备令牌。
 - `/api/devices/management` 用于后台硬件预建、绑定、负载标记和批量运维。
 - MQTT 和旧 HTTP 入站都会同步更新设备连接表。
 - 新设备进入 `device_registry` 时只能是只读不可控设备。

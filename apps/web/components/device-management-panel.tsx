@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Ban, Boxes, CheckSquare, Cpu, Plus, Save, Square, Trash2, Unplug } from "lucide-react";
+import { Ban, Boxes, CheckSquare, Cpu, KeyRound, Plus, Save, Square, Trash2, Unplug } from "lucide-react";
 import {
   batchUpdateDeviceManagement,
   createDeviceManagement,
   deleteDeviceManagement,
+  issueDeviceCredential,
   markDeviceOffline,
   updateDeviceManagement
 } from "@/lib/api";
@@ -213,6 +214,23 @@ export function DeviceManagementPanel({
       setMessage(`设备 ${response.device_id} 已删除，审计编号：${response.audit_log_id}`);
     } catch (deleteError) {
       setMessage(deleteError instanceof Error ? deleteError.message : "设备删除失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function issueCredential(item: ManagedDevice) {
+    const confirmed = window.confirm(`确认生成或轮换设备 ${item.device.id} 的上报令牌？旧令牌会失效。`);
+    if (!confirmed) {
+      return;
+    }
+    setPending(`credential:${item.device.id}`);
+    setMessage(null);
+    try {
+      const response = await issueDeviceCredential(item.device.id);
+      setMessage(`设备 ${item.device.id} 的令牌已生成，仅显示一次：${response.token}。审计编号：${response.audit_log_id}`);
+    } catch (credentialError) {
+      setMessage(credentialError instanceof Error ? credentialError.message : "设备令牌生成失败");
     } finally {
       setPending(null);
     }
@@ -515,6 +533,15 @@ export function DeviceManagementPanel({
                 >
                   <Unplug size={16} aria-hidden />
                   手动下线
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void issueCredential(item)}
+                  disabled={pending === `credential:${item.device.id}`}
+                  className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <KeyRound size={16} aria-hidden />
+                  设备令牌
                 </button>
                 <button
                   type="button"

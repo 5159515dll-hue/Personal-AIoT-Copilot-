@@ -12,9 +12,11 @@ from app import audit as audit_module
 from app import agent_history as agent_history_module
 from app import anomaly_events as anomaly_events_module
 from app import database as database_module
+from app import device_credentials as device_credentials_module
 from app import device_connections as device_connections_module
 from app import device_adapter as device_adapter_module
 from app import device_rate_limit as device_rate_limit_module
+from app import media_store as media_store_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
 from app import rule_engine as rule_engine_module
@@ -67,6 +69,12 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(device_rate_limit_module.device_control_rate_store, "path", tmp_path / "device_control_rate_events.json")
     monkeypatch.setattr(model_provider_module.config_store, "path", tmp_path / "model_config.json")
     monkeypatch.setattr(model_provider_module.active_selection_store, "path", tmp_path / "active_model_selection.json")
+    monkeypatch.setattr(device_credentials_module.credential_store, "path", tmp_path / "device_credentials.json")
+    monkeypatch.setattr(media_store_module.event_store, "path", tmp_path / "device_events.json")
+    monkeypatch.setattr(media_store_module.media_asset_store, "path", tmp_path / "media_assets.json")
+    monkeypatch.setattr(media_store_module.stream_store, "path", tmp_path / "stream_sources.json")
+    monkeypatch.setenv("AIOT_MEDIA_ROOT", str(tmp_path / "media"))
+    monkeypatch.setenv("AIOT_STREAM_ROOT", str(tmp_path / "streams"))
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
     monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
 
@@ -190,6 +198,163 @@ def test_spaces_default_current_and_crud_records_audit() -> None:
     assert "activate_space" in actions
     assert "update_space" in actions
     assert "delete_space" in actions
+
+
+def test_device_media_events_streams_and_credentials_follow_space_policy() -> None:
+    unauthorized_response = client.post(
+        "/api/device-connections/raspi_cam_01/events",
+        json={
+            "event_type": "presence_detected",
+            "space_id": "space_study_001",
+            "confidence": 0.92,
+        },
+    )
+    assert unauthorized_response.status_code == 401
+
+    credential_response = client.post("/api/devices/raspi_cam_01/credentials")
+    assert credential_response.status_code == 200
+    token = credential_response.json()["token"]
+    headers = {"X-AIoT-Device-Token": token}
+
+    blocked_event = client.post(
+        "/api/device-connections/raspi_cam_01/events",
+        headers=headers,
+        json={
+            "event_type": "presence_detected",
+            "space_id": "space_study_001",
+            "confidence": 0.92,
+        },
+    )
+    assert blocked_event.status_code == 403
+    assert "未启用本地摄像头" in blocked_event.json()["detail"]["message"]
+
+    space_payload = client.get("/api/spaces/current").json()
+    space_payload["perception"].update(
+        {
+            "camera": "local_only",
+            "face_recognition": "local_only",
+            "emotion_recognition": "local_only",
+            "location_tracking": "local_only",
+            "image_retention": "event_media",
+            "privacy_mode": "local_only",
+            "media_policy": {
+                "allow_realtime_stream": True,
+                "allow_event_media": True,
+                "media_retention_days": 7,
+                "event_retention_days": 30,
+            },
+        }
+    )
+    update_space = client.patch("/api/spaces/space_study_001", json={"perception": space_payload["perception"]})
+    assert update_space.status_code == 200
+    assert update_space.json()["space"]["perception"]["media_policy"]["allow_event_media"] is True
+
+    invalid_event = client.post(
+        "/api/device-connections/raspi_cam_01/events",
+        headers=headers,
+        json={
+            "event_type": "presence_detected",
+            "space_id": "space_study_001",
+            "confidence": 1.5,
+        },
+    )
+    assert invalid_event.status_code == 422
+
+    event_response = client.post(
+        "/api/device-connections/raspi_cam_01/events",
+        headers=headers,
+        json={
+            "event_type": "face_detected",
+            "severity": "info",
+            "space_id": "space_study_001",
+            "zone": "门口",
+            "confidence": 0.88,
+            "attributes": {"face_count": 1, "known": False, "face_id_hash": "anon_01"},
+        },
+    )
+    assert event_response.status_code == 200
+    event = event_response.json()["event"]
+    assert event["device_id"] == "raspi_cam_01"
+    assert event["event_type"] == "face_detected"
+
+    agent_response = client.post(
+        "/api/agent/chat",
+        json={"message": "最近摄像头有没有检测到人？根据视觉事件和 CO2 给我调节建议。"},
+    )
+    assert agent_response.status_code == 200
+    agent_payload = agent_response.json()
+    tool_names = [tool["name"] for tool in agent_payload["tool_calls"]]
+    assert "get_recent_device_events" in tool_names
+    assert "get_stream_status" in tool_names
+    assert "get_media_asset_summary" in tool_names
+    assert "plan_adjustment_from_events" in tool_names
+
+    rule_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "视觉事件",
+            "action": "发送通风提醒",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert rule_response.status_code == 200
+    evaluation_response = client.post("/api/rules/evaluate")
+    assert evaluation_response.status_code == 200
+    assert any(item["observed"].get("kind") == "device_event" for item in evaluation_response.json())
+
+    media_response = client.post(
+        "/api/device-connections/raspi_cam_01/media",
+        headers=headers,
+        data={"space_id": "space_study_001", "event_id": event["id"], "zone": "门口"},
+        files={"file": ("snapshot.jpg", b"\xff\xd8\xff\xdbtest-image", "image/jpeg")},
+    )
+    assert media_response.status_code == 200
+    asset = media_response.json()["asset"]
+    assert asset["media_type"] == "image"
+    assert asset["file_size_bytes"] > 0
+    assert asset["content_url"].endswith("/content")
+
+    list_response = client.get("/api/media-assets", params={"space_id": "space_study_001"})
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == asset["id"]
+
+    content_response = client.get(f"/api/media-assets/{asset['id']}/content")
+    assert content_response.status_code == 200
+    assert content_response.content.startswith(b"\xff\xd8")
+
+    stream_response = client.post(
+        "/api/streams",
+        json={
+            "device_id": "raspi_cam_01",
+            "space_id": "space_study_001",
+            "name": "书房门口实时流",
+            "rtsp_url": "rtsp://82.157.148.249:8554/raspi_cam_01",
+            "zone": "门口",
+        },
+    )
+    assert stream_response.status_code == 200
+    stream = stream_response.json()["stream"]
+    assert stream["hls_url"].endswith("/index.m3u8")
+
+    stream_list = client.get("/api/streams", params={"space_id": "space_study_001"})
+    assert stream_list.status_code == 200
+    assert stream_list.json()[0]["id"] == stream["id"]
+
+    hls_response = client.get(f"/api/streams/{stream['id']}/hls/index.m3u8")
+    assert hls_response.status_code == 404
+    assert "HLS 文件暂不可用" in hls_response.json()["detail"]
+
+    delete_response = client.delete(f"/api/media-assets/{asset['id']}")
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "issue_device_credential" in actions
+    assert "ingest_device_event" in actions
+    assert "upload_device_media" in actions
+    assert "create_stream_source" in actions
+    assert "delete_media_asset" in actions
 
 
 def test_private_api_requires_dashboard_session() -> None:

@@ -3,7 +3,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import api_auth_enabled, is_public_api_path, request_is_authorized
-from app.routes import agent, anomalies, audit_logs, device_connections, devices, evaluations, ingest, model_providers, room, rules, sensors, spaces, telemetry
+from app.routes import (
+    agent,
+    anomalies,
+    audit_logs,
+    device_connections,
+    device_events,
+    devices,
+    evaluations,
+    ingest,
+    media_assets,
+    model_providers,
+    room,
+    rules,
+    sensors,
+    spaces,
+    streams,
+    telemetry,
+)
 
 app = FastAPI(
     title="个人空间智能物联助手接口",
@@ -45,6 +62,9 @@ app.include_router(sensors.router)
 app.include_router(spaces.router)
 app.include_router(devices.router)
 app.include_router(device_connections.router)
+app.include_router(device_events.router)
+app.include_router(media_assets.router)
+app.include_router(streams.router)
 app.include_router(ingest.router)
 app.include_router(rules.router)
 app.include_router(agent.router)

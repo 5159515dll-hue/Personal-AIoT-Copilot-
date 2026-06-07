@@ -16,6 +16,7 @@ from app.device_connections import (
     mark_managed_device_offline,
     update_managed_device,
 )
+from app.device_credentials import get_device_credential, issue_device_token, list_device_credentials
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.models import (
     ControlDeviceRequest,
@@ -24,6 +25,8 @@ from app.models import (
     DeviceBatchManagementRequest,
     DeviceBatchManagementResponse,
     Device,
+    DeviceCredentialIssueResponse,
+    DeviceCredentialPublic,
     DeviceManagementCreate,
     DeviceManagementDeleteResponse,
     DeviceManagementResponse,
@@ -53,6 +56,31 @@ def get_device_management(limit: int = Query(500, ge=1, le=1000)) -> list[Manage
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="设备管理后台查询失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+
+
+@router.get("/credentials", response_model=list[DeviceCredentialPublic])
+def get_device_credentials() -> list[DeviceCredentialPublic]:
+    return list_device_credentials()
+
+
+@router.post("/{device_id}/credentials", response_model=DeviceCredentialIssueResponse)
+def issue_device_credentials(device_id: str) -> DeviceCredentialIssueResponse:
+    credential, token = issue_device_token(device_id)
+    audit = record_audit(
+        actor="user",
+        action="issue_device_credential",
+        result="success",
+        details=f"设备令牌已生成或轮换：{device_id}。",
+        parameters={"device_id": device_id, "token_preview": credential.token_preview},
+    )
+    public_credential = get_device_credential(device_id)
+    if public_credential is None:
+        raise HTTPException(status_code=500, detail="设备令牌生成后读取失败。")
+    return DeviceCredentialIssueResponse(
+        credential=public_credential,
+        token=token,
+        audit_log_id=audit.id,
+    )
 
 
 @router.post("/management", response_model=DeviceManagementResponse)

@@ -1,0 +1,9 @@
+rtspAddress: :8554
+hlsAddress: 127.0.0.1:8888
+hlsAlwaysRemux: true
+hlsSegmentCount: 6
+hlsSegmentDuration: 5s
+
+paths:
+  all:
+    source: publisher

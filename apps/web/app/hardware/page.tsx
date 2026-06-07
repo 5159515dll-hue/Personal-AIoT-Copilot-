@@ -59,6 +59,50 @@ payload = {
 }
 requests.post(f"{API_BASE}/api/device-connections/{DEVICE_ID}/telemetry", json=payload, headers=headers, timeout=5)`;
 
+const raspberryVisionCode = `# 树莓派边缘识别：服务器只接收结构化结果，不做人脸身份库
+import requests
+from datetime import datetime, timezone
+
+API_BASE = "http://82.157.148.249:8000"
+DEVICE_ID = "raspi_cam_01"
+DEVICE_TOKEN = "<设备页生成的一次性显示令牌>"
+
+headers = {"X-AIoT-Device-Token": DEVICE_TOKEN}
+event = {
+    "event_type": "presence_detected",
+    "severity": "info",
+    "confidence": 0.91,
+    "space_id": "space_study_001",
+    "zone": "门口",
+    "captured_at": datetime.now(timezone.utc).isoformat(),
+    "attributes": {"person_count": 1, "edge_model": "local-yolo-lite"}
+}
+requests.post(f"{API_BASE}/api/device-connections/{DEVICE_ID}/events", json=event, headers=headers, timeout=5)
+
+with open("snapshot.jpg", "rb") as image:
+    requests.post(
+        f"{API_BASE}/api/device-connections/{DEVICE_ID}/media",
+        headers=headers,
+        data={"space_id": "space_study_001", "zone": "门口"},
+        files={"file": ("snapshot.jpg", image, "image/jpeg")},
+        timeout=15,
+    )`;
+
+const rtspCode = `# 树莓派 RTSP 推流：服务器 MediaMTX 接收，网页通过 HLS 播放
+libcamera-vid -t 0 --inline --width 1280 --height 720 --framerate 15 -o - \\
+  | ffmpeg -re -i - -c:v copy -f rtsp rtsp://82.157.148.249:8554/raspi_cam_01
+
+# 控制台 /vision 中新增实时流：
+# device_id = raspi_cam_01
+# rtsp_url = rtsp://82.157.148.249:8554/raspi_cam_01`;
+
+const esp32CamCode = `// ESP32-CAM：只建议低频 JPEG 快照，不做持续视频
+POST http://82.157.148.249:8000/api/device-connections/esp32_cam_01/media
+Header: X-AIoT-Device-Token: <设备令牌>
+Form:
+  space_id=space_study_001
+  file=@snapshot.jpg;type=image/jpeg`;
+
 export default function HardwarePage() {
   return (
     <AppShell>
@@ -93,8 +137,13 @@ export default function HardwarePage() {
               <Endpoint method="POST" path="/api/device-connections/register" note="设备首次注册，幂等写入连接表。" />
               <Endpoint method="POST" path="/api/device-connections/{device_id}/heartbeat" note="周期心跳，更新在线状态和诊断指标。" />
               <Endpoint method="POST" path="/api/device-connections/{device_id}/telemetry" note="版本化遥测，上报多条 readings。" />
+              <Endpoint method="POST" path="/api/device-connections/{device_id}/events" note="边缘识别事件，只接收结构化 JSON。" />
+              <Endpoint method="POST" path="/api/device-connections/{device_id}/media" note="事件图片或短视频，multipart 上传。" />
+              <Endpoint method="GET" path="/api/media-assets/{id}/content" note="受保护读取媒体内容。" />
+              <Endpoint method="POST" path="/api/streams" note="登记 RTSP 到 HLS 实时流。" />
               <Endpoint method="GET" path="/api/device-connections" note="后台查看真实连接记录。" />
               <Endpoint method="POST" path="/api/devices/management" note="预建设备档案，硬件未到也能先配置。" />
+              <Endpoint method="POST" path="/api/devices/{device_id}/credentials" note="生成或轮换设备上报令牌。" />
               <Endpoint method="DELETE" path="/api/devices/{device_id}/management" note="删除后台档案和连接记录，保留历史遥测。" />
             </div>
           </Panel>
@@ -105,6 +154,8 @@ export default function HardwarePage() {
               <li className="rounded-lg bg-slate-50 p-3">每台设备使用递增 `sequence`，旧心跳不会回滚在线状态。</li>
               <li className="rounded-lg bg-slate-50 p-3">单次遥测最多 64 条 readings，设备端或网关端应先聚合再发送。</li>
               <li className="rounded-lg bg-slate-50 p-3">新设备强制只读，不允许通过 payload 自行提升为可控设备。</li>
+              <li className="rounded-lg bg-slate-50 p-3">事件和媒体上报必须使用设备令牌，不能只靠控制台会话。</li>
+              <li className="rounded-lg bg-slate-50 p-3">摄像头空间默认关闭，必须在房间设置中启用本地处理和媒体策略。</li>
               <li className="rounded-lg bg-slate-50 p-3">大模型只能基于工具结果建议或发起低风险策略链路，不能直接绕过控制接口。</li>
               <li className="rounded-lg bg-slate-50 p-3">强电、未知插座、报警器、门锁和燃气设备保持拒绝或人工确认边界。</li>
             </ul>
@@ -123,6 +174,21 @@ export default function HardwarePage() {
           <Panel icon={<FileCode2 size={18} aria-hidden />} title="树莓派示例">
             <CodeBlock code={raspberryCode} />
             <p className="mt-3 text-sm leading-6 text-muted">完整代码位置：`examples/raspberry-pi-gateway/aiot_gateway.py`。</p>
+          </Panel>
+
+          <Panel icon={<FileCode2 size={18} aria-hidden />} title="树莓派视觉事件与媒体">
+            <CodeBlock code={raspberryVisionCode} />
+            <p className="mt-3 text-sm leading-6 text-muted">树莓派本地识别后只上传结构化结果；图片和短视频仅用于事件证据。</p>
+          </Panel>
+
+          <Panel icon={<FileCode2 size={18} aria-hidden />} title="RTSP 实时流">
+            <CodeBlock code={rtspCode} />
+            <p className="mt-3 text-sm leading-6 text-muted">服务器通过 MediaMTX 接收 RTSP，并由 `/api/streams/{'{id}'}/hls/index.m3u8` 受保护代理播放。</p>
+          </Panel>
+
+          <Panel icon={<FileCode2 size={18} aria-hidden />} title="ESP32-CAM 快照">
+            <CodeBlock code={esp32CamCode} />
+            <p className="mt-3 text-sm leading-6 text-muted">ESP32-CAM 适合低频 JPEG 事件快照，不建议承担持续实时视频。</p>
           </Panel>
         </section>
 

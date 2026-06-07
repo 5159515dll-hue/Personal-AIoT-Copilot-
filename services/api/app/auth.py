@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 
 from fastapi import Request
+
+from app.device_credentials import DEVICE_TOKEN_HEADER, verify_device_token
 
 DASHBOARD_SESSION_COOKIE = "aiot_dashboard_session"
 INTERNAL_API_TOKEN_HEADER = "x-aiot-internal-token"
@@ -50,6 +53,10 @@ def request_is_authorized(request: Request) -> bool:
         and submitted_internal_token
         and hmac.compare_digest(submitted_internal_token, configured_internal_token)
     ):
+        return True
+
+    device_match = re.match(r"^/api/device-connections/([^/]+)/(events|media)$", request.url.path)
+    if device_match and verify_device_token(device_match.group(1), request.headers.get(DEVICE_TOKEN_HEADER)):
         return True
 
     submitted_session_token = request.cookies.get(DASHBOARD_SESSION_COOKIE)

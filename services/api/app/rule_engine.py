@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from app.audit import record_audit
+from app.media_store import list_device_events
 from app.mock_data import current_room_state
 from app.models import AutomationRule, Device, Metric, PolicyResult, RoomState, RuleEvaluation
 from app.policy import assess_device_control
@@ -43,6 +44,11 @@ class TimeCondition:
     comparator: Callable[[float, float], bool]
     symbol: str
     minute_of_day: int
+
+
+@dataclass(frozen=True)
+class EventCondition:
+    event_types: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -93,12 +99,21 @@ def _evaluate_rule(
             action=rule.action,
             matched=False,
             status="unsupported",
-            reason="当前 V0 只支持简单指标阈值、人体存在或时间提醒条件。",
+            reason="当前版本只支持简单指标阈值、人体存在、时间提醒或边缘事件提醒条件。",
             evaluated_at=evaluated_at,
         )
 
     if isinstance(condition, TimeCondition):
         return _evaluate_time_rule(
+            rule,
+            condition,
+            evaluated_at=evaluated_at,
+            emit_audit=emit_audit,
+            telemetry_source=telemetry_source,
+        )
+
+    if isinstance(condition, EventCondition):
+        return _evaluate_event_rule(
             rule,
             condition,
             evaluated_at=evaluated_at,
@@ -193,6 +208,58 @@ def _evaluate_time_rule(
         telemetry_source=telemetry_source,
         reminder_details=f"时间规则已触发提醒动作：{rule.action}",
         reminder_reason="时间条件已满足，提醒动作已写入审计日志。",
+    )
+
+
+def _evaluate_event_rule(
+    rule: AutomationRule,
+    condition: EventCondition,
+    *,
+    evaluated_at,
+    emit_audit: bool,
+    telemetry_source: Literal["mock", "database"],
+) -> RuleEvaluation:
+    events = list_device_events(limit=20)
+    matched_events = [event for event in events if event.event_type in condition.event_types]
+    observed = {
+        "source": telemetry_source,
+        "kind": "device_event",
+        "event_types": list(condition.event_types),
+        "matched_event_count": len(matched_events),
+        "latest_event": matched_events[0].model_dump(mode="json") if matched_events else None,
+    }
+    if not matched_events:
+        return RuleEvaluation(
+            rule_id=rule.id,
+            condition=rule.condition,
+            action=rule.action,
+            matched=False,
+            status="not_matched",
+            reason="最近没有满足条件的边缘识别事件。",
+            evaluated_at=evaluated_at,
+            observed=observed,
+        )
+
+    if not _is_reminder_action(rule.action):
+        return RuleEvaluation(
+            rule_id=rule.id,
+            condition=rule.condition,
+            action=rule.action,
+            matched=True,
+            status="unsupported",
+            reason="边缘事件规则第一版只支持提醒动作，不直接触发设备控制。",
+            evaluated_at=evaluated_at,
+            observed=observed,
+        )
+
+    return _trigger_matched_rule(
+        rule,
+        observed,
+        evaluated_at=evaluated_at,
+        emit_audit=emit_audit,
+        telemetry_source=telemetry_source,
+        reminder_details=f"边缘事件规则已触发提醒动作：{rule.action}",
+        reminder_reason="边缘识别事件已满足规则条件，提醒动作已写入审计日志。",
     )
 
 
@@ -336,11 +403,15 @@ def _trigger_device_action(
     )
 
 
-def _parse_condition(condition: str) -> MetricCondition | TimeCondition | None:
+def _parse_condition(condition: str) -> MetricCondition | TimeCondition | EventCondition | None:
     lowered = condition.lower()
     time_condition = _parse_time_condition(lowered)
     if time_condition is not None:
         return time_condition
+
+    event_condition = _parse_event_condition(lowered)
+    if event_condition is not None:
+        return event_condition
 
     metric = _match_metric(lowered)
     if metric is None:
@@ -355,6 +426,20 @@ def _parse_condition(condition: str) -> MetricCondition | TimeCondition | None:
     comparator = COMPARATORS[match.group(1)]
     threshold = float(match.group(2))
     return MetricCondition(metric=metric, comparator=comparator, symbol=match.group(1), threshold=threshold)
+
+
+def _parse_event_condition(text: str) -> EventCondition | None:
+    if any(token in text for token in ("检测到人", "人体检测", "人体存在事件", "有人事件", "presence_detected")):
+        return EventCondition(event_types=("presence_detected", "motion_detected"))
+    if any(token in text for token in ("移动侦测", "移动事件", "motion_detected")):
+        return EventCondition(event_types=("motion_detected",))
+    if any(token in text for token in ("人脸", "face_detected")):
+        return EventCondition(event_types=("face_detected",))
+    if any(token in text for token in ("情绪", "emotion_detected")):
+        return EventCondition(event_types=("emotion_detected",))
+    if any(token in text for token in ("视觉事件", "边缘事件", "摄像头事件")):
+        return EventCondition(event_types=("presence_detected", "motion_detected", "face_detected", "emotion_detected"))
+    return None
 
 
 def _parse_time_condition(text: str) -> TimeCondition | None:

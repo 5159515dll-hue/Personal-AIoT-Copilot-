@@ -73,8 +73,14 @@ export type SpacePerceptionSettings = {
   face_recognition: SpaceCapabilityStatus;
   emotion_recognition: SpaceCapabilityStatus;
   location_tracking: SpaceCapabilityStatus;
-  image_retention: "none" | "metadata_only";
+  image_retention: "none" | "metadata_only" | "event_media";
   privacy_mode: "strict" | "local_only";
+  media_policy: {
+    allow_realtime_stream: boolean;
+    allow_event_media: boolean;
+    media_retention_days: number;
+    event_retention_days: number;
+  };
   notes: string | null;
 };
 
@@ -160,7 +166,7 @@ export type DeviceConnectionRecord = {
   hardware_revision: string | null;
   location: string;
   capabilities: {
-    kind: "telemetry" | "control" | "gateway" | "diagnostic";
+    kind: "telemetry" | "control" | "gateway" | "diagnostic" | "media" | "vision" | "stream";
     metrics: MetricName[];
     description: string | null;
   }[];
@@ -237,6 +243,107 @@ export type DeviceBatchManagementItem = DeviceManagementUpdate & {
 export type DeviceBatchManagementResponse = {
   updated: ManagedDevice[];
   failed: { device_id: string; error: string }[];
+};
+
+export type DeviceCredentialPublic = {
+  device_id: string;
+  issued_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  token_preview: string;
+};
+
+export type DeviceCredentialIssueResponse = {
+  credential: DeviceCredentialPublic;
+  token: string;
+  audit_log_id: string;
+};
+
+export type DeviceEventType =
+  | "presence_detected"
+  | "motion_detected"
+  | "face_detected"
+  | "emotion_detected"
+  | "location_update"
+  | "safety_alert"
+  | "custom";
+
+export type DeviceEvent = {
+  id: string;
+  device_id: string;
+  protocol_version: string;
+  message_id: string | null;
+  sequence: number | null;
+  event_type: DeviceEventType;
+  severity: "info" | "warning" | "critical";
+  confidence: number | null;
+  space_id: string;
+  zone: string | null;
+  captured_at: string;
+  received_at: string;
+  attributes: Record<string, unknown>;
+  media_ids: string[];
+};
+
+export type MediaAsset = {
+  id: string;
+  device_id: string;
+  space_id: string;
+  zone: string | null;
+  media_type: "image" | "video";
+  content_type: "image/jpeg" | "image/png" | "video/mp4";
+  file_name: string;
+  file_size_bytes: number;
+  sha256: string;
+  storage_path: string;
+  content_url: string;
+  event_id: string | null;
+  captured_at: string;
+  received_at: string;
+  retention_policy: "event_media" | "metadata_only";
+  retention_days: number;
+  privacy_level: "space_local_only" | "metadata_only";
+  analysis_status: "not_requested" | "edge_completed" | "pending" | "failed";
+};
+
+export type StreamSource = {
+  id: string;
+  device_id: string;
+  space_id: string;
+  name: string;
+  rtsp_url: string;
+  hls_url: string;
+  stream_key: string;
+  zone: string | null;
+  enabled: boolean;
+  status: "configured" | "online" | "offline" | "error";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StreamSourceCreate = {
+  device_id: string;
+  space_id: string;
+  name: string;
+  rtsp_url: string;
+  stream_key?: string | null;
+  zone?: string | null;
+  enabled: boolean;
+  notes?: string | null;
+};
+
+export type StreamSourceUpdate = Partial<Pick<StreamSource, "name" | "rtsp_url" | "stream_key" | "zone" | "enabled" | "status" | "notes">>;
+
+export type StreamSourceMutationResponse = {
+  stream: StreamSource;
+  audit_log_id: string;
+};
+
+export type StreamSourceDeleteResponse = {
+  deleted: boolean;
+  stream_id: string;
+  audit_log_id: string;
 };
 
 export type PolicyDecision = {

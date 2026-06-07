@@ -14,10 +14,14 @@ import type {
   Device,
   DeviceBatchManagementItem,
   DeviceBatchManagementResponse,
+  DeviceCredentialIssueResponse,
+  DeviceCredentialPublic,
+  DeviceEvent,
   DeviceManagementCreate,
   DeviceManagementDeleteResponse,
   DeviceManagementResponse,
   DeviceManagementUpdate,
+  MediaAsset,
   ManagedDevice,
   MetricName,
   ModelConfigRequest,
@@ -35,6 +39,11 @@ import type {
   RoomState,
   SensorHealth,
   SensorReading,
+  StreamSource,
+  StreamSourceCreate,
+  StreamSourceDeleteResponse,
+  StreamSourceMutationResponse,
+  StreamSourceUpdate,
   TelemetryStatus,
   TelemetrySource
 } from "./types";
@@ -209,6 +218,80 @@ export async function batchUpdateDeviceManagement(
   return request<DeviceBatchManagementResponse>("/api/devices/batch-management", {
     method: "POST",
     body: JSON.stringify({ items })
+  });
+}
+
+export async function getDeviceCredentials(): Promise<DeviceCredentialPublic[]> {
+  return request<DeviceCredentialPublic[]>("/api/devices/credentials");
+}
+
+export async function issueDeviceCredential(id: string): Promise<DeviceCredentialIssueResponse> {
+  return request<DeviceCredentialIssueResponse>(`/api/devices/${id}/credentials`, {
+    method: "POST"
+  });
+}
+
+export async function getDeviceEvents(params?: {
+  device_id?: string;
+  space_id?: string;
+  event_type?: string;
+  limit?: number;
+}): Promise<DeviceEvent[]> {
+  const query = new URLSearchParams();
+  if (params?.device_id) query.set("device_id", params.device_id);
+  if (params?.space_id) query.set("space_id", params.space_id);
+  if (params?.event_type) query.set("event_type", params.event_type);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<DeviceEvent[]>(`/api/device-events${suffix}`);
+}
+
+export async function getMediaAssets(params?: {
+  device_id?: string;
+  space_id?: string;
+  media_type?: string;
+  limit?: number;
+}): Promise<MediaAsset[]> {
+  const query = new URLSearchParams();
+  if (params?.device_id) query.set("device_id", params.device_id);
+  if (params?.space_id) query.set("space_id", params.space_id);
+  if (params?.media_type) query.set("media_type", params.media_type);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<MediaAsset[]>(`/api/media-assets${suffix}`);
+}
+
+export async function deleteMediaAsset(id: string): Promise<{ deleted: boolean; media_id: string; audit_log_id: string }> {
+  return request<{ deleted: boolean; media_id: string; audit_log_id: string }>(`/api/media-assets/${id}`, {
+    method: "DELETE"
+  });
+}
+
+export async function getStreams(params?: { space_id?: string; device_id?: string }): Promise<StreamSource[]> {
+  const query = new URLSearchParams();
+  if (params?.space_id) query.set("space_id", params.space_id);
+  if (params?.device_id) query.set("device_id", params.device_id);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<StreamSource[]>(`/api/streams${suffix}`);
+}
+
+export async function createStream(payload: StreamSourceCreate): Promise<StreamSourceMutationResponse> {
+  return request<StreamSourceMutationResponse>("/api/streams", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateStream(id: string, payload: StreamSourceUpdate): Promise<StreamSourceMutationResponse> {
+  return request<StreamSourceMutationResponse>(`/api/streams/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteStream(id: string): Promise<StreamSourceDeleteResponse> {
+  return request<StreamSourceDeleteResponse>(`/api/streams/${id}`, {
+    method: "DELETE"
   });
 }
 

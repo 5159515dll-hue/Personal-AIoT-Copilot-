@@ -158,8 +158,17 @@ def _clean_list(values: list[str]) -> list[str]:
 
 
 def _sanitize_perception(settings: SpacePerceptionSettings) -> SpacePerceptionSettings:
-    if settings.image_retention != "none" and settings.camera == "disabled":
-        return settings.model_copy(update={"image_retention": "none"})
-    if settings.privacy_mode == "strict":
-        return settings.model_copy(update={"image_retention": "none"})
-    return settings
+    update = {}
+    media_policy = settings.media_policy
+    camera_enabled = settings.camera == "local_only"
+    if not camera_enabled or settings.privacy_mode == "strict":
+        update["image_retention"] = "none"
+        update["media_policy"] = media_policy.model_copy(
+            update={
+                "allow_realtime_stream": False,
+                "allow_event_media": False,
+            }
+        )
+    elif settings.image_retention != "event_media":
+        update["media_policy"] = media_policy.model_copy(update={"allow_event_media": False})
+    return settings.model_copy(update=update) if update else settings

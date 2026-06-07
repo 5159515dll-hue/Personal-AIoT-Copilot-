@@ -16,6 +16,12 @@ const defaultPerception: SpacePerceptionSettings = {
   location_tracking: "disabled",
   image_retention: "none",
   privacy_mode: "strict",
+  media_policy: {
+    allow_realtime_stream: false,
+    allow_event_media: false,
+    media_retention_days: 7,
+    event_retention_days: 30
+  },
   notes: "当前版本只保存规划状态，不采集图像、人脸、情绪或精确位置。"
 };
 
@@ -315,9 +321,9 @@ export function SpaceSettingsPanel({ initialSpaces }: { initialSpaces: RoomSpace
             视觉与身份能力边界
           </h2>
           <div className="mt-3 space-y-2 text-sm leading-6 text-amber-800/90">
-            <p>当前版本不采集摄像头画面，不做人脸识别、情绪识别或精确位置追踪。</p>
-            <p>页面中的“规划中”和“仅本地处理”只是后续硬件接入策略，不会启用真实识别。</p>
-            <p>未来接入树莓派摄像头时，必须先完成设备绑定、策略确认、审计记录和本地处理边界。</p>
+            <p>默认空间不采集摄像头画面，不做人脸身份库、情绪识别或精确位置追踪。</p>
+            <p>“规划中”只代表预留能力，只有“仅本地处理”并开启媒体策略后才接受树莓派边缘事件或事件媒体。</p>
+            <p>未来接入树莓派摄像头时，必须先完成设备绑定、设备令牌、空间策略和审计记录。</p>
           </div>
         </section>
       </aside>
@@ -347,7 +353,8 @@ function PerceptionFields({
           value={perception.image_retention}
           options={[
             { value: "none", label: "不保留" },
-            { value: "metadata_only", label: "仅保留元数据" }
+            { value: "metadata_only", label: "仅保留元数据" },
+            { value: "event_media", label: "保存事件媒体" }
           ]}
           onChange={(value) => onChange({ image_retention: value as SpacePerceptionSettings["image_retention"] })}
         />
@@ -361,8 +368,52 @@ function PerceptionFields({
           onChange={(value) => onChange({ privacy_mode: value as SpacePerceptionSettings["privacy_mode"] })}
         />
       </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700">
+          <input
+            type="checkbox"
+            checked={perception.media_policy.allow_event_media}
+            onChange={(event) =>
+              onChange({
+                media_policy: {
+                  ...perception.media_policy,
+                  allow_event_media: event.target.checked
+                }
+              })
+            }
+            className="h-4 w-4 rounded border-line text-teal-600"
+          />
+          允许事件媒体
+        </label>
+        <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700">
+          <input
+            type="checkbox"
+            checked={perception.media_policy.allow_realtime_stream}
+            onChange={(event) =>
+              onChange({
+                media_policy: {
+                  ...perception.media_policy,
+                  allow_realtime_stream: event.target.checked
+                }
+              })
+            }
+            className="h-4 w-4 rounded border-line text-teal-600"
+          />
+          允许实时流
+        </label>
+        <NumberField
+          label="媒体保留天数"
+          value={perception.media_policy.media_retention_days}
+          onChange={(value) => onChange({ media_policy: { ...perception.media_policy, media_retention_days: value } })}
+        />
+        <NumberField
+          label="事件保留天数"
+          value={perception.media_policy.event_retention_days}
+          onChange={(value) => onChange({ media_policy: { ...perception.media_policy, event_retention_days: value } })}
+        />
+      </div>
       <p className="mt-2 text-xs leading-5 text-muted">
-        严格模式会强制不保留图像；即使选择规划中，系统也不会启用真实摄像头、人脸、情绪或位置能力。
+        严格模式会强制不保留图像并关闭媒体策略；“规划中”不会启用真实采集，只有“仅本地处理”可进入边缘识别链路。
       </p>
     </div>
   );
@@ -406,6 +457,22 @@ function SelectField({
           </option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold text-muted">{label}</span>
+      <input
+        type="number"
+        min={1}
+        max={180}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value || 1))}
+        className="focus-ring mt-1 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink"
+      />
     </label>
   );
 }

@@ -17,6 +17,7 @@ from app.device_adapter import (
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.mock_data import current_room_state, query_history, summarize_metric
 from app.model_providers import generate_agent_reply
+from app.media_store import list_device_events, list_media_assets, list_stream_sources
 from app.models import (
     AgentChatRequest,
     AgentChatResponse,
@@ -99,6 +100,18 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
         return await _telemetry_status_response(
             session_id=session_id,
             message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_visual_media(lowered) and not _mentions_rule(lowered):
+        return await _vision_media_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
             used_data=used_data,
             tool_calls=tool_calls,
             needs_confirmation=needs_confirmation,
@@ -238,6 +251,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             reply = (
                 "我起草了一条休息提醒规则：如果当前时间在晚上 11 点后，"
                 "那么发送休息提醒。在你确认之前，我不会保存这条规则。"
+            )
+        elif _mentions_visual_media(lowered):
+            rule_draft = AutomationRuleCreate(
+                condition="检测到人或移动侦测事件",
+                action="发送通风和空间占用提醒",
+                enabled=True,
+                confirmed=False,
+            )
+            reply = (
+                "我起草了一条边缘事件提醒规则：如果树莓派上报检测到人或移动侦测事件，"
+                "那么发送通风和空间占用提醒。在你确认之前，我不会保存这条规则。"
             )
         else:
             rule_draft = AutomationRuleCreate(
@@ -1047,6 +1071,99 @@ async def _smart_adjustment_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
+async def _vision_media_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    lowered = message.lower()
+    used_data.extend(["device_events_recent", "stream_sources", "media_asset_metadata"])
+    events = list_device_events(limit=8)
+    streams = list_stream_sources()
+    assets = list_media_assets(limit=8)
+    event_payload = [event.model_dump(mode="json") for event in events]
+    stream_payload = [stream.model_dump(mode="json") for stream in streams]
+    asset_payload = [
+        {
+            "id": asset.id,
+            "device_id": asset.device_id,
+            "space_id": asset.space_id,
+            "zone": asset.zone,
+            "media_type": asset.media_type,
+            "file_size_bytes": asset.file_size_bytes,
+            "event_id": asset.event_id,
+            "captured_at": asset.captured_at.isoformat(),
+            "retention_days": asset.retention_days,
+            "analysis_status": asset.analysis_status,
+        }
+        for asset in assets
+    ]
+    tool_calls.append(
+        ToolCall(
+            name="get_recent_device_events",
+            parameters={"limit": 8, "privacy": "metadata_and_edge_results_only"},
+            result={"count": len(event_payload), "events": event_payload},
+            created_at=now(),
+        )
+    )
+    tool_calls.append(
+        ToolCall(
+            name="get_stream_status",
+            parameters={"scope": "configured_streams"},
+            result={"count": len(stream_payload), "streams": stream_payload},
+            created_at=now(),
+        )
+    )
+    tool_calls.append(
+        ToolCall(
+            name="get_media_asset_summary",
+            parameters={"limit": 8, "content_access": "not_read"},
+            result={"count": len(asset_payload), "assets": asset_payload},
+            created_at=now(),
+        )
+    )
+
+    adjustment_plan = None
+    if _mentions_smart_adjustment(lowered) or _mentions_action_recommendation(lowered) or any(token in lowered for token in ("调节建议", "联动建议")):
+        adjustment_plan = _build_event_adjustment_plan(events)
+        tool_calls.append(
+            ToolCall(
+                name="plan_adjustment_from_events",
+                parameters={"event_count": len(events), "source": data_source},
+                result=adjustment_plan,
+                created_at=now(),
+            )
+        )
+
+    latest_event = events[0] if events else None
+    online_streams = [stream for stream in streams if stream.status == "online"]
+    if adjustment_plan:
+        first_action = adjustment_plan["actions"][0]["title"] if adjustment_plan["actions"] else "继续观察"
+        reply = (
+            f"我读取了最近 {len(events)} 条边缘识别事件、{len(streams)} 路实时流和 {len(assets)} 个媒体元数据。"
+            f"基于这些结果，首要建议是：{first_action}。"
+            "我没有读取原始图片或视频内容，任何设备控制仍必须经过策略引擎。"
+        )
+    elif latest_event:
+        reply = (
+            f"最近的边缘事件是 {latest_event.event_type}，来自设备 {latest_event.device_id}，空间 {latest_event.space_id}。"
+            f"当前在线实时流 {len(online_streams)} 路，媒体资产 {len(assets)} 个。"
+            "我只使用边缘识别结构化结果和媒体元数据，不直接查看原始画面。"
+        )
+    else:
+        reply = (
+            f"当前没有边缘识别事件；已配置实时流 {len(streams)} 路，其中在线 {len(online_streams)} 路。"
+            "如果要让树莓派摄像头进入链路，需要先在房间设置启用本地处理和媒体策略，再使用设备令牌上报。"
+        )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 async def _database_environment_response(
     *,
     session_id: str,
@@ -1476,6 +1593,53 @@ def _build_smart_adjustment_plan(metrics: dict[Metric, object], devices: list, h
     }
 
 
+def _build_event_adjustment_plan(events: list) -> dict:
+    actions: list[dict[str, object]] = []
+    recent_presence = any(event.event_type in {"presence_detected", "motion_detected"} for event in events[:5])
+    recent_face = any(event.event_type == "face_detected" for event in events[:5])
+    recent_safety = next((event for event in events if event.severity in {"warning", "critical"}), None)
+    if recent_safety is not None:
+        actions.append(
+            {
+                "title": "优先确认安全告警现场",
+                "reason": f"最近存在 {recent_safety.severity} 级边缘事件 {recent_safety.event_type}。",
+                "risk_level": "read_only",
+                "execution_mode": "manual_confirmation",
+            }
+        )
+    if recent_presence:
+        actions.append(
+            {
+                "title": "结合 CO2 和有人状态安排通风提醒",
+                "reason": "边缘事件显示空间近期有人或有移动，应优先结合空气质量判断是否需要通风。",
+                "risk_level": "read_only",
+                "execution_mode": "reminder_only",
+            }
+        )
+    if recent_face:
+        actions.append(
+            {
+                "title": "仅使用匿名人脸计数辅助场景判断",
+                "reason": "当前版本不做人脸身份库，只能使用匿名边缘结果辅助判断空间占用。",
+                "risk_level": "read_only",
+                "execution_mode": "metadata_only",
+            }
+        )
+    if not actions:
+        actions.append(
+            {
+                "title": "保持现有环境策略并等待更多边缘事件",
+                "reason": "近期没有足够视觉事件支撑自动化建议。",
+                "risk_level": "read_only",
+                "execution_mode": "observe",
+            }
+        )
+    return {
+        "actions": actions[:4],
+        "safety_boundary": "只使用边缘识别结构化结果，不读取原始媒体；控制动作仍必须经过 policy engine。",
+    }
+
+
 def _device_action(device, title: str, reason: str) -> dict[str, object]:
     summary = _device_status_summary(device)
     if not device.controllable:
@@ -1870,6 +2034,32 @@ def _mentions_telemetry_status(text: str) -> bool:
     recent_device_question = any(token in text for token in ("最近", "最新")) and any(token in text for token in ("上报", "设备"))
     return any(token in text for token in link_tokens) and (
         any(token in text for token in status_tokens) or recent_device_question
+    )
+
+
+def _mentions_visual_media(text: str) -> bool:
+    return any(
+        token in text
+        for token in (
+            "视觉",
+            "摄像头",
+            "视频",
+            "媒体",
+            "图片",
+            "照片",
+            "快照",
+            "人脸",
+            "情绪",
+            "检测到人",
+            "有人",
+            "移动侦测",
+            "实时流",
+            "hls",
+            "rtsp",
+            "camera",
+            "stream",
+            "vision",
+        )
     )
 
 

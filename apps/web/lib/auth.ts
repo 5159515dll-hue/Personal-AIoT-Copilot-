@@ -6,6 +6,7 @@ export const protectedDashboardRoutes = [
   "/spaces",
   "/trends",
   "/devices",
+  "/vision",
   "/hardware",
   "/agent",
   "/models",

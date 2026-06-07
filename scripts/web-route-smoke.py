@@ -51,6 +51,7 @@ def main() -> int:
         ("房间设置页可渲染多空间能力", lambda: check_html(authed_client, web_base_url, "/spaces", ["房间设置", "新增空间", "感知能力规划", "视觉与身份能力边界"], args.timeout)),
         ("趋势页可渲染 24 小时与 7 天", lambda: check_trends_pages(authed_client, web_base_url, args.timeout)),
         ("设备页可渲染后台管理", lambda: check_html(authed_client, web_base_url, "/devices", ["设备", "真实硬件后台管理", "新建设备", "删除档案"], args.timeout)),
+        ("视觉与媒体页可渲染", lambda: check_html(authed_client, web_base_url, "/vision", ["视觉与媒体", "空间媒体策略", "实时视频流", "边缘识别事件"], args.timeout)),
         ("硬件接入页可渲染示例代码", lambda: check_html(authed_client, web_base_url, "/hardware", ["硬件接入", "POST", "/api/device-connections/register", "树莓派示例"], args.timeout)),
         ("智能体页可渲染工具说明", lambda: check_html(authed_client, web_base_url, "/agent", ["智能体", "工具和策略先执行", "询问房间状态"], args.timeout)),
         ("模型页可渲染中国区模型工具", lambda: check_html(authed_client, web_base_url, "/models", ["模型接入", "当前模型切换工具", "密钥导入工具", "小米", "Kimi"], args.timeout)),

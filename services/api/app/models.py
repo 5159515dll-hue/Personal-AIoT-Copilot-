@@ -68,7 +68,7 @@ class SensorValueInput(BaseModel):
 
 
 class DeviceCapability(BaseModel):
-    kind: Literal["telemetry", "control", "gateway", "diagnostic"] = "telemetry"
+    kind: Literal["telemetry", "control", "gateway", "diagnostic", "media", "vision", "stream"] = "telemetry"
     metrics: list[Metric] = Field(default_factory=list, max_length=16)
     description: str | None = Field(default=None, max_length=160)
 
@@ -266,6 +266,15 @@ class TelemetryStatus(BaseModel):
     message: str
 
 
+class SpaceMediaPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allow_realtime_stream: bool = False
+    allow_event_media: bool = False
+    media_retention_days: int = Field(default=7, ge=1, le=30)
+    event_retention_days: int = Field(default=30, ge=1, le=180)
+
+
 class SpacePerceptionSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -273,8 +282,9 @@ class SpacePerceptionSettings(BaseModel):
     face_recognition: Literal["disabled", "planned", "local_only"] = "disabled"
     emotion_recognition: Literal["disabled", "planned", "local_only"] = "disabled"
     location_tracking: Literal["disabled", "planned", "local_only"] = "disabled"
-    image_retention: Literal["none", "metadata_only"] = "none"
+    image_retention: Literal["none", "metadata_only", "event_media"] = "none"
     privacy_mode: Literal["strict", "local_only"] = "strict"
+    media_policy: SpaceMediaPolicy = Field(default_factory=SpaceMediaPolicy)
     notes: str | None = Field(default=None, max_length=240)
 
 
@@ -399,6 +409,151 @@ class DeviceBatchManagementFailure(BaseModel):
 class DeviceBatchManagementResponse(BaseModel):
     updated: list[ManagedDevice]
     failed: list[DeviceBatchManagementFailure] = Field(default_factory=list)
+
+
+class DeviceCredentialPublic(BaseModel):
+    device_id: str
+    issued_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    token_preview: str
+
+
+class DeviceCredentialIssueResponse(BaseModel):
+    credential: DeviceCredentialPublic
+    token: str
+    audit_log_id: str
+
+
+class DeviceCredentialRecord(BaseModel):
+    device_id: str
+    token_hash: str
+    token_preview: str
+    issued_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+
+DeviceEventType = Literal[
+    "presence_detected",
+    "motion_detected",
+    "face_detected",
+    "emotion_detected",
+    "location_update",
+    "safety_alert",
+    "custom",
+]
+
+
+class DeviceEventCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: str = Field(default="aiot.v1", max_length=32)
+    message_id: str | None = Field(default=None, max_length=120)
+    sequence: int | None = Field(default=None, ge=0)
+    event_type: DeviceEventType
+    severity: Literal["info", "warning", "critical"] = "info"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    space_id: str = Field(min_length=1, max_length=80)
+    zone: str | None = Field(default=None, max_length=80)
+    captured_at: datetime | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    media_ids: list[str] = Field(default_factory=list, max_length=16)
+
+
+class DeviceEvent(DeviceEventCreate):
+    id: str = Field(default_factory=lambda: f"event_{uuid4().hex[:12]}")
+    device_id: str
+    received_at: datetime
+
+
+class DeviceEventIngestResponse(BaseModel):
+    event: DeviceEvent
+    audit_log_id: str
+
+
+class MediaAsset(BaseModel):
+    id: str = Field(default_factory=lambda: f"media_{uuid4().hex[:12]}")
+    device_id: str
+    space_id: str
+    zone: str | None = None
+    media_type: Literal["image", "video"]
+    content_type: Literal["image/jpeg", "image/png", "video/mp4"]
+    file_name: str
+    file_size_bytes: int = Field(ge=0)
+    sha256: str
+    storage_path: str
+    content_url: str
+    event_id: str | None = None
+    captured_at: datetime
+    received_at: datetime
+    retention_policy: Literal["event_media", "metadata_only"]
+    retention_days: int = Field(ge=1, le=30)
+    privacy_level: Literal["space_local_only", "metadata_only"] = "space_local_only"
+    analysis_status: Literal["not_requested", "edge_completed", "pending", "failed"] = "not_requested"
+
+
+class MediaAssetUploadResponse(BaseModel):
+    asset: MediaAsset
+    audit_log_id: str
+
+
+class MediaAssetDeleteResponse(BaseModel):
+    deleted: bool
+    media_id: str
+    audit_log_id: str
+
+
+class StreamSourceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str = Field(min_length=1, max_length=80)
+    space_id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    rtsp_url: str = Field(min_length=1, max_length=500)
+    stream_key: str | None = Field(default=None, max_length=120)
+    zone: str | None = Field(default=None, max_length=80)
+    enabled: bool = True
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class StreamSourceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    rtsp_url: str | None = Field(default=None, min_length=1, max_length=500)
+    stream_key: str | None = Field(default=None, max_length=120)
+    zone: str | None = Field(default=None, max_length=80)
+    enabled: bool | None = None
+    status: Literal["configured", "online", "offline", "error"] | None = None
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class StreamSource(BaseModel):
+    id: str = Field(default_factory=lambda: f"stream_{uuid4().hex[:12]}")
+    device_id: str
+    space_id: str
+    name: str
+    rtsp_url: str
+    hls_url: str
+    stream_key: str
+    zone: str | None = None
+    enabled: bool = True
+    status: Literal["configured", "online", "offline", "error"] = "configured"
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class StreamSourceMutationResponse(BaseModel):
+    stream: StreamSource
+    audit_log_id: str
+
+
+class StreamSourceDeleteResponse(BaseModel):
+    deleted: bool
+    stream_id: str
+    audit_log_id: str
 
 
 class PolicyDecision(BaseModel):

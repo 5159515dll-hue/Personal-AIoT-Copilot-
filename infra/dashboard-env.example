@@ -12,3 +12,9 @@ MQTT_BROKER_PORT=1883
 MQTT_USERNAME=
 MQTT_PASSWORD=
 MQTT_TOPIC=aiot/room/+/telemetry
+
+AIOT_MEDIA_ROOT=/home/ubuntu/aiot-copilot/services/api/.local/media
+AIOT_STREAM_ROOT=/home/ubuntu/aiot-copilot/services/api/.local/streams
+AIOT_DEVICE_TOKEN_SECRET=替换为设备令牌哈希密钥
+MEDIAMTX_RTSP_PORT=8554
+MEDIAMTX_HLS_BASE_URL=http://127.0.0.1:8888
