@@ -3,11 +3,14 @@ export const DEFAULT_DASHBOARD_ACCESS_CODE = "admin123";
 
 export const protectedDashboardRoutes = [
   "/dashboard",
+  "/spaces",
   "/trends",
   "/devices",
+  "/hardware",
   "/agent",
   "/models",
   "/rules",
+  "/evaluation",
   "/audit"
 ];
 

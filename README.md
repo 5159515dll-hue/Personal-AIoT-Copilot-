@@ -15,6 +15,7 @@
 - ESP32 房间传感器节点固件，支持 SHT31、BH1750、SCD40 / SCD41、GPIO 存在传感器和可选 ADC 后备，对齐 MQTT/HTTP 设备消息协议。
 - 统一设备连接接口，支持 ESP32、STM32、树莓派和 Linux 网关以 `aiot.v1` 协议注册、心跳、声明能力和上报遥测。
 - 设备后台管理页支持预建设备、编辑绑定、负载标记、手动下线、删除档案和批量运维；硬件重新上报后会以只读档案重新进入后台。
+- 房间设置页支持多个空间、区域划分、设备绑定和当前空间切换；摄像头、人脸、情绪和位置能力当前只保存规划状态，默认关闭且不采集真实数据。
 - 带风险等级的设备注册表和可持久化模拟控制；配置数据库时会使用 `device_registry`，否则回退到安全模拟清单。
 - 受工具约束的智能体对话，可在模拟数据和数据库遥测之间切换，支持日总结、原因解释、安全行动建议、设备状态分析、硬件数据智能调节计划、结构化异常事件解释、本地设备协议查询，并可选调用当前大模型增强分析。
 - 中国区模型厂商配置页，预置小米 MiMo 和 Kimi 接口，并可选择智能体当前模型。
@@ -68,7 +69,7 @@ export DASHBOARD_COOKIE_SECURE="false"
 访问保护规则：
 
 - `/` 公开项目页继续开放。
-- `/dashboard`、`/trends`、`/devices`、`/hardware`、`/agent`、`/models`、`/rules`、`/audit` 会跳转到 `/access`。
+- `/dashboard`、`/spaces`、`/trends`、`/devices`、`/hardware`、`/agent`、`/models`、`/rules`、`/evaluation`、`/audit` 会跳转到 `/access`。
 - `/api/health` 保持公开健康检查。
 - 其他 `/api/*` 私有接口需要登录 cookie，或由 Web 服务携带内部服务令牌访问。
 
@@ -138,6 +139,8 @@ curl -X POST -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" "http://localh
 设备清单支持 `source=mock|database|auto`。显式请求 `GET /api/devices?source=database` 时，后端会初始化 `device_registry` 表；如果表为空，会用当前安全种子设备填充。未知负载智能插座和报警器仍保持高风险或禁止状态，不会因为进入数据库而变成可控设备。
 
 统一设备接入接口见 `docs/device-connection-interface.md`，传感器消息协议见 `docs/device-protocol.md`，控制台内也有 `/hardware` 接入帮助页。可执行示例见 `services/mqtt-ingestor/examples/room-node-message.json`、`firmware/esp32-room-node`、`firmware/stm32-room-node` 和 `examples/raspberry-pi-gateway`。ESP32 固件默认只发布遥测，不接收设备控制指令；未接入或读取失败的传感器不会伪造成正常读数。
+
+未来如果接入树莓派摄像头，必须先在 `/spaces` 里把空间、设备、区域和感知能力边界配置清楚。当前实现不会采集图像，不做人脸识别、情绪识别或精确位置追踪；这些能力只能作为规划状态进入审计链路。
 
 生产环境可以使用系统 PostgreSQL、Mosquitto 和 `infra/systemd` 下的 systemd 模板运行 `aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor`。服务读取私有 `.dashboard-env` 中的会话密钥、内部服务令牌、`DATABASE_URL`、`MQTT_BROKER_HOST`、`MQTT_BROKER_PORT` 和 `MQTT_TOPIC`；访问口令仍固定为 `admin123`。环境文件示例见 `infra/dashboard-env.example`，具体安装和重启步骤见 `infra/systemd/README.md`。
 

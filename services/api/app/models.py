@@ -266,6 +266,74 @@ class TelemetryStatus(BaseModel):
     message: str
 
 
+class SpacePerceptionSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    camera: Literal["disabled", "planned", "local_only"] = "disabled"
+    face_recognition: Literal["disabled", "planned", "local_only"] = "disabled"
+    emotion_recognition: Literal["disabled", "planned", "local_only"] = "disabled"
+    location_tracking: Literal["disabled", "planned", "local_only"] = "disabled"
+    image_retention: Literal["none", "metadata_only"] = "none"
+    privacy_mode: Literal["strict", "local_only"] = "strict"
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class RoomSpace(BaseModel):
+    id: str
+    name: str
+    space_type: Literal["study", "bedroom", "living_room", "lab", "balcony", "kitchen", "other"]
+    location_label: str
+    floor: str | None = None
+    timezone: str = "Asia/Shanghai"
+    is_active: bool = False
+    device_ids: list[str] = Field(default_factory=list, max_length=100)
+    zones: list[str] = Field(default_factory=list, max_length=50)
+    perception: SpacePerceptionSettings = Field(default_factory=SpacePerceptionSettings)
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RoomSpaceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
+    name: str = Field(min_length=1, max_length=120)
+    space_type: Literal["study", "bedroom", "living_room", "lab", "balcony", "kitchen", "other"] = "study"
+    location_label: str = Field(default="书房", min_length=1, max_length=120)
+    floor: str | None = Field(default=None, max_length=80)
+    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=80)
+    device_ids: list[str] = Field(default_factory=list, max_length=100)
+    zones: list[str] = Field(default_factory=list, max_length=50)
+    perception: SpacePerceptionSettings = Field(default_factory=SpacePerceptionSettings)
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class RoomSpaceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    space_type: Literal["study", "bedroom", "living_room", "lab", "balcony", "kitchen", "other"] | None = None
+    location_label: str | None = Field(default=None, min_length=1, max_length=120)
+    floor: str | None = Field(default=None, max_length=80)
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)
+    device_ids: list[str] | None = Field(default=None, max_length=100)
+    zones: list[str] | None = Field(default=None, max_length=50)
+    perception: SpacePerceptionSettings | None = None
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class RoomSpaceMutationResponse(BaseModel):
+    space: RoomSpace
+    audit_log_id: str
+
+
+class RoomSpaceDeleteResponse(BaseModel):
+    deleted: bool
+    space_id: str
+    audit_log_id: str
+
+
 class RoomState(BaseModel):
     timestamp: datetime
     health_score: int = Field(ge=0, le=100)

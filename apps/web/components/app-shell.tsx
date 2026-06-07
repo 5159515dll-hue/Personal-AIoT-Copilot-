@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Activity,
   Bot,
@@ -12,13 +13,17 @@ import {
   KeyRound,
   ListChecks,
   LogOut,
+  MapPinned,
   ShieldCheck,
   ShieldPlus,
   SlidersHorizontal
 } from "lucide-react";
+import { getCurrentSpace } from "@/lib/api";
+import type { RoomSpace } from "@/lib/types";
 
 const navItems = [
   { href: "/dashboard", label: "总览", icon: Gauge },
+  { href: "/spaces", label: "空间", icon: MapPinned },
   { href: "/trends", label: "趋势", icon: Activity },
   { href: "/devices", label: "设备", icon: SlidersHorizontal },
   { href: "/hardware", label: "接入", icon: Cable },
@@ -31,6 +36,25 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [space, setSpace] = useState<RoomSpace | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    getCurrentSpace()
+      .then((current) => {
+        if (mounted) {
+          setSpace(current);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setSpace(null);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-wash text-ink">
@@ -92,8 +116,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               智能物联助手
             </Link>
             <div className="hidden min-w-0 lg:block">
-              <p className="text-sm font-semibold">演示房间 001</p>
-              <p className="text-xs text-muted">亚洲/上海 · 模拟遥测 · 策略强制执行</p>
+              <p className="text-sm font-semibold">{space?.name ?? "当前空间"}</p>
+              <p className="text-xs text-muted">
+                {space ? `${space.location_label} · ${space.timezone} · 策略强制执行` : "亚洲/上海 · 模拟遥测 · 策略强制执行"}
+              </p>
             </div>
             <div className="flex items-center gap-3 text-xs">
               <span className="flex items-center gap-2">

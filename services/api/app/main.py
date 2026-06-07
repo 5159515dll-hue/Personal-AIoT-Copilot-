@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import api_auth_enabled, is_public_api_path, request_is_authorized
-from app.routes import agent, anomalies, audit_logs, device_connections, devices, evaluations, ingest, model_providers, room, rules, sensors, telemetry
+from app.routes import agent, anomalies, audit_logs, device_connections, devices, evaluations, ingest, model_providers, room, rules, sensors, spaces, telemetry
 
 app = FastAPI(
     title="个人空间智能物联助手接口",
@@ -42,6 +42,7 @@ async def protect_private_api(request: Request, call_next):
 app.include_router(room.router)
 app.include_router(anomalies.router)
 app.include_router(sensors.router)
+app.include_router(spaces.router)
 app.include_router(devices.router)
 app.include_router(device_connections.router)
 app.include_router(ingest.router)

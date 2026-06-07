@@ -19,6 +19,7 @@ from app import model_providers as model_provider_module
 from app import room_state as room_state_module
 from app import rule_engine as rule_engine_module
 from app import rule_store as rule_store_module
+from app import space_store as space_store_module
 from app.auth import DASHBOARD_SESSION_COOKIE, INTERNAL_API_TOKEN_HEADER, session_token_for
 from app.device_adapter import DeviceRegistryUnavailable
 from app.ingestion import parse_mqtt_payload
@@ -67,6 +68,7 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(model_provider_module.config_store, "path", tmp_path / "model_config.json")
     monkeypatch.setattr(model_provider_module.active_selection_store, "path", tmp_path / "active_model_selection.json")
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
+    monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
 
 
 def test_room_current_schema() -> None:
@@ -122,6 +124,72 @@ def test_room_current_database_source_reports_unavailable_database(monkeypatch) 
     response = client.get("/api/room/current", params={"source": "database"})
     assert response.status_code == 503
     assert "DATABASE_URL" in response.json()["detail"]
+
+
+def test_spaces_default_current_and_crud_records_audit() -> None:
+    current_response = client.get("/api/spaces/current")
+    assert current_response.status_code == 200
+    current_payload = current_response.json()
+    assert current_payload["id"] == "space_study_001"
+    assert current_payload["is_active"] is True
+    assert current_payload["perception"]["camera"] == "disabled"
+    assert current_payload["perception"]["face_recognition"] == "disabled"
+
+    create_response = client.post(
+        "/api/spaces",
+        json={
+            "id": "space_living_001",
+            "name": "客厅",
+            "space_type": "living_room",
+            "location_label": "一楼客厅",
+            "floor": "一楼",
+            "device_ids": ["raspi_gateway_01", "raspi_gateway_01", ""],
+            "zones": ["沙发区", "玄关"],
+            "perception": {
+                "camera": "planned",
+                "face_recognition": "planned",
+                "emotion_recognition": "disabled",
+                "location_tracking": "planned",
+                "image_retention": "metadata_only",
+                "privacy_mode": "strict",
+                "notes": "只做后续能力规划，不采集图像。",
+            },
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()["space"]
+    assert created["id"] == "space_living_001"
+    assert created["device_ids"] == ["raspi_gateway_01"]
+    assert created["perception"]["image_retention"] == "none"
+    assert create_response.json()["audit_log_id"]
+
+    activate_response = client.post("/api/spaces/space_living_001/activate")
+    assert activate_response.status_code == 200
+    assert activate_response.json()["space"]["is_active"] is True
+
+    update_response = client.patch(
+        "/api/spaces/space_living_001",
+        json={"name": "客厅与玄关", "zones": ["沙发区", "玄关", "阳台门"]},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["space"]["name"] == "客厅与玄关"
+    assert update_response.json()["space"]["zones"] == ["沙发区", "玄关", "阳台门"]
+
+    delete_active_response = client.delete("/api/spaces/space_living_001")
+    assert delete_active_response.status_code == 409
+    assert "当前空间不能删除" in delete_active_response.json()["detail"]
+
+    client.post("/api/spaces/space_study_001/activate")
+    delete_response = client.delete("/api/spaces/space_living_001")
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+    assert delete_response.json()["audit_log_id"]
+
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "create_space" in actions
+    assert "activate_space" in actions
+    assert "update_space" in actions
+    assert "delete_space" in actions
 
 
 def test_private_api_requires_dashboard_session() -> None:

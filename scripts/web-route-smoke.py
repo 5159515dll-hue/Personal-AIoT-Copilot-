@@ -48,6 +48,7 @@ def main() -> int:
         ("未登录访问私有页会被拦截", lambda: check_private_route_redirect(public_client, web_base_url, args.timeout)),
         ("固定口令可建立控制台会话", lambda: login(authed_client, web_base_url, args.timeout)),
         ("总览页可渲染", lambda: check_html(authed_client, web_base_url, "/dashboard?source=mock", ["空间总览", "智能体建议", "最近审计活动"], args.timeout)),
+        ("房间设置页可渲染多空间能力", lambda: check_html(authed_client, web_base_url, "/spaces", ["房间设置", "新增空间", "感知能力规划", "视觉与身份能力边界"], args.timeout)),
         ("趋势页可渲染 24 小时与 7 天", lambda: check_trends_pages(authed_client, web_base_url, args.timeout)),
         ("设备页可渲染后台管理", lambda: check_html(authed_client, web_base_url, "/devices", ["设备", "真实硬件后台管理", "新建设备", "删除档案"], args.timeout)),
         ("硬件接入页可渲染示例代码", lambda: check_html(authed_client, web_base_url, "/hardware", ["硬件接入", "POST", "/api/device-connections/register", "树莓派示例"], args.timeout)),

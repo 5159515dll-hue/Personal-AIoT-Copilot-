@@ -66,6 +66,60 @@ export type TelemetryStatus = {
   message: string;
 };
 
+export type SpaceCapabilityStatus = "disabled" | "planned" | "local_only";
+
+export type SpacePerceptionSettings = {
+  camera: SpaceCapabilityStatus;
+  face_recognition: SpaceCapabilityStatus;
+  emotion_recognition: SpaceCapabilityStatus;
+  location_tracking: SpaceCapabilityStatus;
+  image_retention: "none" | "metadata_only";
+  privacy_mode: "strict" | "local_only";
+  notes: string | null;
+};
+
+export type RoomSpace = {
+  id: string;
+  name: string;
+  space_type: "study" | "bedroom" | "living_room" | "lab" | "balcony" | "kitchen" | "other";
+  location_label: string;
+  floor: string | null;
+  timezone: string;
+  is_active: boolean;
+  device_ids: string[];
+  zones: string[];
+  perception: SpacePerceptionSettings;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RoomSpaceCreate = {
+  id?: string | null;
+  name: string;
+  space_type: RoomSpace["space_type"];
+  location_label: string;
+  floor?: string | null;
+  timezone: string;
+  device_ids: string[];
+  zones: string[];
+  perception: SpacePerceptionSettings;
+  notes?: string | null;
+};
+
+export type RoomSpaceUpdate = Partial<Omit<RoomSpaceCreate, "id">>;
+
+export type RoomSpaceMutationResponse = {
+  space: RoomSpace;
+  audit_log_id: string;
+};
+
+export type RoomSpaceDeleteResponse = {
+  deleted: boolean;
+  space_id: string;
+  audit_log_id: string;
+};
+
 export type TelemetrySourceSummary = {
   source: string;
   total_readings: number;

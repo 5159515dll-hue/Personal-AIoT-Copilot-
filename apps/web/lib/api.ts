@@ -27,6 +27,11 @@ import type {
   ModelSelectionRequest,
   PublicModelConfig,
   RuleEvaluation,
+  RoomSpace,
+  RoomSpaceCreate,
+  RoomSpaceDeleteResponse,
+  RoomSpaceMutationResponse,
+  RoomSpaceUpdate,
   RoomState,
   SensorHealth,
   SensorReading,
@@ -124,6 +129,40 @@ export async function getSensorHealth(source: TelemetrySource = "mock"): Promise
 
 export async function getTelemetryStatus(): Promise<TelemetryStatus> {
   return request<TelemetryStatus>("/api/telemetry/status");
+}
+
+export async function getSpaces(): Promise<RoomSpace[]> {
+  return request<RoomSpace[]>("/api/spaces");
+}
+
+export async function getCurrentSpace(): Promise<RoomSpace> {
+  return request<RoomSpace>("/api/spaces/current");
+}
+
+export async function createSpace(payload: RoomSpaceCreate): Promise<RoomSpaceMutationResponse> {
+  return request<RoomSpaceMutationResponse>("/api/spaces", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateSpace(id: string, payload: RoomSpaceUpdate): Promise<RoomSpaceMutationResponse> {
+  return request<RoomSpaceMutationResponse>(`/api/spaces/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function activateSpace(id: string): Promise<RoomSpaceMutationResponse> {
+  return request<RoomSpaceMutationResponse>(`/api/spaces/${id}/activate`, {
+    method: "POST"
+  });
+}
+
+export async function deleteSpace(id: string): Promise<RoomSpaceDeleteResponse> {
+  return request<RoomSpaceDeleteResponse>(`/api/spaces/${id}`, {
+    method: "DELETE"
+  });
 }
 
 export async function getDevices(): Promise<Device[]> {

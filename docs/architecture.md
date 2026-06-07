@@ -31,6 +31,7 @@
 - `services/api/app/database.py`：PostgreSQL / TimescaleDB 表结构、传感器读写、设备注册表、设备连接表读写和查询。
 - `services/api/app/anomaly_events.py`：从当前读数、历史曲线和传感器健康状态推导结构化异常事件。
 - `services/api/app/agent_tools.py`：工具优先的智能体编排。
+- `services/api/app/space_store.py`：多房间/空间配置，保存当前空间、区域、设备绑定和未来感知能力边界。
 - `services/api/app/policy.py`：风险分级、确认要求和拒绝逻辑。
 - `services/api/app/rule_engine.py`：评估简单 IF/THEN 提醒规则并写入触发审计。
 - `services/api/app/audit.py`：持久化审计记录。
@@ -59,6 +60,7 @@
 6. `GET /api/sensors/history?source=database&bucket=15m&from=...` 从数据库读取并聚合历史曲线。
 7. `POST /api/rules/evaluate?source=database` 使用数据库最新房间状态评估已确认规则。
 8. `/dashboard`、`/trends`、`/agent` 和 `/rules` 可选择 database 数据源，用入库最新读数和历史曲线展示、回答环境问题或评估提醒规则。
+9. `/spaces` 管理多个房间或区域，当前只保存配置和审计；摄像头、人脸、情绪和定位能力默认关闭，当前版本不采集真实图像或身份数据。
 9. `GET /api/devices?source=database` 会初始化并读取 `device_registry` 表；表为空时用当前安全种子设备填充，未知负载插座和报警器仍保持不可控。
 10. `POST /api/device-connections/register`、`/heartbeat` 和 `/{device_id}/telemetry` 提供统一设备接入接口，ESP32、STM32、树莓派和 Linux 网关都使用 `aiot.v1` envelope。
 11. 默认控制台仍使用 mock 数据，避免公开演示依赖真实隐私数据。
@@ -66,6 +68,8 @@
 ## ESP32 固件边界
 
 `firmware/esp32-room-node` 已提供真实传感器读取路径，支持 SHT31 温湿度、SCD40 / SCD41 CO2、BH1750 光照、GPIO 人体存在和可选 ADC 噪声分贝。固件只发布遥测，不订阅控制 topic，不接收远程执行命令，也不携带真实 Wi-Fi 或 MQTT 密钥；噪声只上报 dB 数值，不采集或上传原始音频。未接入或读取失败的传感器会被跳过，避免把固定值伪装成真实数据。
+
+树莓派摄像头、人脸识别、情绪识别和位置定位属于后续高敏感能力。当前版本只在空间设置中保存 `disabled/planned/local_only` 配置，不接真实图像、不做人脸或情绪推断、不记录精确位置；后续如果落地，必须增加本地处理、最小化留存、显式确认、策略评估和审计链路。
 
 生产部署可以直接使用系统 PostgreSQL 和 Mosquitto。`aiot-api`、`aiot-web` 和 `aiot-mqtt-ingestor` 共用 `.dashboard-env`，其中会话密钥、内部服务令牌、`DATABASE_URL` 与 MQTT 参数只保存在服务器私有环境文件中，不提交到 Git。私有控制台访问口令固定为 `admin123`，不依赖环境变量覆盖。
 
