@@ -260,19 +260,36 @@ export function DeviceManagementPanel({
     if (!credential) {
       return;
     }
-    try {
-      await navigator.clipboard.writeText(credential.token);
-      setVisibleCredentials((current) => ({
-        ...current,
-        [deviceId]: {
-          ...credential,
-          copied: true
-        }
-      }));
-      setMessage(`设备 ${deviceId} 的令牌已复制。`);
-    } catch {
-      setMessage("浏览器剪贴板不可用，请手动选中令牌并复制。");
+    if (copyCredentialField(deviceId)) {
+      markCredentialCopied(deviceId, credential);
+      return;
     }
+    if (copyTextWithTextarea(credential.token)) {
+      markCredentialCopied(deviceId, credential);
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(credential.token);
+        markCredentialCopied(deviceId, credential);
+        return;
+      }
+    } catch {
+      // Fall through to text selection below.
+    }
+    const selected = selectCredentialText(deviceId);
+    setMessage(selected ? "浏览器禁止自动写入剪贴板，已选中令牌，请按 Ctrl+C 或 Cmd+C 复制。" : "浏览器剪贴板不可用，请手动选中令牌并复制。");
+  }
+
+  function markCredentialCopied(deviceId: string, credential: VisibleCredential) {
+    setVisibleCredentials((current) => ({
+      ...current,
+      [deviceId]: {
+        ...credential,
+        copied: true
+      }
+    }));
+    setMessage(`设备 ${deviceId} 的令牌已复制。`);
   }
 
   function hideCredential(deviceId: string) {
@@ -664,9 +681,14 @@ export function DeviceManagementPanel({
                       </button>
                     </div>
                   </div>
-                  <code className="mt-3 block max-h-32 overflow-auto rounded-md border border-teal-200 bg-white p-3 font-mono text-xs leading-5 text-slate-900 break-all">
-                    {visibleCredential.token}
-                  </code>
+                  <textarea
+                    readOnly
+                    data-device-token={item.device.id}
+                    value={visibleCredential.token}
+                    className="focus-ring mt-3 block h-24 w-full resize-none rounded-md border border-teal-200 bg-white p-3 font-mono text-xs leading-5 text-slate-900"
+                    aria-label={`${item.device.id} 的一次性设备令牌`}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
                   <p className="mt-2 text-xs leading-5 text-teal-800">
                     预览：{visibleCredential.tokenPreview} · 审计编号：{visibleCredential.auditLogId}
                   </p>
@@ -760,4 +782,78 @@ function stringValue(value: unknown): string | null {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" ? value : null;
+}
+
+function credentialField(deviceId: string): HTMLTextAreaElement | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  return (
+    Array.from(document.querySelectorAll<HTMLTextAreaElement>("textarea[data-device-token]")).find(
+      (element) => element.dataset.deviceToken === deviceId
+    ) ?? null
+  );
+}
+
+function copyCredentialField(deviceId: string): boolean {
+  const field = credentialField(deviceId);
+  if (!field) {
+    return false;
+  }
+  field.focus();
+  field.select();
+  field.setSelectionRange(0, field.value.length);
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  }
+}
+
+function copyTextWithTextarea(text: string): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function selectCredentialText(deviceId: string): boolean {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return false;
+  }
+  const field = credentialField(deviceId);
+  if (field) {
+    field.focus();
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    return true;
+  }
+  const node = Array.from(document.querySelectorAll<HTMLElement>("[data-device-token]")).find(
+    (element) => element.dataset.deviceToken === deviceId
+  );
+  const selection = window.getSelection();
+  if (!node || !selection) {
+    return false;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
 }
