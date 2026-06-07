@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Ban, Boxes, CheckSquare, Cpu, KeyRound, Plus, Save, Square, Trash2, Unplug } from "lucide-react";
+import { Ban, Boxes, CheckSquare, Copy, Cpu, KeyRound, Plus, Save, Square, Trash2, Unplug } from "lucide-react";
 import {
   batchUpdateDeviceManagement,
   createDeviceManagement,
@@ -73,6 +73,12 @@ const defaultCreateDraft: DeviceManagementCreate = {
 };
 
 type DraftMap = Record<string, DeviceManagementUpdate>;
+type VisibleCredential = {
+  token: string;
+  tokenPreview: string;
+  auditLogId: string;
+  copied: boolean;
+};
 
 export function DeviceManagementPanel({
   initialDevices,
@@ -90,6 +96,8 @@ export function DeviceManagementPanel({
   const [batchRisk, setBatchRisk] = useState<DeviceManagementUpdate["risk_level"]>("read_only");
   const [batchLoadType, setBatchLoadType] = useState("none");
   const [batchLoadLabel, setBatchLoadLabel] = useState("");
+  const [visibleCredentials, setVisibleCredentials] = useState<Record<string, VisibleCredential>>({});
+  const [credentialConfirmation, setCredentialConfirmation] = useState<string | null>(null);
 
   const selectedItems = useMemo(() => items.filter((item) => selected.has(item.device.id)), [items, selected]);
 
@@ -219,21 +227,61 @@ export function DeviceManagementPanel({
     }
   }
 
+  function requestCredentialConfirmation(item: ManagedDevice) {
+    setCredentialConfirmation(item.device.id);
+    setMessage(`请在设备 ${item.device.id} 卡片中确认生成或轮换上报令牌，旧令牌会立即失效。`);
+  }
+
   async function issueCredential(item: ManagedDevice) {
-    const confirmed = window.confirm(`确认生成或轮换设备 ${item.device.id} 的上报令牌？旧令牌会失效。`);
-    if (!confirmed) {
-      return;
-    }
     setPending(`credential:${item.device.id}`);
     setMessage(null);
     try {
       const response = await issueDeviceCredential(item.device.id);
-      setMessage(`设备 ${item.device.id} 的令牌已生成，仅显示一次：${response.token}。审计编号：${response.audit_log_id}`);
+      setCredentialConfirmation(null);
+      setVisibleCredentials((current) => ({
+        ...current,
+        [item.device.id]: {
+          token: response.token,
+          tokenPreview: response.credential.token_preview,
+          auditLogId: response.audit_log_id,
+          copied: false
+        }
+      }));
+      setMessage(`设备 ${item.device.id} 的令牌已生成，请在该设备卡片下方复制一次性令牌。审计编号：${response.audit_log_id}`);
     } catch (credentialError) {
       setMessage(credentialError instanceof Error ? credentialError.message : "设备令牌生成失败");
     } finally {
       setPending(null);
     }
+  }
+
+  async function copyCredential(deviceId: string) {
+    const credential = visibleCredentials[deviceId];
+    if (!credential) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(credential.token);
+      setVisibleCredentials((current) => ({
+        ...current,
+        [deviceId]: {
+          ...credential,
+          copied: true
+        }
+      }));
+      setMessage(`设备 ${deviceId} 的令牌已复制。`);
+    } catch {
+      setMessage("浏览器剪贴板不可用，请手动选中令牌并复制。");
+    }
+  }
+
+  function hideCredential(deviceId: string) {
+    setVisibleCredentials((current) => {
+      const next = { ...current };
+      delete next[deviceId];
+      return next;
+    });
+    setMessage(`设备 ${deviceId} 的一次性令牌已从页面隐藏。`);
   }
 
   async function applyBatch() {
@@ -408,6 +456,7 @@ export function DeviceManagementPanel({
         {items.map((item) => {
           const draft = drafts[item.device.id] ?? draftFromItem(item);
           const checked = selected.has(item.device.id);
+          const visibleCredential = visibleCredentials[item.device.id];
           return (
             <article key={item.device.id} className="rounded-lg border border-line bg-slate-50 p-3">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -536,7 +585,7 @@ export function DeviceManagementPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void issueCredential(item)}
+                  onClick={() => requestCredentialConfirmation(item)}
                   disabled={pending === `credential:${item.device.id}`}
                   className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -553,6 +602,76 @@ export function DeviceManagementPanel({
                   删除档案
                 </button>
               </div>
+
+              {credentialConfirmation === item.device.id && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">确认生成或轮换设备令牌</p>
+                      <p className="mt-1 text-xs leading-5 text-amber-800">
+                        设备 {item.device.id} 的旧令牌会立即失效。新令牌只显示一次，请确认后马上复制到硬件配置。
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void issueCredential(item)}
+                        disabled={pending === `credential:${item.device.id}`}
+                        className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <KeyRound size={16} aria-hidden />
+                        确认生成令牌
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCredentialConfirmation(null);
+                          setMessage(null);
+                        }}
+                        className="focus-ring inline-flex h-9 items-center rounded-lg border border-amber-200 bg-white px-3 text-sm font-semibold text-amber-800"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {visibleCredential && (
+                <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-teal-900">一次性设备令牌</p>
+                      <p className="mt-1 text-xs leading-5 text-teal-800">
+                        仅本次显示。请写入硬件配置或网关环境变量；刷新或隐藏后无法再次查看，只能重新生成。
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void copyCredential(item.device.id)}
+                        className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-teal-700 px-3 text-sm font-semibold text-white"
+                      >
+                        <Copy size={16} aria-hidden />
+                        {visibleCredential.copied ? "已复制" : "复制令牌"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => hideCredential(item.device.id)}
+                        className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-800"
+                      >
+                        隐藏令牌
+                      </button>
+                    </div>
+                  </div>
+                  <code className="mt-3 block max-h-32 overflow-auto rounded-md border border-teal-200 bg-white p-3 font-mono text-xs leading-5 text-slate-900 break-all">
+                    {visibleCredential.token}
+                  </code>
+                  <p className="mt-2 text-xs leading-5 text-teal-800">
+                    预览：{visibleCredential.tokenPreview} · 审计编号：{visibleCredential.auditLogId}
+                  </p>
+                </div>
+              )}
             </article>
           );
         })}
