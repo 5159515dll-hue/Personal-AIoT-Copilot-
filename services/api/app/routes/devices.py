@@ -9,11 +9,19 @@ from app.device_adapter import (
     get_device,
     list_devices as list_registered_devices,
 )
+from app.device_connections import list_managed_devices, mark_managed_device_offline, update_managed_device
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.models import (
     ControlDeviceRequest,
     ControlDeviceResponse,
+    DeviceBatchManagementFailure,
+    DeviceBatchManagementRequest,
+    DeviceBatchManagementResponse,
     Device,
+    DeviceManagementResponse,
+    DeviceManagementUpdate,
+    DeviceOfflineRequest,
+    ManagedDevice,
     PolicyResult,
 )
 from app.policy import assess_device_control
@@ -27,6 +35,93 @@ def list_devices(source: Literal["auto", "mock", "database"] = Query("auto")) ->
         return list_registered_devices(source)
     except DeviceRegistryUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/management", response_model=list[ManagedDevice])
+def get_device_management(limit: int = Query(500, ge=1, le=1000)) -> list[ManagedDevice]:
+    try:
+        return list_managed_devices(limit=limit)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="设备管理后台查询失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+
+
+@router.patch("/{device_id}/management", response_model=DeviceManagementResponse)
+def update_device_management(device_id: str, request: DeviceManagementUpdate) -> DeviceManagementResponse:
+    try:
+        item = update_managed_device(device_id, request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="设备管理更新失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+
+    audit = record_audit(
+        actor="user",
+        action="update_device_management",
+        result="success",
+        details=f"设备后台配置已更新：{item.device.id}。",
+        parameters={
+            "device_id": item.device.id,
+            "binding_status": item.binding_status,
+            "risk_level": item.device.risk_level.value,
+            "controllable": item.device.controllable,
+            "connected_appliance": item.device.connected_appliance,
+            "load_mark": item.load_mark,
+        },
+    )
+    return DeviceManagementResponse(item=item, audit_log_id=audit.id)
+
+
+@router.post("/{device_id}/offline", response_model=DeviceManagementResponse)
+def offline_device(device_id: str, request: DeviceOfflineRequest) -> DeviceManagementResponse:
+    try:
+        item = mark_managed_device_offline(device_id, request.reason)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="设备下线失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+
+    audit = record_audit(
+        actor="user",
+        action="offline_device",
+        result="success",
+        details=f"设备已由后台手动下线：{item.device.id}。",
+        parameters={"device_id": item.device.id, "reason": request.reason},
+    )
+    return DeviceManagementResponse(item=item, audit_log_id=audit.id)
+
+
+@router.post("/batch-management", response_model=DeviceBatchManagementResponse)
+def batch_update_device_management(request: DeviceBatchManagementRequest) -> DeviceBatchManagementResponse:
+    updated: list[ManagedDevice] = []
+    failed: list[DeviceBatchManagementFailure] = []
+    for item in request.items:
+        try:
+            if item.offline:
+                managed = mark_managed_device_offline(item.device_id, item.offline_reason or "批量设备管理下线")
+            else:
+                managed = update_managed_device(item.device_id, item)
+            updated.append(managed)
+        except Exception as exc:
+            failed.append(DeviceBatchManagementFailure(device_id=item.device_id, error=str(exc).strip("'")))
+    audit = record_audit(
+        actor="user",
+        action="batch_update_device_management",
+        result="success" if not failed else "failed",
+        details=f"批量设备管理完成：成功 {len(updated)} 个，失败 {len(failed)} 个。",
+        parameters={
+            "updated": [item.device.id for item in updated],
+            "failed": [item.model_dump() for item in failed],
+        },
+    )
+    for managed in updated:
+        managed.management_flags.append(f"批量审计编号：{audit.id}")
+    return DeviceBatchManagementResponse(updated=updated, failed=failed)
 
 
 @router.post("/{device_id}/control", response_model=ControlDeviceResponse)

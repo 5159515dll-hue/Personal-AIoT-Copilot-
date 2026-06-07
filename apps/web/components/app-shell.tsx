@@ -12,6 +12,7 @@ import {
   ListChecks,
   LogOut,
   ShieldCheck,
+  ShieldPlus,
   SlidersHorizontal
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ const navItems = [
   { href: "/agent", label: "智能体", icon: Bot },
   { href: "/models", label: "模型", icon: KeyRound },
   { href: "/rules", label: "规则", icon: ListChecks },
+  { href: "/evaluation", label: "评测", icon: ShieldPlus },
   { href: "/audit", label: "审计", icon: FileClock }
 ];
 

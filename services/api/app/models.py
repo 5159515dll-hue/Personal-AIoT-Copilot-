@@ -161,6 +161,56 @@ class DeviceConnectionRecord(BaseModel):
     updated_at: datetime
 
 
+class DeviceManagementUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    device_type: Literal["esp32", "stm32", "raspberry_pi", "linux_gateway", "sensor_node", "smart_light", "ir_remote", "smart_plug", "safety_alarm", "other"] | None = None
+    transport: Literal["mqtt", "http", "serial_gateway", "edge_gateway"] | None = None
+    firmware_version: str | None = Field(default=None, max_length=80)
+    hardware_revision: str | None = Field(default=None, max_length=80)
+    location: str | None = Field(default=None, min_length=1, max_length=80)
+    risk_level: RiskLevel | None = None
+    controllable: bool | None = None
+    requires_confirmation: bool | None = None
+    connected_appliance: str | None = Field(default=None, max_length=120)
+    max_active_duration_minutes: int | None = Field(default=None, ge=1, le=240)
+    load_type: Literal[
+        "none",
+        "low_voltage_light",
+        "usb_fan",
+        "indicator",
+        "relay_unknown",
+        "high_power",
+        "safety_critical",
+        "other",
+    ] | None = None
+    load_label: str | None = Field(default=None, max_length=120)
+    load_power_watts: float | None = Field(default=None, ge=0, le=5000)
+    management_note: str | None = Field(default=None, max_length=240)
+    tags: list[str] = Field(default_factory=list, max_length=16)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceOfflineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="后台手动下线", min_length=1, max_length=160)
+
+
+class DeviceBatchManagementItem(DeviceManagementUpdate):
+    device_id: str = Field(min_length=1, max_length=80)
+    offline: bool = False
+    offline_reason: str | None = Field(default=None, max_length=160)
+
+
+class DeviceBatchManagementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[DeviceBatchManagementItem] = Field(min_length=1, max_length=100)
+
+
 class DeviceHeartbeatResponse(BaseModel):
     device_id: str
     online_state: DeviceState
@@ -242,6 +292,29 @@ class Device(BaseModel):
     max_active_duration_minutes: int | None = None
 
 
+class ManagedDevice(BaseModel):
+    device: Device
+    connection: DeviceConnectionRecord | None = None
+    binding_status: Literal["bound", "registry_only", "connection_only"]
+    load_mark: dict[str, Any] = Field(default_factory=dict)
+    management_flags: list[str] = Field(default_factory=list)
+
+
+class DeviceManagementResponse(BaseModel):
+    item: ManagedDevice
+    audit_log_id: str
+
+
+class DeviceBatchManagementFailure(BaseModel):
+    device_id: str
+    error: str
+
+
+class DeviceBatchManagementResponse(BaseModel):
+    updated: list[ManagedDevice]
+    failed: list[DeviceBatchManagementFailure] = Field(default_factory=list)
+
+
 class PolicyDecision(BaseModel):
     result: PolicyResult
     risk_level: RiskLevel
@@ -297,7 +370,7 @@ class RuleEvaluation(BaseModel):
     condition: str
     action: str
     matched: bool
-    status: Literal["triggered", "not_matched", "disabled", "unsupported"]
+    status: Literal["triggered", "not_matched", "disabled", "unsupported", "blocked"]
     reason: str
     evaluated_at: datetime
     observed: dict[str, Any] = Field(default_factory=dict)
@@ -484,3 +557,40 @@ class ModelConnectionTestResponse(BaseModel):
     model: str
     message: str
     status_code: int | None = None
+
+
+class ResearchEvaluationMetric(BaseModel):
+    id: str
+    label: str
+    value: float
+    unit: Literal["rate", "count"]
+    status: Literal["pass", "watch", "fail", "missing"]
+    description: str
+
+
+class ResearchEvaluationCase(BaseModel):
+    id: str
+    name: str
+    category: Literal["safety", "tool", "multi_turn", "policy"]
+    status: Literal["passed", "failed"]
+    message: str
+    tool_names: list[str] = Field(default_factory=list)
+    policy_result: str | None = None
+    risk_level: str | None = None
+    model_status: str | None = None
+    failure: str | None = None
+
+
+class AgentSafetyEvaluationReport(BaseModel):
+    generated_at: datetime
+    source: Literal["report_file", "fallback"]
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    misoperation_rate: float
+    unauthorized_call_rate: float
+    tool_success_rate: float
+    multi_turn_consistency_rate: float
+    metrics: list[ResearchEvaluationMetric]
+    cases: list[ResearchEvaluationCase]
+    summary: str

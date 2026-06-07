@@ -8,7 +8,8 @@ from typing import Literal
 
 from app.audit import record_audit
 from app.mock_data import current_room_state
-from app.models import AutomationRule, Metric, RoomState, RuleEvaluation
+from app.models import AutomationRule, Device, Metric, PolicyResult, RoomState, RuleEvaluation
+from app.policy import assess_device_control
 from app.rule_store import list_rules, record_rule_trigger
 from app.time_utils import now
 
@@ -42,6 +43,12 @@ class TimeCondition:
     comparator: Callable[[float, float], bool]
     symbol: str
     minute_of_day: int
+
+
+@dataclass(frozen=True)
+class DeviceAction:
+    device: Device
+    state: Literal["on", "off"]
 
 
 def evaluate_automation_rules(
@@ -135,45 +142,14 @@ def _evaluate_rule(
             observed=observed,
         )
 
-    if not _is_reminder_action(rule.action):
-        return RuleEvaluation(
-            rule_id=rule.id,
-            condition=rule.condition,
-            action=rule.action,
-            matched=True,
-            status="unsupported",
-            reason="当前 V0 只触发提醒类动作，不执行设备控制。",
-            evaluated_at=evaluated_at,
-            observed=observed,
-        )
-
-    audit_log_id = None
-    if emit_audit:
-        audit = record_audit(
-            actor="system",
-            action="trigger_automation_rule",
-            result="success",
-            details=f"规则已触发提醒动作：{rule.action}",
-            parameters={
-                "rule_id": rule.id,
-                "condition": rule.condition,
-                "action": rule.action,
-                "observed": observed,
-            },
-        )
-        audit_log_id = audit.id
-        record_rule_trigger(rule.id, evaluated_at)
-
-    return RuleEvaluation(
-        rule_id=rule.id,
-        condition=rule.condition,
-        action=rule.action,
-        matched=True,
-        status="triggered",
-        reason="规则条件已满足，提醒动作已写入审计日志。",
+    return _trigger_matched_rule(
+        rule,
+        observed,
         evaluated_at=evaluated_at,
-        observed=observed,
-        audit_log_id=audit_log_id,
+        emit_audit=emit_audit,
+        telemetry_source=telemetry_source,
+        reminder_details=f"规则已触发提醒动作：{rule.action}",
+        reminder_reason="规则条件已满足，提醒动作已写入审计日志。",
     )
 
 
@@ -209,44 +185,153 @@ def _evaluate_time_rule(
             observed=observed,
         )
 
-    if not _is_reminder_action(rule.action):
+    return _trigger_matched_rule(
+        rule,
+        observed,
+        evaluated_at=evaluated_at,
+        emit_audit=emit_audit,
+        telemetry_source=telemetry_source,
+        reminder_details=f"时间规则已触发提醒动作：{rule.action}",
+        reminder_reason="时间条件已满足，提醒动作已写入审计日志。",
+    )
+
+
+def _trigger_matched_rule(
+    rule: AutomationRule,
+    observed: dict,
+    *,
+    evaluated_at,
+    emit_audit: bool,
+    telemetry_source: Literal["mock", "database"],
+    reminder_details: str,
+    reminder_reason: str,
+) -> RuleEvaluation:
+    if _is_reminder_action(rule.action):
+        audit_log_id = None
+        if emit_audit:
+            audit = record_audit(
+                actor="system",
+                action="trigger_automation_rule",
+                result="success",
+                details=reminder_details,
+                parameters={
+                    "rule_id": rule.id,
+                    "condition": rule.condition,
+                    "action": rule.action,
+                    "observed": observed,
+                },
+            )
+            audit_log_id = audit.id
+            record_rule_trigger(rule.id, evaluated_at)
+
+        return RuleEvaluation(
+            rule_id=rule.id,
+            condition=rule.condition,
+            action=rule.action,
+            matched=True,
+            status="triggered",
+            reason=reminder_reason,
+            evaluated_at=evaluated_at,
+            observed=observed,
+            audit_log_id=audit_log_id,
+        )
+
+    device_action = _parse_device_action(rule.action)
+    if device_action is None:
         return RuleEvaluation(
             rule_id=rule.id,
             condition=rule.condition,
             action=rule.action,
             matched=True,
             status="unsupported",
-            reason="当前 V0 只触发提醒类动作，不执行设备控制。",
+            reason="当前只支持提醒动作，或明确指向单个已登记低风险设备的打开/关闭动作。",
             evaluated_at=evaluated_at,
             observed=observed,
         )
 
+    return _trigger_device_action(
+        rule,
+        device_action,
+        observed,
+        evaluated_at=evaluated_at,
+        emit_audit=emit_audit,
+        telemetry_source=telemetry_source,
+    )
+
+
+def _trigger_device_action(
+    rule: AutomationRule,
+    device_action: DeviceAction,
+    observed: dict,
+    *,
+    evaluated_at,
+    emit_audit: bool,
+    telemetry_source: Literal["mock", "database"],
+) -> RuleEvaluation:
+    from app.device_adapter import execute_device_control
+    from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
+
+    device = device_action.device
+    state = device_action.state
+    policy = assess_device_control(
+        device=device,
+        requested_state=state,
+        confirmed=False,
+        intent=f"自动化规则：{rule.condition} -> {rule.action}",
+    )
+    if policy.result == PolicyResult.allowed:
+        policy = assess_device_control_rate_limit(device) or policy
+
+    action_observed = {
+        **observed,
+        "action_kind": "device_control",
+        "device_id": device.id,
+        "device_name": device.name,
+        "requested_state": state,
+        "risk_level": device.risk_level.value,
+        "policy": policy.model_dump(mode="json"),
+    }
+    result = "blocked"
     audit_log_id = None
+    reason = policy.reason
+    if policy.result == PolicyResult.allowed:
+        source = "database" if telemetry_source == "database" else "auto"
+        updated = execute_device_control(device, state, source)  # type: ignore[arg-type]
+        record_device_control_execution(updated.id, "agent")
+        action_observed["device_state"] = updated.model_dump(mode="json")
+        result = "success"
+        reason = "规则条件已满足，低风险设备动作已通过策略检查并写入审计日志。"
+    elif policy.result == PolicyResult.requires_confirmation:
+        result = "requires_confirmation"
+        reason = "规则触发了需要确认的设备动作，系统已阻止自动执行。"
+
     if emit_audit:
         audit = record_audit(
             actor="system",
-            action="trigger_automation_rule",
-            result="success",
-            details=f"时间规则已触发提醒动作：{rule.action}",
+            action="trigger_automation_rule_control",
+            result=result,
+            details=reason,
             parameters={
                 "rule_id": rule.id,
                 "condition": rule.condition,
                 "action": rule.action,
-                "observed": observed,
+                "observed": action_observed,
             },
+            policy=policy,
         )
         audit_log_id = audit.id
-        record_rule_trigger(rule.id, evaluated_at)
+        if result == "success":
+            record_rule_trigger(rule.id, evaluated_at)
 
     return RuleEvaluation(
         rule_id=rule.id,
         condition=rule.condition,
         action=rule.action,
         matched=True,
-        status="triggered",
-        reason="时间条件已满足，提醒动作已写入审计日志。",
+        status="triggered" if result == "success" else "blocked",
+        reason=reason,
         evaluated_at=evaluated_at,
-        observed=observed,
+        observed=action_observed,
         audit_log_id=audit_log_id,
     )
 
@@ -355,3 +440,61 @@ def _match_metric(text: str) -> Metric | None:
 def _is_reminder_action(action: str) -> bool:
     lowered = action.lower()
     return any(token in lowered for token in ("提醒", "通知", "alert", "notify", "message"))
+
+
+def _parse_device_action(action: str) -> DeviceAction | None:
+    lowered = action.lower()
+    state = _parse_action_state(lowered)
+    if state is None:
+        return None
+
+    try:
+        from app.device_adapter import list_devices
+
+        devices = list_devices("auto")
+    except Exception:
+        devices = []
+
+    if not devices:
+        return None
+
+    alias_target = _device_alias_target(lowered)
+    for device in devices:
+        names = {
+            device.id.lower(),
+            device.name.lower(),
+            str(device.connected_appliance or "").lower(),
+        }
+        if alias_target:
+            names.add(alias_target)
+        if any(name and name in lowered for name in names) or (alias_target and device.id == alias_target):
+            return DeviceAction(device=device, state=state)
+    return None
+
+
+def _parse_action_state(text: str) -> Literal["on", "off"] | None:
+    off_tokens = ("关闭", "关掉", "断开", "turn off", "power off", " off")
+    on_tokens = ("打开", "开启", "启动", "turn on", "power on", " on")
+    if any(token in text for token in off_tokens):
+        return "off"
+    if any(token in text for token in on_tokens):
+        return "on"
+    return None
+
+
+def _device_alias_target(text: str) -> str | None:
+    aliases = (
+        ("未知负载智能插座", "smart_plug_01"),
+        ("未知插座", "smart_plug_01"),
+        ("智能插座", "smart_plug_01"),
+        ("烟雾报警器", "smoke_alarm_01"),
+        ("报警器", "smoke_alarm_01"),
+        ("氛围灯", "ambient_light_01"),
+        ("台灯", "desk_lamp_01"),
+        ("灯带", "ambient_light_01"),
+        ("风扇", "fan_ir_01"),
+    )
+    for keyword, device_id in aliases:
+        if keyword in text:
+            return device_id
+    return None

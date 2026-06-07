@@ -30,6 +30,7 @@ from app.models import (
     DeviceCapability,
     DeviceConnectionRecord,
     DeviceState,
+    ManagedDevice,
     Metric,
     ModelConfig,
     ModelConfigRequest,
@@ -171,6 +172,17 @@ def test_health_endpoint_stays_public_when_auth_enabled(monkeypatch) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_agent_safety_evaluation_reports_missing_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AIOT_EVAL_REPORT_PATH", str(tmp_path / "missing-eval.json"))
+    response = client.get("/api/evaluations/agent-safety")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "fallback"
+    assert payload["total_cases"] == 0
+    assert payload["metrics"][0]["status"] == "missing"
 
 
 def test_telemetry_status_reports_unconfigured_database(monkeypatch) -> None:
@@ -942,6 +954,96 @@ def test_device_connection_telemetry_endpoint_records_ingest_connection(monkeypa
     assert captured["readings"][0].device_id == "raspi_gateway_01"
 
 
+def test_device_management_update_records_audit(monkeypatch) -> None:
+    captured = {}
+
+    def fake_update_managed_device(device_id, request):
+        captured["device_id"] = device_id
+        captured["request"] = request
+        return ManagedDevice(
+            device=Device(
+                id=device_id,
+                name=request.name,
+                type="smart_light",
+                location=request.location,
+                risk_level=request.risk_level,
+                controllable=request.controllable,
+                requires_confirmation=False,
+                online_state=DeviceState.online,
+                current_state={"load": {"type": request.load_type, "label": request.load_label}},
+                connected_appliance=request.connected_appliance,
+            ),
+            connection=None,
+            binding_status="registry_only",
+            load_mark={"type": request.load_type, "label": request.load_label},
+            management_flags=[],
+        )
+
+    monkeypatch.setattr(devices_route_module, "update_managed_device", fake_update_managed_device)
+    response = client.patch(
+        "/api/devices/desk_lamp_01/management",
+        json={
+            "name": "书桌低压台灯",
+            "location": "desk",
+            "risk_level": "low",
+            "controllable": True,
+            "connected_appliance": "led_lamp",
+            "load_type": "low_voltage_light",
+            "load_label": "5V LED 台灯",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["device_id"] == "desk_lamp_01"
+    assert payload["item"]["device"]["risk_level"] == "low"
+    assert payload["item"]["load_mark"]["type"] == "low_voltage_light"
+    assert payload["audit_log_id"]
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "update_device_management" in actions
+
+
+def test_device_batch_management_updates_and_reports_failures(monkeypatch) -> None:
+    def fake_update_managed_device(device_id, request):
+        if device_id == "missing_node":
+            raise KeyError("设备不存在")
+        return ManagedDevice(
+            device=Device(
+                id=device_id,
+                name=device_id,
+                type="sensor_node",
+                location="desk",
+                risk_level=request.risk_level,
+                controllable=request.controllable,
+                requires_confirmation=False,
+                online_state=DeviceState.online,
+                current_state={"load": {"type": request.load_type}},
+            ),
+            connection=None,
+            binding_status="registry_only",
+            load_mark={"type": request.load_type},
+            management_flags=[],
+        )
+
+    monkeypatch.setattr(devices_route_module, "update_managed_device", fake_update_managed_device)
+    response = client.post(
+        "/api/devices/batch-management",
+        json={
+            "items": [
+                {"device_id": "esp32_room_node_01", "risk_level": "read_only", "controllable": False, "load_type": "none"},
+                {"device_id": "missing_node", "risk_level": "low", "controllable": True, "load_type": "low_voltage_light"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["updated"][0]["device"]["id"] == "esp32_room_node_01"
+    assert payload["failed"][0]["device_id"] == "missing_node"
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "batch_update_device_management" in actions
+
+
 def test_device_control_persists_low_risk_mock_state() -> None:
     response = client.post(
         "/api/devices/desk_lamp_01/control",
@@ -1074,6 +1176,59 @@ def test_audit_logs_can_be_filtered_for_traceability() -> None:
     assert query_logs[0]["parameters"]["device_id"] == "desk_lamp_01"
 
 
+def test_audit_prefers_postgres_when_configured(monkeypatch) -> None:
+    captured = {}
+
+    def fake_insert_audit_log_db(log):
+        captured["inserted"] = log
+        return log
+
+    def fake_list_audit_logs_db(**kwargs):
+        captured["query"] = kwargs
+        return [captured["inserted"]]
+
+    monkeypatch.setattr(audit_module, "database_url", lambda: "postgresql://example")
+    monkeypatch.setattr(audit_module, "insert_audit_log_db", fake_insert_audit_log_db)
+    monkeypatch.setattr(audit_module, "list_audit_logs_db", fake_list_audit_logs_db)
+
+    log = audit_module.record_audit(
+        actor="system",
+        action="postgres_audit_test",
+        result="success",
+        details="数据库优先",
+        parameters={"ok": True},
+    )
+    logs = audit_module.list_audit_logs(limit=1, action="postgres_audit_test")
+
+    assert captured["inserted"].id == log.id
+    assert captured["query"]["action"] == "postgres_audit_test"
+    assert logs[0].id == log.id
+
+
+def test_rules_prefer_postgres_when_configured(monkeypatch) -> None:
+    saved_rules = []
+
+    def fake_save_rule_db(rule):
+        saved_rules.append(rule)
+        return rule
+
+    def fake_list_rules_db():
+        return list(saved_rules)
+
+    monkeypatch.setattr(rule_store_module, "database_url", lambda: "postgresql://example")
+    monkeypatch.setattr(rule_store_module, "save_rule_db", fake_save_rule_db)
+    monkeypatch.setattr(rule_store_module, "list_rules_db", fake_list_rules_db)
+
+    response = client.post(
+        "/api/rules",
+        json={"condition": "二氧化碳 > 1 ppm", "action": "发送提醒", "enabled": True, "confirmed": True},
+    )
+
+    assert response.status_code == 200
+    assert saved_rules
+    assert client.get("/api/rules").json()[0]["id"] == saved_rules[0].id
+
+
 def test_agent_control_persists_mock_device_state() -> None:
     response = client.post("/api/agent/chat", json={"message": "打开台灯"})
     assert response.status_code == 200
@@ -1162,6 +1317,59 @@ def test_rule_evaluation_triggers_reminder_and_audit_log() -> None:
     assert audit_response.status_code == 200
     actions = [item["action"] for item in audit_response.json()]
     assert "trigger_automation_rule" in actions
+
+
+def test_rule_evaluation_executes_low_risk_device_action_and_audits() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1 ppm",
+            "action": "打开台灯",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "triggered"
+    assert evaluation["observed"]["action_kind"] == "device_control"
+    assert evaluation["observed"]["device_id"] == "desk_lamp_01"
+    assert evaluation["observed"]["device_state"]["current_state"]["power"] == "on"
+    assert evaluation["audit_log_id"]
+
+    devices = {device["id"]: device for device in client.get("/api/devices").json()}
+    assert devices["desk_lamp_01"]["current_state"]["power"] == "on"
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "trigger_automation_rule_control" in actions
+
+
+def test_rule_evaluation_blocks_high_risk_device_action() -> None:
+    create_response = client.post(
+        "/api/rules",
+        json={
+            "condition": "二氧化碳 > 1 ppm",
+            "action": "打开未知负载智能插座",
+            "enabled": True,
+            "confirmed": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    evaluate_response = client.post("/api/rules/evaluate")
+    assert evaluate_response.status_code == 200
+    evaluation = evaluate_response.json()[0]
+    assert evaluation["status"] == "blocked"
+    assert evaluation["observed"]["device_id"] == "smart_plug_01"
+    assert evaluation["observed"]["policy"]["result"] == "denied"
+    assert evaluation["audit_log_id"]
+
+    audit_logs = client.get("/api/audit-logs").json()
+    latest_control = next(item for item in audit_logs if item["action"] == "trigger_automation_rule_control")
+    assert latest_control["result"] == "blocked"
+    assert latest_control["policy_result"] == "denied"
 
 
 def test_rule_trigger_updates_rule_state() -> None:
@@ -1866,6 +2074,28 @@ def test_agent_history_redacts_api_keys_from_messages_and_tool_parameters() -> N
     assert "sk-已脱敏" in entry["user_message"]["content"]
     assert "tp-已脱敏" in entry["user_message"]["content"]
     assert payload["tool_calls"][0]["parameters"]["message"].endswith("sk-已脱敏 tp-已脱敏")
+
+
+def test_agent_history_prefers_postgres_when_configured(monkeypatch) -> None:
+    stored = []
+
+    def fake_insert_agent_conversation_db(entry, *, retention_days=30):
+        stored.append(entry)
+        return entry
+
+    def fake_list_agent_conversations_db(limit=50, session_id=None, retention_days=30):
+        return list(stored)
+
+    monkeypatch.setattr(agent_history_module, "database_url", lambda: "postgresql://example")
+    monkeypatch.setattr(agent_history_module, "insert_agent_conversation_db", fake_insert_agent_conversation_db)
+    monkeypatch.setattr(agent_history_module, "list_agent_conversations_db", fake_list_agent_conversations_db)
+
+    response = client.post("/api/agent/chat", json={"message": "今天二氧化碳情况怎么样？"})
+
+    assert response.status_code == 200
+    assert stored
+    history = client.get("/api/agent/history").json()
+    assert history[0]["id"] == stored[0].id
 
 
 def test_agent_history_can_be_deleted_and_records_audit_log() -> None:

@@ -3,6 +3,7 @@ import type {
   AgentChatResponse,
   AgentConversationDeleteResponse,
   AgentConversationEntry,
+  AgentSafetyEvaluationReport,
   AnomalyEvent,
   AuditLog,
   AuditLogQuery,
@@ -11,6 +12,11 @@ import type {
   AutomationRuleUpdate,
   ControlDeviceResponse,
   Device,
+  DeviceBatchManagementItem,
+  DeviceBatchManagementResponse,
+  DeviceManagementResponse,
+  DeviceManagementUpdate,
+  ManagedDevice,
   MetricName,
   ModelConfigRequest,
   ModelConnectionTestResponse,
@@ -120,6 +126,36 @@ export async function getTelemetryStatus(): Promise<TelemetryStatus> {
 
 export async function getDevices(): Promise<Device[]> {
   return request<Device[]>("/api/devices");
+}
+
+export async function getManagedDevices(): Promise<ManagedDevice[]> {
+  return request<ManagedDevice[]>("/api/devices/management");
+}
+
+export async function updateDeviceManagement(
+  id: string,
+  payload: DeviceManagementUpdate
+): Promise<DeviceManagementResponse> {
+  return request<DeviceManagementResponse>(`/api/devices/${id}/management`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function markDeviceOffline(id: string, reason: string): Promise<DeviceManagementResponse> {
+  return request<DeviceManagementResponse>(`/api/devices/${id}/offline`, {
+    method: "POST",
+    body: JSON.stringify({ reason })
+  });
+}
+
+export async function batchUpdateDeviceManagement(
+  items: DeviceBatchManagementItem[]
+): Promise<DeviceBatchManagementResponse> {
+  return request<DeviceBatchManagementResponse>("/api/devices/batch-management", {
+    method: "POST",
+    body: JSON.stringify({ items })
+  });
 }
 
 export async function controlDevice(
@@ -237,4 +273,8 @@ export async function testModelConnection(payload: ModelConfigRequest): Promise<
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export async function getAgentSafetyEvaluation(): Promise<AgentSafetyEvaluationReport> {
+  return request<AgentSafetyEvaluationReport>("/api/evaluations/agent-safety");
 }

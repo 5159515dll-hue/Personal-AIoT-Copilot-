@@ -147,6 +147,6 @@ def validate_rule(rule: AutomationRuleCreate) -> PolicyDecision:
         result=PolicyResult.allowed,
         risk_level=RiskLevel.low,
         requires_confirmation=False,
-        reason="已确认的简单“如果/那么”提醒规则被允许。",
-        constraints=["规则必须保持简单条件和动作结构。"],
+        reason="已确认的简单“如果/那么”规则被允许；设备动作触发时仍会再次经过策略引擎。",
+        constraints=["规则必须保持简单条件和动作结构。", "物理动作只能控制已登记低风险设备。"],
     )

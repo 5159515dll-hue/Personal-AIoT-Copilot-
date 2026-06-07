@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app.database import database_url, insert_audit_log_db, list_audit_logs_db
 from app.models import AuditLog, PolicyDecision
 from app.storage import JsonListStore
 from app.time_utils import now
@@ -28,6 +29,11 @@ def record_audit(
         result=result,
         details=details,
     )
+    if database_url():
+        try:
+            return insert_audit_log_db(log)
+        except Exception:
+            pass
     return audit_store.append(log)
 
 
@@ -41,6 +47,19 @@ def list_audit_logs(
     risk_level: str | None = None,
     q: str | None = None,
 ) -> list[AuditLog]:
+    if database_url():
+        try:
+            return list_audit_logs_db(
+                limit=limit,
+                actor=actor,
+                action=action,
+                result=result,
+                policy_result=policy_result,
+                risk_level=risk_level,
+                q=q,
+            )
+        except Exception:
+            pass
     logs = audit_store.list()
     filtered = [
         log

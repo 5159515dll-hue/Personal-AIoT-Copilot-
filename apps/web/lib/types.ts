@@ -96,6 +96,77 @@ export type Device = {
   max_active_duration_minutes?: number | null;
 };
 
+export type DeviceConnectionRecord = {
+  device_id: string;
+  display_name: string;
+  device_type: string;
+  transport: string;
+  protocol_version: string;
+  firmware_version: string | null;
+  hardware_revision: string | null;
+  location: string;
+  capabilities: {
+    kind: "telemetry" | "control" | "gateway" | "diagnostic";
+    metrics: MetricName[];
+    description: string | null;
+  }[];
+  metadata: Record<string, unknown>;
+  online_state: Device["online_state"];
+  last_seen_at: string | null;
+  last_message_id: string | null;
+  last_sequence: number | null;
+  updated_at: string;
+};
+
+export type ManagedDevice = {
+  device: Device;
+  connection: DeviceConnectionRecord | null;
+  binding_status: "bound" | "registry_only" | "connection_only";
+  load_mark: Record<string, unknown>;
+  management_flags: string[];
+};
+
+export type DeviceManagementUpdate = {
+  name?: string | null;
+  display_name?: string | null;
+  device_type?: string | null;
+  transport?: "mqtt" | "http" | "serial_gateway" | "edge_gateway" | null;
+  firmware_version?: string | null;
+  hardware_revision?: string | null;
+  location?: string | null;
+  risk_level?: Device["risk_level"] | null;
+  controllable?: boolean | null;
+  requires_confirmation?: boolean | null;
+  connected_appliance?: string | null;
+  max_active_duration_minutes?: number | null;
+  load_type?: string | null;
+  load_label?: string | null;
+  load_power_watts?: number | null;
+  management_note?: string | null;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+export type DeviceOfflineRequest = {
+  reason: string;
+};
+
+export type DeviceManagementResponse = {
+  item: ManagedDevice;
+  audit_log_id: string;
+};
+
+export type DeviceBatchManagementItem = DeviceManagementUpdate & {
+  device_id: string;
+  offline?: boolean;
+  offline_reason?: string | null;
+};
+
+export type DeviceBatchManagementResponse = {
+  updated: ManagedDevice[];
+  failed: { device_id: string; error: string }[];
+};
+
 export type PolicyDecision = {
   result: "allowed" | "requires_confirmation" | "denied";
   risk_level: Device["risk_level"];
@@ -138,7 +209,7 @@ export type RuleEvaluation = {
   condition: string;
   action: string;
   matched: boolean;
-  status: "triggered" | "not_matched" | "disabled" | "unsupported";
+  status: "triggered" | "not_matched" | "disabled" | "unsupported" | "blocked";
   reason: string;
   evaluated_at: string;
   observed: Record<string, unknown>;
@@ -301,4 +372,41 @@ export type ModelConnectionTestResponse = {
   model: string;
   message: string;
   status_code: number | null;
+};
+
+export type ResearchEvaluationMetric = {
+  id: string;
+  label: string;
+  value: number;
+  unit: "rate" | "count";
+  status: "pass" | "watch" | "fail" | "missing";
+  description: string;
+};
+
+export type ResearchEvaluationCase = {
+  id: string;
+  name: string;
+  category: "safety" | "tool" | "multi_turn" | "policy";
+  status: "passed" | "failed";
+  message: string;
+  tool_names: string[];
+  policy_result: string | null;
+  risk_level: string | null;
+  model_status: string | null;
+  failure: string | null;
+};
+
+export type AgentSafetyEvaluationReport = {
+  generated_at: string;
+  source: "report_file" | "fallback";
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+  misoperation_rate: number;
+  unauthorized_call_rate: number;
+  tool_success_rate: number;
+  multi_turn_consistency_rate: number;
+  metrics: ResearchEvaluationMetric[];
+  cases: ResearchEvaluationCase[];
+  summary: string;
 };

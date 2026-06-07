@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import api_auth_enabled, is_public_api_path, request_is_authorized
-from app.routes import agent, anomalies, audit_logs, device_connections, devices, ingest, model_providers, room, rules, sensors, telemetry
+from app.routes import agent, anomalies, audit_logs, device_connections, devices, evaluations, ingest, model_providers, room, rules, sensors, telemetry
 
 app = FastAPI(
     title="个人空间智能物联助手接口",
@@ -50,6 +50,7 @@ app.include_router(agent.router)
 app.include_router(audit_logs.router)
 app.include_router(model_providers.router)
 app.include_router(telemetry.router)
+app.include_router(evaluations.router)
 
 
 @app.get("/api/health")

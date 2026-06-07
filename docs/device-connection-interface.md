@@ -41,6 +41,15 @@ POST /api/device-connections/{device_id}/heartbeat
 GET  /api/device-connections
 ```
 
+后台设备管理：
+
+```text
+GET   /api/devices/management
+PATCH /api/devices/{device_id}/management
+POST  /api/devices/{device_id}/offline
+POST  /api/devices/batch-management
+```
+
 设备遥测：
 
 ```text
@@ -78,6 +87,57 @@ POST /api/ingest/sensor-readings
 ```
 
 设备注册是幂等操作。新设备首次注册时，服务器会在设备注册表里创建只读设备：`risk_level=read_only`、`controllable=false`。设备不能通过自注册获得控制权限；低风险控制能力必须由服务器侧人工配置和策略引擎确认。
+
+## 后台绑定与负载标记
+
+真实硬件到货后，设备可以先通过注册、心跳或遥测进入 `device_connections`。后台管理页再把连接记录和设备注册表绑定到同一 `device_id`，并补充风险和负载信息。
+
+单设备更新示例：
+
+```json
+{
+  "name": "书桌低压台灯",
+  "location": "desk",
+  "risk_level": "low",
+  "controllable": true,
+  "requires_confirmation": false,
+  "connected_appliance": "led_lamp",
+  "max_active_duration_minutes": 240,
+  "load_type": "low_voltage_light",
+  "load_label": "5V LED 台灯",
+  "load_power_watts": 8,
+  "management_note": "只允许低压灯光演示"
+}
+```
+
+风险约束：
+
+- `read_only`、`high`、`forbidden` 会强制不可控。
+- `medium` 如果可控，会强制需要确认。
+- 只有 `low` 且明确负载标记的设备适合自动化规则触发。
+- 手动下线只更新状态和审计，不删除注册记录，方便设备恢复后继续追溯。
+
+批量管理示例：
+
+```json
+{
+  "items": [
+    {
+      "device_id": "esp32_room_node_01",
+      "risk_level": "read_only",
+      "controllable": false,
+      "load_type": "none"
+    },
+    {
+      "device_id": "desk_lamp_01",
+      "risk_level": "low",
+      "controllable": true,
+      "load_type": "low_voltage_light",
+      "load_label": "低压台灯"
+    }
+  ]
+}
+```
 
 ## 心跳 payload
 
@@ -172,11 +232,18 @@ MQTT payload 支持标准 envelope：
 - 新设备默认只读，不参与控制链路；未来控制 topic 必须与遥测 topic 分离，并继续经过策略引擎和审计。
 - 树莓派这类网关可以用 `device_type=raspberry_pi` 或 `linux_gateway`，再通过 `metadata` 说明其下挂子设备；子设备仍应有自己的 `device_id`。
 
+## 代码示例
+
+- ESP32：`firmware/esp32-room-node/src/main.cpp`，真实 MQTT 遥测固件。
+- STM32：`firmware/stm32-room-node/src/main.cpp`，C/C++ HTTP/串口网关接入模板。
+- 树莓派：`examples/raspberry-pi-gateway/aiot_gateway.py`，Python 网关直连服务器 IP 示例。
+
 ## 当前落地状态
 
 - `device_connections` 表保存设备类型、传输方式、固件版本、能力声明、最近心跳、最后消息编号和序号。
 - `/api/device-connections/register` 用于设备注册。
 - `/api/device-connections/{device_id}/heartbeat` 用于设备心跳。
 - `/api/device-connections/{device_id}/telemetry` 用于版本化 HTTP 遥测。
+- `/api/devices/management` 用于后台硬件绑定、负载标记和批量运维。
 - MQTT 和旧 HTTP 入站都会同步更新设备连接表。
 - 新设备进入 `device_registry` 时只能是只读不可控设备。

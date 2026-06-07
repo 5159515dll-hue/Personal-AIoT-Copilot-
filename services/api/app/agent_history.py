@@ -4,6 +4,12 @@ import re
 from datetime import timedelta
 from typing import Any, Literal
 
+from app.database import (
+    database_url,
+    delete_agent_conversation_db,
+    insert_agent_conversation_db,
+    list_agent_conversations_db,
+)
 from app.models import AgentChatResponse, AgentConversationEntry, AgentMessage, ToolCall
 from app.storage import JsonListStore
 from app.time_utils import now
@@ -38,12 +44,22 @@ def record_agent_conversation(
         rule_draft=response.rule_draft,
         created_at=now(),
     )
+    if database_url():
+        try:
+            return insert_agent_conversation_db(entry, retention_days=RETENTION_DAYS)
+        except Exception:
+            pass
     retained = _retained(history_store.list())
     history_store.replace_all([*retained, entry])
     return entry
 
 
 def list_agent_history(limit: int = 50, session_id: str | None = None) -> list[AgentConversationEntry]:
+    if database_url():
+        try:
+            return list_agent_conversations_db(limit=limit, session_id=session_id, retention_days=RETENTION_DAYS)
+        except Exception:
+            pass
     current = history_store.list()
     retained = _retained(current)
     if len(retained) != len(current):
@@ -55,6 +71,13 @@ def list_agent_history(limit: int = 50, session_id: str | None = None) -> list[A
 
 
 def delete_agent_history_entry(entry_id: str) -> AgentConversationEntry | None:
+    if database_url():
+        try:
+            deleted = delete_agent_conversation_db(entry_id)
+            if deleted is not None:
+                return deleted
+        except Exception:
+            pass
     entries = history_store.list()
     deleted = next((entry for entry in entries if entry.id == entry_id), None)
     if deleted is None:

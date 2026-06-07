@@ -78,19 +78,49 @@ export function statusLabel(value: string): string {
     denied: "拒绝",
     user: "用户",
     agent: "智能体",
-    system: "系统"
+    system: "系统",
+    bound: "已绑定",
+    registry_only: "仅注册表",
+    connection_only: "仅连接表",
+    mqtt: "MQTT",
+    http: "HTTP",
+    serial_gateway: "串口网关",
+    edge_gateway: "边缘网关",
+    pass: "通过",
+    missing: "缺失"
   };
   return labels[value] ?? titleCase(value);
 }
 
 export function deviceTypeLabel(value: string): string {
   const labels: Record<string, string> = {
+    esp32: "ESP32 节点",
+    stm32: "STM32 节点",
+    raspberry_pi: "树莓派",
+    linux_gateway: "Linux 网关",
+    sensor_node: "传感器节点",
+    other: "其他设备",
     esp32_sensor_node: "传感器节点",
     smart_light: "智能灯",
     ir_remote: "红外遥控",
     smart_plug: "智能插座",
     safety_alarm: "安全报警器"
   };
+  return labels[value] ?? value;
+}
+
+export function loadTypeLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    none: "无负载",
+    low_voltage_light: "低压灯光",
+    usb_fan: "USB 风扇",
+    indicator: "指示器",
+    relay_unknown: "未知继电器负载",
+    high_power: "大功率负载",
+    safety_critical: "安全关键负载",
+    other: "其他负载"
+  };
+  if (!value) return "未标记";
   return labels[value] ?? value;
 }
 

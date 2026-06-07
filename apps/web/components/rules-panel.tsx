@@ -196,18 +196,24 @@ function RuleEvaluationStatus({ evaluation }: { evaluation: RuleEvaluation }) {
   const style =
     evaluation.status === "triggered"
       ? "border-teal-100 bg-teal-50 text-teal-800"
+      : evaluation.status === "blocked"
+        ? "border-rose-100 bg-rose-50 text-rose-800"
       : evaluation.status === "unsupported"
         ? "border-amber-100 bg-amber-50 text-amber-800"
         : "border-line bg-white text-slate-700";
   const Icon =
     evaluation.status === "triggered"
       ? BellRing
+      : evaluation.status === "blocked"
+        ? ShieldAlert
       : evaluation.status === "unsupported"
         ? ShieldAlert
         : CircleDashed;
   const label =
     evaluation.status === "triggered"
       ? "已触发"
+      : evaluation.status === "blocked"
+        ? "已阻止"
       : evaluation.status === "not_matched"
         ? "未触发"
         : evaluation.status === "disabled"

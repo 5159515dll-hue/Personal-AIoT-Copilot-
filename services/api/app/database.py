@@ -5,11 +5,15 @@ import json
 from datetime import datetime
 
 from app.models import (
+    AgentConversationEntry,
+    AuditLog,
+    AutomationRule,
     Device,
     DeviceCapability,
     DeviceConnectionRecord,
     DeviceState,
     Metric,
+    PolicyResult,
     RiskLevel,
     SensorReading,
     TelemetryDeviceSummary,
@@ -99,6 +103,61 @@ CREATE INDEX IF NOT EXISTS idx_device_connections_type
     ON device_connections (device_type);
 """
 
+PERSISTENCE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    policy_result TEXT,
+    risk_level TEXT,
+    parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result TEXT NOT NULL,
+    details TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
+    ON audit_logs (timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_trace
+    ON audit_logs (action, result, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS automation_rules (
+    id TEXT PRIMARY KEY,
+    condition TEXT NOT NULL,
+    action TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by TEXT NOT NULL DEFAULT 'user',
+    created_at TIMESTAMPTZ NOT NULL,
+    trigger_count INTEGER NOT NULL DEFAULT 0,
+    last_triggered_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_rules_created
+    ON automation_rules (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_conversations (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    user_message JSONB NOT NULL,
+    assistant_message JSONB NOT NULL,
+    used_data JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tool_calls JSONB NOT NULL DEFAULT '[]'::jsonb,
+    needs_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
+    model_usage JSONB NOT NULL,
+    policy JSONB,
+    rule_draft JSONB,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversations_session
+    ON agent_conversations (session_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_conversations_created
+    ON agent_conversations (created_at DESC);
+"""
+
 
 def database_url() -> str | None:
     return os.getenv("DATABASE_URL")
@@ -112,6 +171,7 @@ def init_db(url: str | None = None) -> None:
         conn.execute(SCHEMA_SQL)
         conn.execute(DEVICE_REGISTRY_SCHEMA_SQL)
         conn.execute(DEVICE_CONNECTION_SCHEMA_SQL)
+        conn.execute(PERSISTENCE_SCHEMA_SQL)
         _try_create_hypertable(conn)
 
 
@@ -127,6 +187,13 @@ def init_device_connections_db(url: str | None = None) -> None:
     db_url = _require_url(url)
     with psycopg.connect(db_url, autocommit=True) as conn:
         conn.execute(DEVICE_CONNECTION_SCHEMA_SQL)
+
+
+def init_persistence_db(url: str | None = None) -> None:
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        conn.execute(PERSISTENCE_SCHEMA_SQL)
 
 
 def seed_device_registry_db(
@@ -537,6 +604,382 @@ def update_device_registry_state_db(
     return _row_to_device(row) if row else None
 
 
+def upsert_device_registry_device_db(
+    device: Device,
+    *,
+    url: str | None = None,
+) -> Device:
+    init_device_registry_db(url)
+    upsert_device_registry_db([device], url=url, ensure_schema=False)
+    saved = get_device_registry_db(device.id, url=url)
+    if saved is None:
+        raise RuntimeError("设备注册表保存失败。")
+    return saved
+
+
+def insert_audit_log_db(
+    log: AuditLog,
+    *,
+    url: str | None = None,
+    ensure_schema: bool = True,
+) -> AuditLog:
+    if ensure_schema:
+        init_persistence_db(url)
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        conn.execute(
+            """
+            INSERT INTO audit_logs (
+                id,
+                timestamp,
+                actor,
+                action,
+                policy_result,
+                risk_level,
+                parameters,
+                result,
+                details
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                log.id,
+                log.timestamp,
+                log.actor,
+                log.action,
+                log.policy_result.value if log.policy_result else None,
+                log.risk_level.value if log.risk_level else None,
+                json.dumps(log.parameters, ensure_ascii=False, default=str),
+                log.result,
+                log.details,
+            ),
+        )
+    return log
+
+
+def list_audit_logs_db(
+    limit: int = 100,
+    *,
+    actor: str | None = None,
+    action: str | None = None,
+    result: str | None = None,
+    policy_result: str | None = None,
+    risk_level: str | None = None,
+    q: str | None = None,
+    url: str | None = None,
+) -> list[AuditLog]:
+    init_persistence_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    filters: list[str] = []
+    params: list[object] = []
+    for column, value in (
+        ("actor", actor),
+        ("action", action),
+        ("result", result),
+        ("policy_result", policy_result),
+        ("risk_level", risk_level),
+    ):
+        if value:
+            filters.append(f"{column} = %s")
+            params.append(value)
+    if q:
+        filters.append(
+            "(id ILIKE %s OR action ILIKE %s OR result ILIKE %s OR details ILIKE %s OR parameters::text ILIKE %s)"
+        )
+        keyword = f"%{q}%"
+        params.extend([keyword, keyword, keyword, keyword, keyword])
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    params.append(limit)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                id,
+                timestamp,
+                actor,
+                action,
+                policy_result,
+                risk_level,
+                parameters,
+                result,
+                details
+            FROM audit_logs
+            {where}
+            ORDER BY timestamp DESC
+            LIMIT %s
+            """,
+            params,
+        ).fetchall()
+    return [_row_to_audit_log(row) for row in rows]
+
+
+def list_rules_db(*, url: str | None = None) -> list[AutomationRule]:
+    init_persistence_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                condition,
+                action,
+                enabled,
+                created_by,
+                created_at,
+                trigger_count,
+                last_triggered_at
+            FROM automation_rules
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+    return [_row_to_rule(row) for row in rows]
+
+
+def save_rule_db(
+    rule: AutomationRule,
+    *,
+    url: str | None = None,
+    ensure_schema: bool = True,
+) -> AutomationRule:
+    if ensure_schema:
+        init_persistence_db(url)
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        conn.execute(
+            """
+            INSERT INTO automation_rules (
+                id,
+                condition,
+                action,
+                enabled,
+                created_by,
+                created_at,
+                trigger_count,
+                last_triggered_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                condition = EXCLUDED.condition,
+                action = EXCLUDED.action,
+                enabled = EXCLUDED.enabled,
+                created_by = EXCLUDED.created_by,
+                created_at = EXCLUDED.created_at,
+                trigger_count = EXCLUDED.trigger_count,
+                last_triggered_at = EXCLUDED.last_triggered_at
+            """,
+            (
+                rule.id,
+                rule.condition,
+                rule.action,
+                rule.enabled,
+                rule.created_by,
+                rule.created_at,
+                rule.trigger_count,
+                rule.last_triggered_at,
+            ),
+        )
+    return rule
+
+
+def update_rule_enabled_db(
+    rule_id: str,
+    enabled: bool,
+    *,
+    url: str | None = None,
+) -> AutomationRule | None:
+    init_persistence_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            UPDATE automation_rules
+            SET enabled = %s
+            WHERE id = %s
+            RETURNING
+                id,
+                condition,
+                action,
+                enabled,
+                created_by,
+                created_at,
+                trigger_count,
+                last_triggered_at
+            """,
+            (enabled, rule_id),
+        ).fetchone()
+    return _row_to_rule(row) if row else None
+
+
+def record_rule_trigger_db(
+    rule_id: str,
+    triggered_at: datetime,
+    *,
+    url: str | None = None,
+) -> AutomationRule | None:
+    init_persistence_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            UPDATE automation_rules
+            SET trigger_count = trigger_count + 1,
+                last_triggered_at = %s
+            WHERE id = %s
+            RETURNING
+                id,
+                condition,
+                action,
+                enabled,
+                created_by,
+                created_at,
+                trigger_count,
+                last_triggered_at
+            """,
+            (triggered_at, rule_id),
+        ).fetchone()
+    return _row_to_rule(row) if row else None
+
+
+def insert_agent_conversation_db(
+    entry: AgentConversationEntry,
+    *,
+    retention_days: int = 30,
+    url: str | None = None,
+    ensure_schema: bool = True,
+) -> AgentConversationEntry:
+    if ensure_schema:
+        init_persistence_db(url)
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        conn.execute(
+            "DELETE FROM agent_conversations WHERE created_at < now() - (%s * interval '1 day')",
+            (retention_days,),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_conversations (
+                id,
+                session_id,
+                data_source,
+                user_message,
+                assistant_message,
+                used_data,
+                tool_calls,
+                needs_confirmation,
+                model_usage,
+                policy,
+                rule_draft,
+                created_at
+            )
+            VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                entry.id,
+                entry.session_id,
+                entry.data_source,
+                json.dumps(entry.user_message.model_dump(mode="json"), ensure_ascii=False, default=str),
+                json.dumps(entry.assistant_message.model_dump(mode="json"), ensure_ascii=False, default=str),
+                json.dumps(entry.used_data, ensure_ascii=False, default=str),
+                json.dumps([tool.model_dump(mode="json") for tool in entry.tool_calls], ensure_ascii=False, default=str),
+                entry.needs_confirmation,
+                json.dumps(entry.model_usage.model_dump(mode="json"), ensure_ascii=False, default=str),
+                json.dumps(entry.policy.model_dump(mode="json"), ensure_ascii=False, default=str) if entry.policy else None,
+                json.dumps(entry.rule_draft.model_dump(mode="json"), ensure_ascii=False, default=str) if entry.rule_draft else None,
+                entry.created_at,
+            ),
+        )
+    return entry
+
+
+def list_agent_conversations_db(
+    limit: int = 50,
+    *,
+    session_id: str | None = None,
+    retention_days: int = 30,
+    url: str | None = None,
+) -> list[AgentConversationEntry]:
+    init_persistence_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    filters = ["created_at >= now() - (%s * interval '1 day')"]
+    params: list[object] = [retention_days]
+    if session_id:
+        filters.append("session_id = %s")
+        params.append(session_id)
+    params.append(limit)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                id,
+                session_id,
+                data_source,
+                user_message,
+                assistant_message,
+                used_data,
+                tool_calls,
+                needs_confirmation,
+                model_usage,
+                policy,
+                rule_draft,
+                created_at
+            FROM agent_conversations
+            WHERE {' AND '.join(filters)}
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            params,
+        ).fetchall()
+    return [_row_to_agent_conversation(row) for row in rows]
+
+
+def delete_agent_conversation_db(
+    entry_id: str,
+    *,
+    url: str | None = None,
+) -> AgentConversationEntry | None:
+    init_persistence_db(url)
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True, row_factory=dict_row) as conn:
+        row = conn.execute(
+            """
+            DELETE FROM agent_conversations
+            WHERE id = %s
+            RETURNING
+                id,
+                session_id,
+                data_source,
+                user_message,
+                assistant_message,
+                used_data,
+                tool_calls,
+                needs_confirmation,
+                model_usage,
+                policy,
+                rule_draft,
+                created_at
+            """,
+            (entry_id,),
+        ).fetchone()
+    return _row_to_agent_conversation(row) if row else None
+
+
 def insert_sensor_readings(
     readings: list[SensorReading],
     *,
@@ -793,6 +1236,52 @@ def telemetry_status_db(*, url: str | None = None) -> TelemetryStatus:
             status="unavailable",
             message="数据库连接或查询失败，请检查 DATABASE_URL、网络和数据库服务状态。",
         )
+
+
+def _row_to_audit_log(row: dict) -> AuditLog:
+    return AuditLog(
+        id=row["id"],
+        timestamp=row["timestamp"],
+        actor=row["actor"],
+        action=row["action"],
+        policy_result=PolicyResult(row["policy_result"]) if row["policy_result"] else None,
+        risk_level=RiskLevel(row["risk_level"]) if row["risk_level"] else None,
+        parameters=_json_object(row["parameters"]),
+        result=row["result"],
+        details=row["details"],
+    )
+
+
+def _row_to_rule(row: dict) -> AutomationRule:
+    return AutomationRule(
+        id=row["id"],
+        condition=row["condition"],
+        action=row["action"],
+        enabled=bool(row["enabled"]),
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+        trigger_count=int(row["trigger_count"] or 0),
+        last_triggered_at=row["last_triggered_at"],
+    )
+
+
+def _row_to_agent_conversation(row: dict) -> AgentConversationEntry:
+    return AgentConversationEntry.model_validate(
+        {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "data_source": row["data_source"],
+            "user_message": _json_object(row["user_message"]),
+            "assistant_message": _json_object(row["assistant_message"]),
+            "used_data": _json_array(row["used_data"]),
+            "tool_calls": _json_array(row["tool_calls"]),
+            "needs_confirmation": bool(row["needs_confirmation"]),
+            "model_usage": _json_object(row["model_usage"]),
+            "policy": _json_object(row["policy"]) if row["policy"] is not None else None,
+            "rule_draft": _json_object(row["rule_draft"]) if row["rule_draft"] is not None else None,
+            "created_at": row["created_at"],
+        }
+    )
 
 
 def _row_to_reading(row: dict) -> SensorReading:
