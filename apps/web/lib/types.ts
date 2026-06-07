@@ -147,12 +147,30 @@ export type DeviceManagementUpdate = {
   metadata?: Record<string, unknown>;
 };
 
+export type DeviceManagementCreate = DeviceManagementUpdate & {
+  device_id: string;
+  name: string;
+  device_type: string;
+  transport: "mqtt" | "http" | "serial_gateway" | "edge_gateway";
+  protocol_version: string;
+  location: string;
+  risk_level: Device["risk_level"];
+  controllable: boolean;
+  requires_confirmation: boolean;
+};
+
 export type DeviceOfflineRequest = {
   reason: string;
 };
 
 export type DeviceManagementResponse = {
   item: ManagedDevice;
+  audit_log_id: string;
+};
+
+export type DeviceManagementDeleteResponse = {
+  deleted: boolean;
+  device_id: string;
   audit_log_id: string;
 };
 

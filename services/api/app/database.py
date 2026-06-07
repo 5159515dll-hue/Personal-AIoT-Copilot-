@@ -295,6 +295,19 @@ def get_device_registry_db(
     return _row_to_device(row) if row else None
 
 
+def delete_device_registry_device_db(
+    device_id: str,
+    *,
+    url: str | None = None,
+) -> bool:
+    init_device_registry_db(url)
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        result = conn.execute("DELETE FROM device_registry WHERE id = %s", (device_id,))
+        return bool(result.rowcount)
+
+
 def upsert_device_connection_db(
     record: DeviceConnectionRecord,
     *,
@@ -479,6 +492,19 @@ def get_device_connection_db(
             (device_id,),
         ).fetchone()
     return _row_to_device_connection(row) if row else None
+
+
+def delete_device_connection_db(
+    device_id: str,
+    *,
+    url: str | None = None,
+) -> bool:
+    init_device_connections_db(url)
+    psycopg = _import_psycopg()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        result = conn.execute("DELETE FROM device_connections WHERE device_id = %s", (device_id,))
+        return bool(result.rowcount)
 
 
 def list_device_connections_db(

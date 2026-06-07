@@ -193,6 +193,18 @@ class DeviceManagementUpdate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DeviceManagementCreate(DeviceManagementUpdate):
+    device_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
+    name: str = Field(min_length=1, max_length=120)
+    device_type: Literal["esp32", "stm32", "raspberry_pi", "linux_gateway", "sensor_node", "smart_light", "ir_remote", "smart_plug", "safety_alarm", "other"] = "sensor_node"
+    transport: Literal["mqtt", "http", "serial_gateway", "edge_gateway"] = "mqtt"
+    protocol_version: str = Field(default="aiot.v1", min_length=1, max_length=40)
+    location: str = Field(default="unknown", min_length=1, max_length=80)
+    risk_level: RiskLevel = RiskLevel.read_only
+    controllable: bool = False
+    requires_confirmation: bool = False
+
+
 class DeviceOfflineRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -302,6 +314,12 @@ class ManagedDevice(BaseModel):
 
 class DeviceManagementResponse(BaseModel):
     item: ManagedDevice
+    audit_log_id: str
+
+
+class DeviceManagementDeleteResponse(BaseModel):
+    deleted: bool
+    device_id: str
     audit_log_id: str
 
 

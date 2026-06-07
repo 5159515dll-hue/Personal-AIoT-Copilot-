@@ -1003,6 +1003,111 @@ def test_device_management_update_records_audit(monkeypatch) -> None:
     assert "update_device_management" in actions
 
 
+def test_device_management_create_records_audit(monkeypatch) -> None:
+    captured = {}
+
+    def fake_create_managed_device(request):
+        captured["request"] = request
+        return ManagedDevice(
+            device=Device(
+                id=request.device_id,
+                name=request.name,
+                type=request.device_type,
+                location=request.location,
+                risk_level=request.risk_level,
+                controllable=request.controllable,
+                requires_confirmation=request.requires_confirmation,
+                online_state=DeviceState.unknown,
+                current_state={"transport": request.transport, "protocol_version": request.protocol_version},
+            ),
+            connection=None,
+            binding_status="registry_only",
+            load_mark={"type": request.load_type or "none"},
+            management_flags=["未见真实连接"],
+        )
+
+    monkeypatch.setattr(devices_route_module, "create_managed_device", fake_create_managed_device)
+    response = client.post(
+        "/api/devices/management",
+        json={
+            "device_id": "esp32_room_node_01",
+            "name": "书房 ESP32 节点",
+            "device_type": "esp32",
+            "transport": "mqtt",
+            "protocol_version": "aiot.v1",
+            "location": "书房",
+            "risk_level": "read_only",
+            "controllable": False,
+            "requires_confirmation": False,
+            "load_type": "none",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["request"].device_id == "esp32_room_node_01"
+    assert payload["item"]["device"]["id"] == "esp32_room_node_01"
+    assert payload["audit_log_id"]
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "create_device_management" in actions
+
+
+def test_device_management_create_duplicate_reports_conflict(monkeypatch) -> None:
+    def fake_create_managed_device(_request):
+        raise ValueError("设备已存在，请使用编辑功能更新。")
+
+    monkeypatch.setattr(devices_route_module, "create_managed_device", fake_create_managed_device)
+    response = client.post(
+        "/api/devices/management",
+        json={
+            "device_id": "esp32_room_node_01",
+            "name": "书房 ESP32 节点",
+            "device_type": "esp32",
+            "transport": "mqtt",
+            "protocol_version": "aiot.v1",
+            "location": "书房",
+            "risk_level": "read_only",
+            "controllable": False,
+            "requires_confirmation": False,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "设备已存在" in response.json()["detail"]
+
+
+def test_device_management_delete_records_audit(monkeypatch) -> None:
+    def fake_delete_managed_device(device_id):
+        return ManagedDevice(
+            device=Device(
+                id=device_id,
+                name="书房 ESP32 节点",
+                type="esp32",
+                location="书房",
+                risk_level=RiskLevel.read_only,
+                controllable=False,
+                requires_confirmation=False,
+                online_state=DeviceState.offline,
+                current_state={},
+            ),
+            connection=None,
+            binding_status="registry_only",
+            load_mark={},
+            management_flags=[],
+        )
+
+    monkeypatch.setattr(devices_route_module, "delete_managed_device", fake_delete_managed_device)
+    response = client.delete("/api/devices/esp32_room_node_01/management")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["deleted"] is True
+    assert payload["device_id"] == "esp32_room_node_01"
+    assert payload["audit_log_id"]
+    actions = [item["action"] for item in client.get("/api/audit-logs").json()]
+    assert "delete_device_management" in actions
+
+
 def test_device_batch_management_updates_and_reports_failures(monkeypatch) -> None:
     def fake_update_managed_device(device_id, request):
         if device_id == "missing_node":
@@ -1907,6 +2012,82 @@ def test_agent_database_source_uses_database_tools(monkeypatch) -> None:
     assert captured == {"metric": Metric.co2, "bucket": "15m"}
 
 
+def test_agent_can_plan_smart_adjustment_from_database_hardware_data(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+
+    def fake_latest_sensor_readings_db():
+        return {
+            Metric.light: SensorReading(metric=Metric.light, value=120, unit="lux", timestamp=base, device_id="room_node_db"),
+            Metric.co2: SensorReading(metric=Metric.co2, value=720, unit="ppm", timestamp=base, device_id="room_node_db"),
+        }
+
+    def fake_query_sensor_history_db(metric, start, end, *, bucket="15m", url=None, limit=5000):
+        return [SensorReading(metric=metric, value=120 if metric == Metric.light else 800, unit="value", timestamp=base)]
+
+    def fake_list_registered_devices(source="auto"):
+        assert source == "database"
+        return [
+            Device(
+                id="desk_lamp_db",
+                name="数据库低压台灯",
+                type="smart_light",
+                location="desk",
+                risk_level=RiskLevel.low,
+                controllable=True,
+                requires_confirmation=False,
+                online_state=DeviceState.online,
+                current_state={"power": "off"},
+                connected_appliance="led_lamp",
+            )
+        ]
+
+    monkeypatch.setattr("app.agent_tools.latest_sensor_readings_db", fake_latest_sensor_readings_db)
+    monkeypatch.setattr("app.agent_tools.query_sensor_history_db", fake_query_sensor_history_db)
+    monkeypatch.setattr("app.agent_tools.list_registered_devices", fake_list_registered_devices)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "根据硬件数据给我智能调节方案", "data_source": "database"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    plan = payload["tool_calls"][0]
+    assert plan["name"] == "plan_environment_adjustment"
+    assert plan["parameters"]["source"] == "database"
+    assert plan["result"]["actions"][0]["execution_mode"] == "low_risk_control"
+    assert plan["result"]["actions"][0]["control_candidate"]["device_id"] == "desk_lamp_db"
+    assert "database_latest_sensor_readings" in payload["used_data"]
+    assert "control_device" not in [tool["name"] for tool in payload["tool_calls"]]
+
+
+def test_agent_smart_adjustment_can_execute_low_risk_light(monkeypatch) -> None:
+    base = now().replace(minute=0, second=0, microsecond=0)
+    metrics = {
+        Metric.light: SensorReading(metric=Metric.light, value=90, unit="lux", timestamp=base, device_id="room_node_01"),
+        Metric.co2: SensorReading(metric=Metric.co2, value=820, unit="ppm", timestamp=base, device_id="room_node_01"),
+    }
+
+    class FakeRoom:
+        def __init__(self) -> None:
+            self.metrics = metrics
+
+    monkeypatch.setattr("app.agent_tools.current_room_state", lambda: FakeRoom())
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "根据硬件数据自动调节", "data_source": "mock"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    tool_names = [tool["name"] for tool in payload["tool_calls"]]
+    assert tool_names[:2] == ["plan_environment_adjustment", "control_device"]
+    control = payload["tool_calls"][1]
+    assert control["parameters"]["device_id"] == "desk_lamp_01"
+    assert control["result"]["execution_result"] == "success"
+    assert control["result"]["audit_log_id"]
+    assert "已根据硬件数据执行低风险调节" in payload["message"]["content"]
+
+
 def test_agent_database_source_reports_unavailable_database(monkeypatch) -> None:
     def unavailable_latest_sensor_readings_db():
         raise RuntimeError("未配置 DATABASE_URL，无法访问时间序列数据库。")
@@ -2242,7 +2423,9 @@ def test_agent_can_search_local_device_docs() -> None:
     tool = payload["tool_calls"][0]
     assert tool["name"] == "search_device_docs"
     assert "local_device_docs" in payload["used_data"]
-    assert tool["parameters"]["sources"] == ["docs/device-protocol.md", "firmware/esp32-room-node/README.md"]
+    assert "docs/device-protocol.md" in tool["parameters"]["sources"]
+    assert "docs/device-connection-interface.md" in tool["parameters"]["sources"]
+    assert "examples/raspberry-pi-gateway/aiot_gateway.py" in tool["parameters"]["sources"]
     assert tool["result"]["count"] >= 1
     assert tool["result"]["matches"][0]["source"] == "docs/device-protocol.md"
     assert "本地设备文档" in payload["message"]["content"]

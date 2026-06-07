@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from app.database import (
     database_url,
+    delete_device_connection_db,
+    delete_device_registry_device_db,
     get_device_registry_db,
     list_device_registry_db,
     list_device_connections_db,
@@ -13,6 +15,7 @@ from app.database import (
 from app.models import (
     Device,
     DeviceConnectionRecord,
+    DeviceManagementCreate,
     DeviceManagementUpdate,
     DeviceHeartbeatRequest,
     DeviceRegistrationRequest,
@@ -119,6 +122,46 @@ def list_managed_devices(limit: int = 500) -> list[ManagedDevice]:
     return items
 
 
+def create_managed_device(request: DeviceManagementCreate) -> ManagedDevice:
+    if not database_url():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问设备管理后台。")
+
+    connection = _get_connection(request.device_id)
+    if get_device_registry_db(request.device_id) is not None:
+        raise ValueError("设备已存在，请使用编辑功能更新。")
+
+    timestamp = now().isoformat()
+    device = Device(
+        id=request.device_id,
+        name=request.name,
+        type=request.device_type,
+        location=request.location,
+        risk_level=RiskLevel.read_only,
+        controllable=False,
+        requires_confirmation=False,
+        online_state=connection.online_state if connection else DeviceState.unknown,
+        current_state={
+            "transport": request.transport,
+            "protocol_version": request.protocol_version,
+            "precreated": connection is None,
+            "hardware_binding": {
+                "bound": connection is not None,
+                "updated_at": timestamp,
+                "source": "device_management_ui",
+            },
+        },
+    )
+    update_request = _create_as_update(request)
+    saved_device = upsert_device_registry_device_db(_apply_management_update(device, update_request))
+
+    if connection is not None:
+        updated_connection = _apply_connection_update(connection, update_request, saved_device)
+        connection = upsert_device_connection_db(
+            updated_connection.model_copy(update={"protocol_version": request.protocol_version})
+        )
+    return _managed_device(saved_device, connection)
+
+
 def update_managed_device(device_id: str, request: DeviceManagementUpdate) -> ManagedDevice:
     if not database_url():
         raise RuntimeError("未配置 DATABASE_URL，无法访问设备管理后台。")
@@ -138,6 +181,26 @@ def update_managed_device(device_id: str, request: DeviceManagementUpdate) -> Ma
         updated_connection = _apply_connection_update(connection, request, saved_device)
         connection = upsert_device_connection_db(updated_connection)
     return _managed_device(saved_device, connection)
+
+
+def delete_managed_device(device_id: str) -> ManagedDevice:
+    if not database_url():
+        raise RuntimeError("未配置 DATABASE_URL，无法访问设备管理后台。")
+
+    connection = _get_connection(device_id)
+    device = get_device_registry_db(device_id)
+    if device is None and connection is not None:
+        ensure_read_only_registry_device(connection)
+        device = get_device_registry_db(device_id)
+    if device is None:
+        raise KeyError("设备不存在，无法删除。")
+
+    snapshot = _managed_device(device, connection)
+    registry_deleted = delete_device_registry_device_db(device_id)
+    connection_deleted = delete_device_connection_db(device_id)
+    if not registry_deleted and not connection_deleted:
+        raise KeyError("设备不存在，无法删除。")
+    return snapshot
 
 
 def mark_managed_device_offline(device_id: str, reason: str) -> ManagedDevice:
@@ -215,6 +278,11 @@ def _capabilities_from_ingest(request: SensorIngestRequest):
 
     metrics = sorted({item.metric for item in request.readings}, key=lambda item: item.value)
     return [DeviceCapability(kind="telemetry", metrics=metrics, description="遥测指标上报")]
+
+
+def _create_as_update(request: DeviceManagementCreate) -> DeviceManagementUpdate:
+    payload = request.model_dump(exclude={"device_id", "protocol_version"})
+    return DeviceManagementUpdate(**payload)
 
 
 def _get_connection(device_id: str) -> DeviceConnectionRecord | None:

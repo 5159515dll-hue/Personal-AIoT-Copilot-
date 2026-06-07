@@ -14,6 +14,8 @@ import type {
   Device,
   DeviceBatchManagementItem,
   DeviceBatchManagementResponse,
+  DeviceManagementCreate,
+  DeviceManagementDeleteResponse,
   DeviceManagementResponse,
   DeviceManagementUpdate,
   ManagedDevice,
@@ -132,6 +134,13 @@ export async function getManagedDevices(): Promise<ManagedDevice[]> {
   return request<ManagedDevice[]>("/api/devices/management");
 }
 
+export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {
+  return request<DeviceManagementResponse>("/api/devices/management", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function updateDeviceManagement(
   id: string,
   payload: DeviceManagementUpdate
@@ -139,6 +148,12 @@ export async function updateDeviceManagement(
   return request<DeviceManagementResponse>(`/api/devices/${id}/management`, {
     method: "PATCH",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteDeviceManagement(id: string): Promise<DeviceManagementDeleteResponse> {
+  return request<DeviceManagementDeleteResponse>(`/api/devices/${id}/management`, {
+    method: "DELETE"
   });
 }
 

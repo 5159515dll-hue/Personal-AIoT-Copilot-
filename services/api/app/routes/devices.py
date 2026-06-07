@@ -9,7 +9,13 @@ from app.device_adapter import (
     get_device,
     list_devices as list_registered_devices,
 )
-from app.device_connections import list_managed_devices, mark_managed_device_offline, update_managed_device
+from app.device_connections import (
+    create_managed_device,
+    delete_managed_device,
+    list_managed_devices,
+    mark_managed_device_offline,
+    update_managed_device,
+)
 from app.device_rate_limit import assess_device_control_rate_limit, record_device_control_execution
 from app.models import (
     ControlDeviceRequest,
@@ -18,6 +24,8 @@ from app.models import (
     DeviceBatchManagementRequest,
     DeviceBatchManagementResponse,
     Device,
+    DeviceManagementCreate,
+    DeviceManagementDeleteResponse,
     DeviceManagementResponse,
     DeviceManagementUpdate,
     DeviceOfflineRequest,
@@ -47,6 +55,33 @@ def get_device_management(limit: int = Query(500, ge=1, le=1000)) -> list[Manage
         raise HTTPException(status_code=503, detail="设备管理后台查询失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
 
 
+@router.post("/management", response_model=DeviceManagementResponse)
+def create_device_management(request: DeviceManagementCreate) -> DeviceManagementResponse:
+    try:
+        item = create_managed_device(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="设备创建失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+
+    audit = record_audit(
+        actor="user",
+        action="create_device_management",
+        result="success",
+        details=f"设备后台档案已创建：{item.device.id}。",
+        parameters={
+            "device_id": item.device.id,
+            "binding_status": item.binding_status,
+            "risk_level": item.device.risk_level.value,
+            "controllable": item.device.controllable,
+            "load_mark": item.load_mark,
+        },
+    )
+    return DeviceManagementResponse(item=item, audit_log_id=audit.id)
+
+
 @router.patch("/{device_id}/management", response_model=DeviceManagementResponse)
 def update_device_management(device_id: str, request: DeviceManagementUpdate) -> DeviceManagementResponse:
     try:
@@ -73,6 +108,31 @@ def update_device_management(device_id: str, request: DeviceManagementUpdate) ->
         },
     )
     return DeviceManagementResponse(item=item, audit_log_id=audit.id)
+
+
+@router.delete("/{device_id}/management", response_model=DeviceManagementDeleteResponse)
+def delete_device_management(device_id: str) -> DeviceManagementDeleteResponse:
+    try:
+        item = delete_managed_device(device_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="设备删除失败，请检查 DATABASE_URL 和数据库服务状态。") from exc
+
+    audit = record_audit(
+        actor="user",
+        action="delete_device_management",
+        result="success",
+        details=f"设备后台档案已删除：{item.device.id}。历史遥测数据保留，硬件重新上报后会以只读档案重新进入后台。",
+        parameters={
+            "device_id": item.device.id,
+            "binding_status": item.binding_status,
+            "connection_removed": item.connection is not None,
+        },
+    )
+    return DeviceManagementDeleteResponse(deleted=True, device_id=item.device.id, audit_log_id=audit.id)
 
 
 @router.post("/{device_id}/offline", response_model=DeviceManagementResponse)

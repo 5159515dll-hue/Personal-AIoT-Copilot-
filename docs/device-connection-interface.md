@@ -45,8 +45,10 @@ GET  /api/device-connections
 
 ```text
 GET   /api/devices/management
+POST  /api/devices/management
 PATCH /api/devices/{device_id}/management
 POST  /api/devices/{device_id}/offline
+DELETE /api/devices/{device_id}/management
 POST  /api/devices/batch-management
 ```
 
@@ -92,6 +94,25 @@ POST /api/ingest/sensor-readings
 
 真实硬件到货后，设备可以先通过注册、心跳或遥测进入 `device_connections`。后台管理页再把连接记录和设备注册表绑定到同一 `device_id`，并补充风险和负载信息。
 
+硬件未到货时，也可以先创建后台设备档案。只要后续 ESP32、STM32、树莓派或网关使用同一个 `device_id` 注册、心跳或上报遥测，服务器就会把真实连接记录和预建设备档案归并到同一设备视图。
+
+预建设备示例：
+
+```json
+{
+  "device_id": "esp32_room_node_01",
+  "name": "书房 ESP32 节点",
+  "device_type": "esp32",
+  "transport": "mqtt",
+  "protocol_version": "aiot.v1",
+  "location": "书房",
+  "risk_level": "read_only",
+  "controllable": false,
+  "requires_confirmation": false,
+  "load_type": "none"
+}
+```
+
 单设备更新示例：
 
 ```json
@@ -116,6 +137,7 @@ POST /api/ingest/sensor-readings
 - `medium` 如果可控，会强制需要确认。
 - 只有 `low` 且明确负载标记的设备适合自动化规则触发。
 - 手动下线只更新状态和审计，不删除注册记录，方便设备恢复后继续追溯。
+- 删除后台设备档案会移除 `device_registry` 和 `device_connections` 当前记录，但保留历史遥测；硬件重新上报后会以只读设备重新进入后台。
 
 批量管理示例：
 
@@ -244,6 +266,6 @@ MQTT payload 支持标准 envelope：
 - `/api/device-connections/register` 用于设备注册。
 - `/api/device-connections/{device_id}/heartbeat` 用于设备心跳。
 - `/api/device-connections/{device_id}/telemetry` 用于版本化 HTTP 遥测。
-- `/api/devices/management` 用于后台硬件绑定、负载标记和批量运维。
+- `/api/devices/management` 用于后台硬件预建、绑定、负载标记和批量运维。
 - MQTT 和旧 HTTP 入站都会同步更新设备连接表。
 - 新设备进入 `device_registry` 时只能是只读不可控设备。

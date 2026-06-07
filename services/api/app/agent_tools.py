@@ -23,6 +23,7 @@ from app.models import (
     AgentMessage,
     AutomationRuleCreate,
     ControlDeviceRequest,
+    DeviceState,
     Metric,
     PolicyDecision,
     PolicyResult,
@@ -156,6 +157,18 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
             policy,
             rule_draft,
             allow_model=False,
+        )
+
+    if _mentions_smart_adjustment(lowered):
+        return await _smart_adjustment_response(
+            session_id=session_id,
+            message=message,
+            data_source=data_source,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
         )
 
     if _mentions_lamp_control(lowered):
@@ -465,7 +478,16 @@ async def _device_docs_response(
     tool_calls.append(
         ToolCall(
             name="search_device_docs",
-            parameters={"query": message, "sources": ["docs/device-protocol.md", "firmware/esp32-room-node/README.md"]},
+            parameters={
+                "query": message,
+                "sources": [
+                    "docs/device-connection-interface.md",
+                    "docs/device-protocol.md",
+                    "firmware/esp32-room-node/README.md",
+                    "firmware/stm32-room-node/README.md",
+                    "examples/raspberry-pi-gateway/aiot_gateway.py",
+                ],
+            },
             result={"count": len(matches), "matches": matches},
             created_at=now(),
         )
@@ -908,6 +930,123 @@ async def _action_recommendation_response(
     return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
 
 
+async def _smart_adjustment_response(
+    *,
+    session_id: str,
+    message: str,
+    data_source: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    device_source = "database" if data_source == "database" else "mock"
+    end_ts = now()
+    start_ts = end_ts - timedelta(hours=2)
+    used_data.extend([f"{data_source}_latest_sensor_readings", f"{device_source}_device_registry", f"{data_source}_recent_environment_history"])
+    try:
+        if data_source == "database":
+            metrics = latest_sensor_readings_db()
+        else:
+            metrics = current_room_state().metrics
+        devices = list_registered_devices(device_source)
+        histories = _query_metric_histories(
+            data_source,
+            start_ts,
+            end_ts,
+            "15m",
+            [Metric.co2, Metric.temperature, Metric.humidity, Metric.light, Metric.presence, Metric.noise],
+        )
+    except DeviceRegistryUnavailable as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="plan_environment_adjustment",
+                parameters={"source": data_source, "scope": "hardware_data_safe_adjustment"},
+                result={"source": data_source, "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"设备注册表暂不可用，无法形成可执行调节计划：{error_text}。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+    except Exception as exc:
+        error_text = _database_error_text(exc)
+        tool_calls.append(
+            ToolCall(
+                name="plan_environment_adjustment",
+                parameters={"source": data_source, "scope": "hardware_data_safe_adjustment"},
+                result={"source": data_source, "status": "unavailable", "error": error_text},
+                created_at=now(),
+            )
+        )
+        reply = f"硬件数据暂不可用，不能进行智能调节：{error_text}。"
+        return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+    execute_requested = _wants_adjustment_execution(message.lower())
+    plan = _build_smart_adjustment_plan(metrics, devices, histories)
+    tool_calls.append(
+        ToolCall(
+            name="plan_environment_adjustment",
+            parameters={
+                "source": data_source,
+                "scope": "hardware_data_safe_adjustment",
+                "execute_low_risk": execute_requested,
+            },
+            result=plan,
+            created_at=now(),
+        )
+    )
+
+    executed: list[dict[str, object]] = []
+    if execute_requested:
+        for action in plan["actions"]:
+            candidate = action.get("control_candidate")
+            if not isinstance(candidate, dict):
+                continue
+            if action.get("execution_mode") != "low_risk_control":
+                continue
+            control = _control_tool(
+                str(candidate.get("device_id")),
+                str(candidate.get("state", "on")),
+                True,
+                message,
+                device_source,
+            )
+            tool_calls.append(control)
+            policy = control.policy
+            if control.policy and control.policy.result == PolicyResult.requires_confirmation:
+                needs_confirmation = True
+            executed.append(
+                {
+                    "title": action.get("title"),
+                    "device_id": candidate.get("device_id"),
+                    "state": candidate.get("state"),
+                    "execution_result": control.result.get("execution_result"),
+                    "audit_log_id": control.result.get("audit_log_id"),
+                }
+            )
+            break
+
+    first_action = plan["actions"][0]["title"] if plan["actions"] else "继续观察"
+    if executed and executed[0].get("execution_result") == "success":
+        reply = (
+            f"已根据硬件数据执行低风险调节：{executed[0]['title']}，"
+            f"设备 {executed[0]['device_id']} -> {executed[0]['state']}。审计编号：{executed[0]['audit_log_id']}。"
+        )
+    elif execute_requested:
+        reply = (
+            f"我形成了智能调节计划，首要建议是：{first_action}。"
+            "当前没有可直接执行的低风险动作，或动作被策略要求确认/阻止；不会控制未知负载、高风险设备或报警器。"
+        )
+    else:
+        reply = (
+            f"智能调节计划已生成，首要建议是：{first_action}。"
+            "如果你明确要求执行，我只会尝试低风险、已标记负载、可控的动作；中高风险动作仍需要确认或会被拒绝。"
+        )
+    return await _response(session_id, message, reply, used_data, tool_calls, needs_confirmation, policy, rule_draft)
+
+
 async def _database_environment_response(
     *,
     session_id: str,
@@ -1014,7 +1153,12 @@ def _control_tool(device_id: str, state: str, confirmed: bool, intent: str, sour
     )
     if policy.result == PolicyResult.allowed:
         policy = assess_device_control_rate_limit(device) or policy
-    execution_result = "success" if policy.result == PolicyResult.allowed else "blocked"
+    if policy.result == PolicyResult.allowed:
+        execution_result = "success"
+    elif policy.result == PolicyResult.requires_confirmation:
+        execution_result = "requires_confirmation"
+    else:
+        execution_result = "blocked"
     controlled_device = None
     if device and policy.result == PolicyResult.allowed and state in {"on", "off"}:
         controlled_device = execute_device_control(device, state, "database" if source == "database" else "mock")
@@ -1221,6 +1365,156 @@ def _recommend_safe_actions(metrics: dict[Metric, object]) -> dict:
     }
 
 
+def _build_smart_adjustment_plan(metrics: dict[Metric, object], devices: list, histories: dict[Metric, list]) -> dict:
+    co2 = _metric_value(metrics.get(Metric.co2))
+    temperature = _metric_value(metrics.get(Metric.temperature))
+    humidity = _metric_value(metrics.get(Metric.humidity))
+    light = _metric_value(metrics.get(Metric.light))
+    noise = _metric_value(metrics.get(Metric.noise))
+    actions: list[dict[str, object]] = []
+
+    if co2 is not None and co2 > 1200:
+        actions.append(
+            {
+                "title": "立即通风 10 分钟并继续观察 CO2",
+                "reason": f"当前 CO2 为 {co2:.0f} ppm，超过 1200 ppm 专注阈值。",
+                "risk_level": "low",
+                "execution_mode": "manual_or_reminder",
+                "control_candidate": None,
+            }
+        )
+        fan = _find_adjustment_device(devices, type_tokens=("fan", "ir_remote"), appliance_tokens=("fan", "风扇"))
+        if fan is not None:
+            actions.append(_device_action(fan, "打开通风风扇或红外风扇", "CO2 偏高时可辅助换气。"))
+    elif co2 is not None and co2 > 900:
+        actions.append(
+            {
+                "title": "安排一次短时通风提醒",
+                "reason": f"当前 CO2 为 {co2:.0f} ppm，已经接近需要干预的区间。",
+                "risk_level": "read_only",
+                "execution_mode": "reminder_only",
+                "control_candidate": None,
+            }
+        )
+
+    if light is not None and light < 250:
+        lamp = _find_adjustment_device(devices, type_tokens=("smart_light", "light"), appliance_tokens=("lamp", "light", "led", "灯"))
+        if lamp is not None:
+            actions.append(_device_action(lamp, "打开低风险桌面照明", f"当前光照约 {light:.0f} lux，低于阅读建议。"))
+        else:
+            actions.append(
+                {
+                    "title": "补充桌面照明",
+                    "reason": f"当前光照约 {light:.0f} lux，但没有找到已标记的低风险灯光设备。",
+                    "risk_level": "low",
+                    "execution_mode": "manual_or_reminder",
+                    "control_candidate": None,
+                }
+            )
+
+    if temperature is not None and temperature > 28:
+        actions.append(
+            {
+                "title": "降低热源或短时降温",
+                "reason": f"当前温度约 {temperature:.1f} C，高于长时间专注舒适区。",
+                "risk_level": "low",
+                "execution_mode": "manual_or_reminder",
+                "control_candidate": None,
+            }
+        )
+
+    if humidity is not None and (humidity < 35 or humidity > 65):
+        actions.append(
+            {
+                "title": "调整加湿或除湿策略",
+                "reason": f"当前湿度约 {humidity:.1f}%，不在 35%-65% 舒适区。",
+                "risk_level": "low",
+                "execution_mode": "manual_or_reminder",
+                "control_candidate": None,
+            }
+        )
+
+    if noise is not None and noise > 65:
+        actions.append(
+            {
+                "title": "降低环境噪声或切换安静提醒",
+                "reason": f"当前噪声约 {noise:.1f} dB，超过专注建议阈值。",
+                "risk_level": "read_only",
+                "execution_mode": "reminder_only",
+                "control_candidate": None,
+            }
+        )
+
+    if not actions:
+        actions.append(
+            {
+                "title": "保持当前状态并继续采样",
+                "reason": "最近指标没有触发调节阈值。",
+                "risk_level": "read_only",
+                "execution_mode": "observe_only",
+                "control_candidate": None,
+            }
+        )
+
+    return {
+        "status": "ok",
+        "latest_metrics": {
+            metric.value: reading.model_dump(mode="json")
+            for metric, reading in metrics.items()
+            if hasattr(reading, "model_dump")
+        },
+        "history_summary": {
+            metric.value: _metric_summary(readings)
+            for metric, readings in histories.items()
+        },
+        "device_count": len(devices),
+        "actions": actions[:5],
+        "safety_boundary": (
+            "大模型只能解释工具结果；控制候选必须来自设备注册表，并再次通过 control_device 策略链路。"
+            "未知负载、强电、安全报警、门锁、燃气和高风险设备不会被自动执行。"
+        ),
+    }
+
+
+def _device_action(device, title: str, reason: str) -> dict[str, object]:
+    summary = _device_status_summary(device)
+    if not device.controllable:
+        execution_mode = "blocked"
+    elif device.risk_level == RiskLevel.low:
+        execution_mode = "low_risk_control"
+    elif device.requires_confirmation:
+        execution_mode = "requires_confirmation"
+    else:
+        execution_mode = "blocked"
+    return {
+        "title": title,
+        "reason": reason,
+        "risk_level": device.risk_level.value,
+        "execution_mode": execution_mode,
+        "device": summary,
+        "control_candidate": {"device_id": device.id, "state": "on"} if execution_mode == "low_risk_control" else None,
+    }
+
+
+def _find_adjustment_device(devices: list, *, type_tokens: tuple[str, ...], appliance_tokens: tuple[str, ...]):
+    def score(device) -> tuple[int, int]:
+        text = " ".join(
+            str(value).lower()
+            for value in (device.id, device.name, device.type, device.connected_appliance or "")
+        )
+        matched = any(token.lower() in text for token in type_tokens + appliance_tokens)
+        if not matched or device.online_state == DeviceState.offline:
+            return (0, 0)
+        safety_score = 3 if device.risk_level == RiskLevel.low and device.controllable else 1
+        off_score = 1 if _device_power(device) != "on" else 0
+        return (safety_score, off_score)
+
+    candidates = [device for device in devices if score(device) > (0, 0)]
+    if not candidates:
+        return None
+    return sorted(candidates, key=score, reverse=True)[0]
+
+
 def _metric_value(reading: object | None) -> float | None:
     value = getattr(reading, "value", None)
     return float(value) if isinstance(value, (int, float)) else None
@@ -1292,6 +1586,18 @@ def _timescale_status_text(status) -> str:
 
 DEVICE_DOC_ENTRIES = [
     {
+        "title": "统一设备接入接口",
+        "source": "docs/device-connection-interface.md",
+        "keywords": ("接入", "连接", "register", "heartbeat", "telemetry", "device-connections", "esp32", "stm32", "树莓派", "raspberry"),
+        "summary": "ESP32、STM32、树莓派和 Linux 网关统一使用 aiot.v1；注册、心跳、遥测三类接口分离，设备默认只读。",
+    },
+    {
+        "title": "后台预建设备",
+        "source": "docs/device-connection-interface.md",
+        "keywords": ("预建", "新建", "后台", "绑定", "负载", "management", "device_id"),
+        "summary": "硬件未到货时可以先 POST /api/devices/management 创建设备档案；后续硬件用同一个 device_id 上报即可绑定。",
+    },
+    {
         "title": "MQTT Topic",
         "source": "docs/device-protocol.md",
         "keywords": ("mqtt", "topic", "主题", "上报", "telemetry"),
@@ -1332,6 +1638,18 @@ DEVICE_DOC_ENTRIES = [
         "source": "firmware/esp32-room-node/README.md",
         "keywords": ("esp32", "固件", "platformio", "wifi", "config", "传感器"),
         "summary": "ESP32 固件骨架只发布遥测，不订阅控制 topic；Wi-Fi 和 MQTT 密钥只放在本地 include/config.h，不提交到 Git。",
+    },
+    {
+        "title": "STM32 接入模板",
+        "source": "firmware/stm32-room-node/README.md",
+        "keywords": ("stm32", "c++", "c/c++", "http", "串口", "蜂窝", "示例", "代码"),
+        "summary": "STM32 模板通过 HTTP 或串口网关发送 register、heartbeat、telemetry；适合后续替换为 HAL、以太网或蜂窝模组。",
+    },
+    {
+        "title": "树莓派网关示例",
+        "source": "examples/raspberry-pi-gateway/aiot_gateway.py",
+        "keywords": ("树莓派", "raspberry", "python", "gateway", "网关", "requests", "示例", "代码"),
+        "summary": "树莓派示例使用 Python requests 调用注册、心跳和遥测接口，适合作为多传感器边缘网关。",
     },
     {
         "title": "传感器替换点",
@@ -1560,6 +1878,10 @@ def _mentions_device_docs(text: str) -> bool:
         token in text
         for token in (
             "文档",
+            "接入",
+            "连接",
+            "示例",
+            "代码",
             "协议",
             "payload",
             "topic",
@@ -1568,6 +1890,9 @@ def _mentions_device_docs(text: str) -> bool:
             "设备说明",
             "固件",
             "esp32",
+            "stm32",
+            "树莓派",
+            "raspberry",
             "错误码",
         )
     )
@@ -1601,6 +1926,18 @@ def _mentions_environment_explanation(text: str) -> bool:
 
 def _mentions_action_recommendation(text: str) -> bool:
     return any(token in text for token in ("改善", "方案", "怎么做", "怎么办", "建议我", "行动建议", "recommend", "适合专注"))
+
+
+def _mentions_smart_adjustment(text: str) -> bool:
+    adjustment_tokens = ("智能调节", "自动调节", "自动优化", "智能控制", "调节环境", "根据硬件", "硬件数据", "联动", "闭环")
+    context_tokens = ("调节", "优化", "控制", "执行", "动作", "环境", "co2", "二氧化碳", "光照", "温度", "湿度")
+    return any(token in text for token in adjustment_tokens) or (
+        any(token in text for token in ("大模型", "智能体", "agent")) and any(token in text for token in context_tokens)
+    )
+
+
+def _wants_adjustment_execution(text: str) -> bool:
+    return any(token in text for token in ("执行", "直接调节", "自动调节", "帮我调节", "现在调节", "智能控制", "开始调节"))
 
 
 def _mentions_weekly_summary(text: str) -> bool:

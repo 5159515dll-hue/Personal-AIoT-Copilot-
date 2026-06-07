@@ -10,11 +10,12 @@
 - `summarize_weekly_environment`：聚合最近 7 天六类环境指标，比较有人状态与二氧化碳均值，用于回答一周环境趋势和学习/停留状态关系；人体存在只作为弱代理，不推断真实学习效率。
 - `explain_environment_issue`：解释下午犯困、二氧化碳上升、空气变差等问题，返回证据、可能原因和不确定性。
 - `recommend_action`：给出安全行动建议，只返回提醒或人工低风险动作，不直接控制高风险设备。
+- `plan_environment_adjustment`：读取硬件遥测、近期历史和设备注册表，生成智能调节计划；只有低风险、已标记、可控设备会进入可执行候选，执行时仍会再调用 `control_device`。
 - `get_device_status`：读取 device adapter 中的设备状态和风险元数据；模拟模式使用安全种子清单，数据库模式使用 `device_registry`，回答哪些设备开启、离线或需要关注；该工具只读，不执行控制。
 - `detect_anomaly`：读取当前状态、最近 24 小时曲线和传感器健康状态，按缺失指标、过期读数、异常质量、CO2 阈值、温湿度范围和噪声阈值生成异常摘要；database 不可用时返回明确不可用原因。
 - `get_anomaly_events`：读取与总览页一致的结构化异常事件，返回严重级别、指标、状态、时间、详情和处理建议，便于智能体解释“最近有哪些异常事件”。
 - `get_telemetry_status`：读取数据库遥测链路状态，返回 DATABASE_URL 是否配置、数据库连接、样本数、HTTP/MQTT 来源分布、最近上报设备和 Timescale 状态；该工具只读，不暴露连接串或密钥。
-- `search_device_docs`：只查询项目内设备协议和 ESP32 固件说明，返回 MQTT topic、payload、HTTP 入站、入库语义和安全边界摘要。
+- `search_device_docs`：只查询项目内设备协议、统一接入设计、ESP32、STM32 和树莓派示例，返回 MQTT topic、payload、HTTP 入站、入库语义、硬件示例和安全边界摘要。
 - `create_automation_rule`：只创建草案；保存必须通过用户确认。当前支持二氧化碳等指标提醒和“晚上 11 点后”这类简单时间提醒草案。
 - `control_device`：将设备动作请求送入策略引擎、速率限制和审计日志；允许的低风险模拟动作会写入 device adapter 状态，数据库模式会同步 `device_registry.current_state`。
 - `get_audit_log`：读取最近审计摘要，用于回答“刚才发生了什么”“哪些动作被拒绝”等追溯问题；工具结果不包含完整原始参数。
@@ -35,9 +36,11 @@
 
 当 `rule_draft` 存在时，前端只展示草案和确认按钮。用户点击“确认保存规则”后，浏览器再调用 `POST /api/rules` 并把 `confirmed=true` 发送给后端；后端会重新运行规则策略检查，并分别记录确认与创建审计日志。
 
-每日总结、一周总结、问题解释、异常事件、行动建议和设备状态都支持 `mock` 与 `database` 数据源。数据库不可用、缺少最新读数、历史曲线为空或设备注册表不可用时，工具结果会返回 `status=unavailable|empty`，智能体必须说明原因并避免给出伪确定结论。
+每日总结、一周总结、问题解释、异常事件、行动建议、智能调节计划和设备状态都支持 `mock` 与 `database` 数据源。数据库不可用、缺少最新读数、历史曲线为空或设备注册表不可用时，工具结果会返回 `status=unavailable|empty`，智能体必须说明原因并避免给出伪确定结论。
 
 遥测诊断类问题会走 `get_telemetry_status`，例如“MQTT 入站链路状态正常吗”“数据库遥测有没有数据”。协议格式类问题仍走 `search_device_docs`，例如“MQTT payload 怎么写”。
+
+智能调节类问题会走 `plan_environment_adjustment`，例如“根据硬件数据给我智能调节方案”。如果用户明确说“执行”或“自动调节”，智能体只会尝试一个低风险控制候选；未知负载、中风险确认项、高风险设备和安全报警器不会被自动执行。
 
 ## 对话记录
 

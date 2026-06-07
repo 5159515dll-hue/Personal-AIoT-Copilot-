@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   Bot,
+  Cable,
   FileClock,
   Gauge,
   Home,
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/dashboard", label: "总览", icon: Gauge },
   { href: "/trends", label: "趋势", icon: Activity },
   { href: "/devices", label: "设备", icon: SlidersHorizontal },
+  { href: "/hardware", label: "接入", icon: Cable },
   { href: "/agent", label: "智能体", icon: Bot },
   { href: "/models", label: "模型", icon: KeyRound },
   { href: "/rules", label: "规则", icon: ListChecks },

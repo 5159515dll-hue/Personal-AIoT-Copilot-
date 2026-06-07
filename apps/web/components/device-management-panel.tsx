@@ -1,14 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Ban, Boxes, CheckSquare, Cpu, Save, Square, Unplug } from "lucide-react";
+import { Ban, Boxes, CheckSquare, Cpu, Plus, Save, Square, Trash2, Unplug } from "lucide-react";
 import {
   batchUpdateDeviceManagement,
+  createDeviceManagement,
+  deleteDeviceManagement,
   markDeviceOffline,
   updateDeviceManagement
 } from "@/lib/api";
 import type {
   DeviceBatchManagementItem,
+  DeviceManagementCreate,
   DeviceManagementUpdate,
   ManagedDevice
 } from "@/lib/types";
@@ -33,6 +36,40 @@ const loadTypeOptions = [
   "other"
 ] as const;
 const transportOptions = ["mqtt", "http", "serial_gateway", "edge_gateway"] as const;
+const deviceTypeOptions = [
+  "esp32",
+  "stm32",
+  "raspberry_pi",
+  "linux_gateway",
+  "sensor_node",
+  "smart_light",
+  "ir_remote",
+  "smart_plug",
+  "safety_alarm",
+  "other"
+] as const;
+const defaultCreateDraft: DeviceManagementCreate = {
+  device_id: "",
+  name: "",
+  display_name: "",
+  device_type: "sensor_node",
+  transport: "mqtt",
+  protocol_version: "aiot.v1",
+  firmware_version: "",
+  hardware_revision: "",
+  location: "书房",
+  risk_level: "read_only",
+  controllable: false,
+  requires_confirmation: false,
+  connected_appliance: "",
+  max_active_duration_minutes: null,
+  load_type: "none",
+  load_label: "",
+  load_power_watts: null,
+  management_note: "",
+  tags: [],
+  metadata: {}
+};
 
 type DraftMap = Record<string, DeviceManagementUpdate>;
 
@@ -48,6 +85,7 @@ export function DeviceManagementPanel({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState(error ?? null);
+  const [createDraft, setCreateDraft] = useState<DeviceManagementCreate>(defaultCreateDraft);
   const [batchRisk, setBatchRisk] = useState<DeviceManagementUpdate["risk_level"]>("read_only");
   const [batchLoadType, setBatchLoadType] = useState("none");
   const [batchLoadLabel, setBatchLoadLabel] = useState("");
@@ -61,6 +99,13 @@ export function DeviceManagementPanel({
         ...current[deviceId],
         ...patch
       }
+    }));
+  }
+
+  function updateCreateDraft(patch: Partial<DeviceManagementCreate>) {
+    setCreateDraft((current) => ({
+      ...current,
+      ...patch
     }));
   }
 
@@ -79,6 +124,42 @@ export function DeviceManagementPanel({
   function replaceItem(updated: ManagedDevice) {
     setItems((current) => current.map((item) => (item.device.id === updated.device.id ? updated : item)));
     setDrafts((current) => ({ ...current, [updated.device.id]: draftFromItem(updated) }));
+  }
+
+  async function createDevice() {
+    const deviceId = createDraft.device_id.trim();
+    const name = createDraft.name.trim();
+    if (!deviceId || !name) {
+      setMessage("请填写设备编号和显示名称。");
+      return;
+    }
+    setPending("create");
+    setMessage(null);
+    try {
+      const response = await createDeviceManagement({
+        ...createDraft,
+        device_id: deviceId,
+        name,
+        display_name: createDraft.display_name?.trim() || name,
+        location: createDraft.location.trim() || "unknown",
+        protocol_version: createDraft.protocol_version.trim() || "aiot.v1",
+        firmware_version: createDraft.firmware_version?.trim() || null,
+        hardware_revision: createDraft.hardware_revision?.trim() || null,
+        connected_appliance: createDraft.connected_appliance?.trim() || null,
+        load_label: createDraft.load_label?.trim() || null,
+        management_note: createDraft.management_note?.trim() || null,
+        controllable: createDraft.risk_level === "low" ? createDraft.controllable : false,
+        requires_confirmation: createDraft.risk_level === "medium" ? true : createDraft.requires_confirmation
+      });
+      setItems((current) => [response.item, ...current.filter((item) => item.device.id !== response.item.device.id)]);
+      setDrafts((current) => ({ ...current, [response.item.device.id]: draftFromItem(response.item) }));
+      setCreateDraft(defaultCreateDraft);
+      setMessage(`设备 ${response.item.device.id} 已创建，审计编号：${response.audit_log_id}`);
+    } catch (createError) {
+      setMessage(createError instanceof Error ? createError.message : "设备创建失败");
+    } finally {
+      setPending(null);
+    }
   }
 
   async function saveDevice(item: ManagedDevice) {
@@ -104,6 +185,34 @@ export function DeviceManagementPanel({
       setMessage(`设备 ${response.item.device.id} 已下线，审计编号：${response.audit_log_id}`);
     } catch (offlineError) {
       setMessage(offlineError instanceof Error ? offlineError.message : "设备下线失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function deleteDevice(item: ManagedDevice) {
+    const confirmed = window.confirm(`确认删除设备档案 ${item.device.id}？历史遥测数据会保留，硬件重新上报后会重新进入后台。`);
+    if (!confirmed) {
+      return;
+    }
+    setPending(item.device.id);
+    setMessage(null);
+    try {
+      const response = await deleteDeviceManagement(item.device.id);
+      setItems((current) => current.filter((currentItem) => currentItem.device.id !== response.device_id));
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[response.device_id];
+        return next;
+      });
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(response.device_id);
+        return next;
+      });
+      setMessage(`设备 ${response.device_id} 已删除，审计编号：${response.audit_log_id}`);
+    } catch (deleteError) {
+      setMessage(deleteError instanceof Error ? deleteError.message : "设备删除失败");
     } finally {
       setPending(null);
     }
@@ -201,6 +310,81 @@ export function DeviceManagementPanel({
       </div>
 
       {message && <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{message}</p>}
+
+      <div className="mt-4 rounded-lg border border-line bg-slate-50 p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <Plus size={16} aria-hidden />
+              新建设备
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              可先为未到货硬件预建设备编号；ESP32、STM32、树莓派后续用同一个编号上报即可自动绑定。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void createDevice()}
+            disabled={pending === "create"}
+            className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-teal-600 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Plus size={16} aria-hidden />
+            新建设备
+          </button>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <TextField label="设备编号" value={createDraft.device_id} onChange={(value) => updateCreateDraft({ device_id: value })} />
+          <TextField label="显示名称" value={createDraft.name} onChange={(value) => updateCreateDraft({ name: value, display_name: value })} />
+          <SelectField
+            label="设备类型"
+            value={createDraft.device_type}
+            options={deviceTypeOptions.map((value) => ({ value, label: deviceTypeLabel(value) }))}
+            onChange={(value) => updateCreateDraft({ device_type: value })}
+          />
+          <SelectField
+            label="传输"
+            value={createDraft.transport}
+            options={transportOptions.map((value) => ({ value, label: statusLabel(value) }))}
+            onChange={(value) => updateCreateDraft({ transport: value as DeviceManagementCreate["transport"] })}
+          />
+          <TextField label="协议版本" value={createDraft.protocol_version} onChange={(value) => updateCreateDraft({ protocol_version: value })} />
+          <TextField label="位置" value={createDraft.location} onChange={(value) => updateCreateDraft({ location: value })} />
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_auto]">
+          <SelectField
+            label="风险"
+            value={createDraft.risk_level}
+            options={riskOptions.map((value) => ({ value, label: riskLabel(value) }))}
+            onChange={(value) => updateCreateDraft({ risk_level: value as DeviceManagementCreate["risk_level"] })}
+          />
+          <SelectField
+            label="负载类型"
+            value={String(createDraft.load_type ?? "none")}
+            options={loadTypeOptions.map((value) => ({ value, label: loadTypeLabel(value) }))}
+            onChange={(value) => updateCreateDraft({ load_type: value })}
+          />
+          <TextField label="负载名称" value={createDraft.load_label ?? ""} onChange={(value) => updateCreateDraft({ load_label: value })} />
+          <TextField label="硬件版本" value={createDraft.hardware_revision ?? ""} onChange={(value) => updateCreateDraft({ hardware_revision: value })} />
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700 xl:mt-5">
+            <input
+              type="checkbox"
+              checked={Boolean(createDraft.controllable)}
+              onChange={(event) => updateCreateDraft({ controllable: event.target.checked })}
+              className="h-4 w-4 rounded border-line text-teal-600"
+            />
+            可控
+          </label>
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700 xl:mt-5">
+            <input
+              type="checkbox"
+              checked={Boolean(createDraft.requires_confirmation)}
+              onChange={(event) => updateCreateDraft({ requires_confirmation: event.target.checked })}
+              className="h-4 w-4 rounded border-line text-teal-600"
+            />
+            需确认
+          </label>
+        </div>
+      </div>
 
       <div className="mt-4 space-y-3">
         {items.map((item) => {
@@ -332,6 +516,15 @@ export function DeviceManagementPanel({
                   <Unplug size={16} aria-hidden />
                   手动下线
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void deleteDevice(item)}
+                  disabled={pending === item.device.id}
+                  className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-rose-200 bg-white px-3 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Trash2 size={16} aria-hidden />
+                  删除档案
+                </button>
               </div>
             </article>
           );
@@ -343,7 +536,7 @@ export function DeviceManagementPanel({
               <Ban size={16} aria-hidden />
               暂无真实硬件记录
             </p>
-            <p className="mt-2">硬件到齐后，先调用注册、心跳或遥测接口，设备会自动进入这里并默认为只读。</p>
+            <p className="mt-2">可以先在上方新建设备档案；硬件到齐后，使用同一个设备编号调用注册、心跳或遥测接口完成绑定。</p>
           </div>
         )}
       </div>
