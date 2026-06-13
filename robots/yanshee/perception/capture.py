@@ -94,9 +94,23 @@ def capture_window() -> dict:
 
 
 def capture_transcript() -> str | None:
-    """本地 ASR 转写。v0 桩返回 None。真机用官方 YanAPI 听写(IAT)：
-    YanAPI.sync_do_voice_iat_value()（中/英；蒙语 ASR 见 M4/M7）。原文只过境服务器，不落盘。"""
-    # TODO: result = YanAPI.sync_do_voice_iat_value(); 取识别文本。
+    """本地 ASR 听写：官方 YanAPI `sync_do_voice_iat_value()`（中/英；蒙语 ASR 见 M4/M7）。
+    原文只过境服务器、不落盘。无 yanapi 或静默时返回 None。"""
+    if not _YANAPI:
+        return None
+    try:
+        result = YanAPI.sync_do_voice_iat_value()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 听写失败：{exc!r}")
+        return None
+    # 官方返回可能是 str 或 {'data': {'text': ...}}；函数名确定，仅对返回结构做轻量容错。
+    if isinstance(result, str):
+        return result.strip() or None
+    if isinstance(result, dict):
+        data = result.get("data", result)
+        if isinstance(data, dict):
+            text = str(data.get("text") or data.get("iat") or "").strip()
+            return text or None
     return None
 
 
