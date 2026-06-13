@@ -514,6 +514,15 @@ export type CompanionReplyResponse = {
   model_status: string;
 };
 
+export type CompanionArchetype = "gentle_healing" | "lively_playful" | "quiet_companion";
+
+export type CompanionPersona = {
+  name: string;
+  archetype: CompanionArchetype;
+  companion_for: string;
+  notes: string | null;
+};
+
 export type ProviderEndpoint = {
   id: string;
   label: string;

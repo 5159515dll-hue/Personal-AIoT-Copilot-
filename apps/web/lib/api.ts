@@ -46,6 +46,7 @@ import type {
   StreamSourceUpdate,
   TelemetryStatus,
   TelemetrySource,
+  CompanionPersona,
   CompanionReplyResponse,
   EmotionLabel,
   EmotionLanguage,
@@ -436,6 +437,17 @@ export async function postCompanionReply(body: {
   language?: EmotionLanguage;
 }): Promise<CompanionReplyResponse> {
   return request<CompanionReplyResponse>("/api/companion/reply", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function getCompanionPersona(): Promise<CompanionPersona> {
+  return request<CompanionPersona>("/api/companion/persona");
+}
+
+export async function postCompanionPersona(body: Partial<CompanionPersona>): Promise<CompanionPersona> {
+  return request<CompanionPersona>("/api/companion/persona", {
     method: "POST",
     body: JSON.stringify(body)
   });
