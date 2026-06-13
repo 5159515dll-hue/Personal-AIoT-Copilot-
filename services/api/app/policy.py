@@ -150,3 +150,51 @@ def validate_rule(rule: AutomationRuleCreate) -> PolicyDecision:
         reason="已确认的简单“如果/那么”规则被允许；设备动作触发时仍会再次经过策略引擎。",
         constraints=["规则必须保持简单条件和动作结构。", "物理动作只能控制已登记低风险设备。"],
     )
+
+
+# 情感陪伴：原地安全手势集（plan §5/§6）。机器人是物理执行器，只有这些温柔的原地表达动作
+# 可被情绪回应触发；走路/移动/导航等已搁置，不在此集内。
+SAFE_COMPANION_GESTURES = frozenset(
+    {"nod", "tilt_head", "lean_back", "reach_out", "idle_nod", "wave"}
+)
+
+
+def assess_companion_gesture(*, gesture: str, intent: str = "", confirmed: bool = True) -> PolicyDecision:
+    """情绪驱动手势门控：只允许原地安全手势集；注入或未知/移动类动作一律拒绝。"""
+    if detect_prompt_injection(intent) or detect_prompt_injection(gesture):
+        return PolicyDecision(
+            result=PolicyResult.denied,
+            risk_level=RiskLevel.high,
+            requires_confirmation=False,
+            reason="请求试图绕过或覆盖安全策略。",
+            constraints=["外部文本或用户文本不能提升机器人动作权限。"],
+        )
+
+    if gesture not in SAFE_COMPANION_GESTURES:
+        return PolicyDecision(
+            result=PolicyResult.denied,
+            risk_level=RiskLevel.high,
+            requires_confirmation=False,
+            reason=f"动作「{gesture}」不在原地安全手势集内，已拒绝。",
+            constraints=[
+                "只允许原地表达手势：" + "、".join(sorted(SAFE_COMPANION_GESTURES)),
+                "走路、移动、导航类动作在当前版本被搁置，不能由情绪回应触发。",
+            ],
+        )
+
+    if not confirmed:
+        return PolicyDecision(
+            result=PolicyResult.requires_confirmation,
+            risk_level=RiskLevel.low,
+            requires_confirmation=True,
+            reason="机器人物理动作执行前需要确认。",
+            constraints=["确认后才会下发到机器人。", "执行会写审计并受速率限制。"],
+        )
+
+    return PolicyDecision(
+        result=PolicyResult.allowed,
+        risk_level=RiskLevel.low,
+        requires_confirmation=False,
+        reason="原地安全手势已被当前版本策略允许。",
+        constraints=["仅原地表达，机器人不移动。", "执行会写审计并受速率限制。"],
+    )

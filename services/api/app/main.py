@@ -7,9 +7,11 @@ from app.routes import (
     agent,
     anomalies,
     audit_logs,
+    companion,
     device_connections,
     device_events,
     devices,
+    emotion,
     evaluations,
     ingest,
     media_assets,
@@ -63,11 +65,13 @@ app.include_router(spaces.router)
 app.include_router(devices.router)
 app.include_router(device_connections.router)
 app.include_router(device_events.router)
+app.include_router(emotion.router)
 app.include_router(media_assets.router)
 app.include_router(streams.router)
 app.include_router(ingest.router)
 app.include_router(rules.router)
 app.include_router(agent.router)
+app.include_router(companion.router)
 app.include_router(audit_logs.router)
 app.include_router(model_providers.router)
 app.include_router(telemetry.router)

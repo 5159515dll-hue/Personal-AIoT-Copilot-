@@ -36,6 +36,66 @@ from app.sensor_health import evaluate_sensor_health
 from app.time_utils import now
 
 
+def _mentions_emotion(text: str) -> bool:
+    keywords = ("情绪", "心情", "情感", "感受", "陪伴", "emotion", "mood", "feeling")
+    return any(keyword in text for keyword in keywords)
+
+
+async def _emotion_response(
+    *,
+    session_id: str,
+    message: str,
+    used_data: list[str],
+    tool_calls: list[ToolCall],
+    needs_confirmation: bool,
+    policy: PolicyDecision | None,
+    rule_draft: AutomationRuleCreate | None,
+) -> AgentChatResponse:
+    """只读情绪工具：读当前空间的平滑情绪状态，不触发任何物理动作。"""
+    from app.emotion_fusion import get_last_state
+    from app.space_store import current_space
+
+    space = current_space()
+    state = get_last_state(space.id)
+    used_data.append("current_emotion_state")
+    if state is None:
+        result = {
+            "available": False,
+            "space_id": space.id,
+            "message": "当前空间暂无情绪状态，需先开启情绪识别并由感知上报。",
+        }
+        reply = (
+            f"{space.name}当前还没有情绪读数。需要先在该空间把摄像头和情绪识别开成 local_only，"
+            "再由情绪采集上报后才能读到。这是只读查询，不会触发任何机器人动作。"
+        )
+    else:
+        result = {"available": True, "space_id": space.id, **state.model_dump(mode="json")}
+        reply = (
+            f"{space.name}当前情绪为「{state.primary_emotion}」"
+            f"（valence={state.valence}，arousal={state.arousal}，置信度={state.confidence}，语言={state.language}）。"
+            "这是只读情绪状态，不会触发任何机器人动作；如需共情回应请走情感陪伴回路。"
+        )
+    tool_calls.append(
+        ToolCall(
+            name="read_current_emotion",
+            parameters={"space_id": space.id},
+            result=result,
+            policy=None,
+            created_at=now(),
+        )
+    )
+    return await _response(
+        session_id,
+        message,
+        reply,
+        used_data,
+        tool_calls,
+        needs_confirmation,
+        policy,
+        rule_draft,
+    )
+
+
 async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
     message = request.message.strip()
     session_id = request.session_id or f"session_{uuid4().hex[:10]}"
@@ -98,6 +158,17 @@ async def handle_chat(request: AgentChatRequest) -> AgentChatResponse:
 
     if _mentions_telemetry_status(lowered):
         return await _telemetry_status_response(
+            session_id=session_id,
+            message=message,
+            used_data=used_data,
+            tool_calls=tool_calls,
+            needs_confirmation=needs_confirmation,
+            policy=policy,
+            rule_draft=rule_draft,
+        )
+
+    if _mentions_emotion(lowered):
+        return await _emotion_response(
             session_id=session_id,
             message=message,
             used_data=used_data,

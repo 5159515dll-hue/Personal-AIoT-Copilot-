@@ -92,6 +92,23 @@ PROVIDERS: list[ModelProviderDefinition] = [
         ],
         default_model="kimi-k2.6",
     ),
+    ModelProviderDefinition(
+        id="doubao",
+        label="字节豆包",
+        description="字节豆包大模型，火山引擎方舟 Ark，OpenAI 兼容入口，国内响应速度最快，用于情感陪伴共情对话。",
+        docs_url="https://www.volcengine.com/docs/82379",
+        endpoints=[
+            ProviderEndpoint(
+                id="doubao_ark_openai",
+                label="火山方舟 Ark · OpenAI 兼容",
+                protocol=ProviderProtocol.openai,
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+                description="火山引擎方舟 Ark OpenAI 兼容入口；密钥为 ark- 开头，模型需先在 Ark 控制台开通。",
+            ),
+        ],
+        models=["doubao-seed-2-0-lite-260215"],
+        default_model="doubao-seed-2-0-lite-260215",
+    ),
 ]
 
 
@@ -486,17 +503,23 @@ def _openai_headers(provider_id: str, api_key: str) -> dict[str, str]:
     }
 
 
+def apply_speed_params(payload: dict[str, Any], provider_id: str, *, temperature: float = 0.2) -> dict[str, Any]:
+    """统一的低延迟参数：豆包/Kimi 是推理模型，默认开思考很慢（豆包实测 14.6s→2.8s，
+    且会超 12s 超时），情感陪伴对延迟敏感 → 关思考只取正文；其余厂商用 temperature。"""
+    if provider_id in ("kimi", "doubao"):
+        payload["thinking"] = {"type": "disabled"}
+    else:
+        payload["temperature"] = temperature
+    return payload
+
+
 def _openai_test_payload(provider_id: str, model: str) -> dict:
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": "请只回复：连接正常"}],
         "max_completion_tokens": 128,
     }
-    if provider_id == "kimi":
-        payload["thinking"] = {"type": "disabled"}
-    else:
-        payload["temperature"] = 0.2
-    return payload
+    return apply_speed_params(payload, provider_id)
 
 
 async def _openai_agent_completion(client: httpx.AsyncClient, config: ModelConfig, prompt: str) -> str:
@@ -553,11 +576,7 @@ def _openai_agent_payload(provider_id: str, model: str, prompt: str) -> dict[str
         ],
         "max_completion_tokens": 1200,
     }
-    if provider_id == "kimi":
-        payload["thinking"] = {"type": "disabled"}
-    else:
-        payload["temperature"] = 0.2
-    return payload
+    return apply_speed_params(payload, provider_id)
 
 
 async def _call_agent_model(config: ModelConfig, prompt: str) -> str:

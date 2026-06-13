@@ -60,6 +60,14 @@ def record_device_event(device_id: str, request: DeviceEventCreate) -> DeviceEve
     return event
 
 
+def ensure_event_allowed(space_id: str, event_type: str) -> None:
+    """公开的空间事件门控预检（供情绪摄取等在处理/记录前调用）。
+
+    与 record_device_event 内部门控同源：raise KeyError(空间不存在) / PermissionError(能力未开)。
+    """
+    _assert_space_allows_event(space_id, event_type)
+
+
 def list_device_events(
     *,
     limit: int = 100,

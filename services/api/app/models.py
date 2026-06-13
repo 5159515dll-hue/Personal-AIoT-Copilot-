@@ -472,6 +472,124 @@ class DeviceEventIngestResponse(BaseModel):
     audit_log_id: str
 
 
+# ── 多模态情感感知（情感陪伴）────────────────────────────────────────
+EMOTION_LABELS: tuple[str, ...] = (
+    "happy",
+    "sad",
+    "angry",
+    "surprise",
+    "fear",
+    "disgust",
+    "neutral",
+)
+EmotionLabel = Literal["happy", "sad", "angry", "surprise", "fear", "disgust", "neutral"]
+EmotionLanguage = Literal["zh", "en", "mn"]
+
+
+class EmotionModalityInput(BaseModel):
+    """单模态推理结果：7 类情绪上的分布 + 置信度。喂给融合引擎。
+
+    distribution 的键应是 EMOTION_LABELS 子集；融合时会归一化，缺失类按 0 处理。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    distribution: dict[str, float] = Field(default_factory=dict)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    transcript_lang: str | None = Field(default=None, max_length=16)
+
+
+class EmotionModalitySummary(BaseModel):
+    """落到情绪事件 attributes 里的单模态摘要。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ok", "unavailable"] = "ok"
+    emotion: EmotionLabel | None = None
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    transcript_lang: str | None = Field(default=None, max_length=16)
+
+
+class EmotionState(BaseModel):
+    """融合 + 时序平滑后的统一情绪状态。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    primary_emotion: EmotionLabel
+    valence: float = Field(ge=-1, le=1)
+    arousal: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1)
+    language: EmotionLanguage = "zh"
+    modalities: dict[str, EmotionModalitySummary] = Field(default_factory=dict)
+    fusion: str = "late_weighted"
+    smoothed: bool = False
+
+
+class EmotionIngestRequest(BaseModel):
+    """边缘/采集端上报到 /api/emotion/ingest 的三模态推理结果（不含原始音视频）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=80)
+    device_id: str | None = Field(default=None, max_length=80)
+    zone: str | None = Field(default=None, max_length=80)
+    language: EmotionLanguage | None = None
+    # 视觉/语音：v0 由边缘/调用方给出分布（infer_face/infer_voice 为可插拔桩，待接真实 FER/SER）。
+    face: EmotionModalityInput | None = None
+    voice: EmotionModalityInput | None = None
+    # 文本：传原文转写，服务器 infer_text 真推理（语言相关模态）；原文不入库，只留情绪结果。
+    transcript: str | None = Field(default=None, max_length=2000)
+    record_event: bool = True
+
+
+class EmotionIngestResponse(BaseModel):
+    state: EmotionState
+    event_recorded: bool = False
+    event_id: str | None = None
+    detail: str | None = None
+
+
+class CompanionReplyRequest(BaseModel):
+    """请求情感陪伴共情回应。情绪默认取空间最近状态，也可显式覆盖。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=80)
+    message: str | None = Field(default=None, max_length=2000)
+    primary_emotion: EmotionLabel | None = None
+    language: EmotionLanguage | None = None
+    stream: bool = False
+
+
+class CompanionReplyResponse(BaseModel):
+    reply: str
+    primary_emotion: EmotionLabel
+    language: EmotionLanguage
+    tone: str
+    gesture: str
+    model_used: bool
+    model_status: str
+
+
+class CompanionGestureRequest(BaseModel):
+    """请求执行一个情绪驱动的原地手势（经策略门控）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gesture: str = Field(min_length=1, max_length=40)
+    device_id: str = Field(default="yanshee_robot_01", max_length=80)
+    intent: str | None = Field(default=None, max_length=400)
+    confirmed: bool = True
+
+
+class CompanionGestureResponse(BaseModel):
+    gesture: str
+    allowed: bool
+    executed: bool
+    reason: str
+    audit_log_id: str
+
+
 class MediaAsset(BaseModel):
     id: str = Field(default_factory=lambda: f"media_{uuid4().hex[:12]}")
     device_id: str

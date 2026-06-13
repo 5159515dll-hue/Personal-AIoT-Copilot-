@@ -1,0 +1,206 @@
+"""情感陪伴共情回应（plan §5 / M3）。
+
+回路：情绪状态 → 确定性回应策略（温柔治愈基调）→ 豆包生成共情话语（流式可选）。
+工具优先/策略优先：情绪判定与手势选择是确定性的，LLM 只负责"把话说自然"。
+未配置模型或调用失败时回退到温柔治愈模板，保证始终有得体回应。
+
+决策（§7）：宠物人格=温柔治愈型；v0 仅识别支持蒙语、回应先中/英（mn→zh 兜底，蒙语回应见 M7）。
+"""
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from urllib.parse import urljoin
+
+import httpx
+
+from app.model_providers import (
+    _agent_model_timeout_seconds,
+    _openai_headers,
+    apply_speed_params,
+    get_active_config,
+)
+from app.models import AgentModelUsage, EmotionState, ProviderProtocol
+
+COMPANION_SYSTEM_PROMPT_ZH = """你是一只温柔治愈的桌面情感陪伴机器人，像一个温暖的小伙伴，不是助手或客服。
+风格与规则：
+1. 用 2-3 句温柔、口语化的中文回应，简短贴心，不说教、不评判、不下命令。
+2. 先接住对方的情绪，再给一点点轻轻的陪伴或建议，绝不强迫。
+3. 不要输出 Markdown、列表或标题，直接像朋友一样说话。
+4. 绝不利用对方的情绪进行诱导、推销或操控。"""
+
+COMPANION_SYSTEM_PROMPT_EN = """You are a gentle, healing desktop emotional-companion robot — a warm little friend, not an assistant.
+Style and rules:
+1. Reply in 2-3 short, warm, spoken-style English sentences. Never lecture or judge.
+2. Acknowledge the feeling first, then offer light companionship, never pushy.
+3. No Markdown, lists, or headings — just talk like a friend.
+4. Never exploit the person's emotion to persuade, sell, or manipulate."""
+
+# 情绪 → 回应策略（确定性，温柔治愈基调）。gesture 对齐 M6 安全手势集。
+_STRATEGY: dict[str, dict[str, str]] = {
+    "sad": {"tone": "安抚陪伴", "gesture": "tilt_head"},
+    "happy": {"tone": "共情欢喜", "gesture": "nod"},
+    "angry": {"tone": "平静倾听", "gesture": "lean_back"},
+    "fear": {"tone": "稳定安抚", "gesture": "reach_out"},
+    "surprise": {"tone": "温和回应", "gesture": "nod"},
+    "disgust": {"tone": "理解接纳", "gesture": "tilt_head"},
+    "neutral": {"tone": "轻轻陪伴", "gesture": "idle_nod"},
+}
+
+_TEMPLATE_ZH: dict[str, str] = {
+    "sad": "辛苦啦，今天一定累坏了吧。别硬撑，先靠着歇一会儿，我就在这儿陪着你。",
+    "happy": "看到你开心，我也跟着高兴呢！这份好心情要好好收着呀。",
+    "angry": "我在听着呢，慢慢说，气一会儿没关系，我都陪着你。",
+    "fear": "别怕，有我在呢。我们一点一点来，会没事的。",
+    "surprise": "哇，是发生什么啦？我都好奇起来了，慢慢跟我说呀。",
+    "disgust": "嗯，那种感觉确实不太舒服，我懂的，先放一放吧。",
+    "neutral": "我在呢，想聊点什么都可以，我一直都在。",
+}
+
+_TEMPLATE_EN: dict[str, str] = {
+    "sad": "You've worked so hard today. Don't push yourself — lean back and rest a little, I'm right here with you.",
+    "happy": "Seeing you happy makes me happy too! Hold on to this lovely feeling.",
+    "angry": "I'm listening. Take your time — it's okay to be upset, I'm here with you.",
+    "fear": "Don't be afraid, I'm right here. We'll take it one little step at a time.",
+    "surprise": "Oh, what happened? I'm curious now — tell me slowly.",
+    "disgust": "Yeah, that feeling really isn't pleasant. I get it — let's set it aside for now.",
+    "neutral": "I'm here. We can talk about anything you like, I'm always around.",
+}
+
+
+def response_strategy(emotion: str) -> dict[str, str]:
+    return _STRATEGY.get(emotion, _STRATEGY["neutral"])
+
+
+def reply_language(language: str | None) -> str:
+    """v0：仅识别支持蒙语、回应先中/英；mn→zh 兜底（蒙语回应见 M7）。"""
+    return "en" if language == "en" else "zh"
+
+
+def _template_reply(emotion: str, language: str) -> str:
+    table = _TEMPLATE_EN if language == "en" else _TEMPLATE_ZH
+    return table.get(emotion, table["neutral"])
+
+
+def _messages(state: EmotionState, language: str, message: str | None) -> list[dict[str, str]]:
+    system = COMPANION_SYSTEM_PROMPT_EN if language == "en" else COMPANION_SYSTEM_PROMPT_ZH
+    context = [
+        f"用户当前情绪：{state.primary_emotion}"
+        f"（valence={state.valence}, arousal={state.arousal}, 置信度={state.confidence}）。",
+        f"回应基调：{response_strategy(state.primary_emotion)['tone']}。",
+    ]
+    if message:
+        context.append(f"用户刚说的话：{message}")
+    context.append("请按你的人格风格，用 2-3 句温柔的话回应。")
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "\n".join(context)},
+    ]
+
+
+def _payload(config, messages: list[dict[str, str]], *, stream: bool) -> dict:
+    payload: dict = {
+        "model": config.model,
+        "messages": messages,
+        "max_completion_tokens": 400,
+        "stream": stream,
+    }
+    return apply_speed_params(payload, config.provider_id, temperature=0.6)
+
+
+def _usable_openai_config():
+    config = get_active_config()
+    if not config or not config.api_key or config.protocol != ProviderProtocol.openai:
+        return None
+    return config
+
+
+async def generate_companion_reply(
+    state: EmotionState,
+    language: str | None = None,
+    message: str | None = None,
+) -> tuple[str, AgentModelUsage, dict[str, str]]:
+    lang = reply_language(language or state.language)
+    strat = response_strategy(state.primary_emotion)
+    meta = {"language": lang, "tone": strat["tone"], "gesture": strat["gesture"]}
+
+    config = _usable_openai_config()
+    if config is None:
+        return (
+            _template_reply(state.primary_emotion, lang),
+            AgentModelUsage(status="not_configured", used=False, reason="未配置可用 OpenAI 兼容模型，已用温柔治愈模板回应。"),
+            meta,
+        )
+    try:
+        async with httpx.AsyncClient(timeout=_agent_model_timeout_seconds()) as client:
+            response = await client.post(
+                urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
+                headers=_openai_headers(config.provider_id, config.api_key or ""),
+                json=_payload(config, _messages(state, lang, message), stream=False),
+            )
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ValueError(f"服务返回 {response.status_code}：{response.text[:200]}")
+        content = (response.json()["choices"][0]["message"].get("content") or "").strip()
+        if not content:
+            raise ValueError("模型返回空内容")
+        return content, AgentModelUsage(status="used", used=True, reason="已用当前大模型生成共情回应。"), meta
+    except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+        return (
+            _template_reply(state.primary_emotion, lang),
+            AgentModelUsage(status="fallback", used=False, reason=f"模型调用失败，已回退温柔治愈模板：{exc}"),
+            meta,
+        )
+
+
+def extract_sse_content_delta(line: str) -> str | None:
+    """从一行 OpenAI 兼容 SSE 中取 content 增量；跳过 reasoning_content、[DONE] 与非数据行。"""
+    line = line.strip()
+    if not line or not line.startswith("data:"):
+        return None
+    data = line[len("data:"):].strip()
+    if not data or data == "[DONE]":
+        return None
+    try:
+        obj = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    choices = obj.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    delta = choices[0].get("delta") or {}
+    content = delta.get("content")  # 忽略 reasoning_content（思考），只取正文
+    return content if isinstance(content, str) and content else None
+
+
+async def stream_companion_reply(
+    state: EmotionState,
+    language: str | None = None,
+    message: str | None = None,
+) -> AsyncIterator[str]:
+    """流式生成共情回应，逐块产出正文文本。无模型/失败时一次性产出模板。"""
+    lang = reply_language(language or state.language)
+    config = _usable_openai_config()
+    if config is None:
+        yield _template_reply(state.primary_emotion, lang)
+        return
+    try:
+        async with httpx.AsyncClient(timeout=_agent_model_timeout_seconds()) as client:
+            async with client.stream(
+                "POST",
+                urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
+                headers=_openai_headers(config.provider_id, config.api_key or ""),
+                json=_payload(config, _messages(state, lang, message), stream=True),
+            ) as response:
+                if response.status_code < 200 or response.status_code >= 300:
+                    yield _template_reply(state.primary_emotion, lang)
+                    return
+                emitted = False
+                async for line in response.aiter_lines():
+                    delta = extract_sse_content_delta(line)
+                    if delta:
+                        emitted = True
+                        yield delta
+                if not emitted:
+                    yield _template_reply(state.primary_emotion, lang)
+    except httpx.HTTPError:
+        yield _template_reply(state.primary_emotion, lang)
