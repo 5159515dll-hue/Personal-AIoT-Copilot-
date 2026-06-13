@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from app.companion import (
+    _build_system_prompt,
     _template_reply,
     extract_sse_content_delta,
     reply_language,
     response_strategy,
 )
+from app.models import CompanionPersona
 from app.models import PolicyResult
 from app.policy import SAFE_COMPANION_GESTURES, assess_companion_gesture
 
@@ -20,6 +22,19 @@ def test_response_strategy_covers_all_emotions_with_safe_gestures() -> None:
         assert strat["tone"]
     # 未知情绪回退 neutral
     assert response_strategy("???") == response_strategy("neutral")
+
+
+def test_build_system_prompt_injects_persona() -> None:
+    persona = CompanionPersona(name="暖暖", archetype="gentle_healing", companion_for="奶奶")
+    prompt_zh = _build_system_prompt("zh", persona)
+    assert "暖暖" in prompt_zh
+    assert "奶奶" in prompt_zh
+    assert "不评判" in prompt_zh  # 规则保留
+    prompt_en = _build_system_prompt("en", persona)
+    assert "暖暖" in prompt_en
+    # 不同 archetype 改变语气
+    lively = _build_system_prompt("zh", CompanionPersona(name="跳跳", archetype="lively_playful"))
+    assert "活泼" in lively
 
 
 def test_reply_language_v0_only_zh_en() -> None:

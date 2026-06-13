@@ -590,6 +590,29 @@ class CompanionGestureResponse(BaseModel):
     audit_log_id: str
 
 
+CompanionArchetype = Literal["gentle_healing", "lively_playful", "quiet_companion"]
+
+
+class CompanionPersona(BaseModel):
+    """情感陪伴机器人的人格设定（注入共情提示）。默认温柔治愈型（§7 决策）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="小暖", min_length=1, max_length=40)
+    archetype: CompanionArchetype = "gentle_healing"
+    companion_for: str = Field(default="", max_length=80)
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class CompanionPersonaUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=40)
+    archetype: CompanionArchetype | None = None
+    companion_for: str | None = Field(default=None, max_length=80)
+    notes: str | None = Field(default=None, max_length=240)
+
+
 class MediaAsset(BaseModel):
     id: str = Field(default_factory=lambda: f"media_{uuid4().hex[:12]}")
     device_id: str

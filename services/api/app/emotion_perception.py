@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from app.models import EMOTION_LABELS, EmotionModalityInput
 
 # 关键词情感词典（v0 确定性桩，可替换为真实文本情感模型）。
@@ -34,6 +36,36 @@ _LEXICON: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
+# ── 可插拔模型后端（plan §2 / B1）─────────────────────────────────────
+# 默认：文本=关键词、视觉/语音=透传桩。接真实模型时用 register_* 注册一个可调用对象即可，
+# 调用方与融合层不变。真实 FER/SER 模型 + 摄像头/麦克风输入属硬件阶段。
+FaceBackend = Callable[[EmotionModalityInput | None], EmotionModalityInput | None]
+VoiceBackend = Callable[[EmotionModalityInput | None], EmotionModalityInput | None]
+TextBackend = Callable[[str, str], EmotionModalityInput | None]
+
+_face_backend: FaceBackend | None = None
+_voice_backend: VoiceBackend | None = None
+_text_backend: TextBackend | None = None
+
+
+def register_face_model(backend: FaceBackend | None) -> None:
+    """注册真实 FER 模型后端（输入帧/特征→EmotionModalityInput）。传 None 恢复默认桩。"""
+    global _face_backend
+    _face_backend = backend
+
+
+def register_voice_model(backend: VoiceBackend | None) -> None:
+    """注册真实 SER 模型后端。传 None 恢复默认桩。"""
+    global _voice_backend
+    _voice_backend = backend
+
+
+def register_text_model(backend: TextBackend | None) -> None:
+    """注册真实文本情感模型后端（覆盖默认关键词）。传 None 恢复默认。"""
+    global _text_backend
+    _text_backend = backend
+
+
 def detect_language(text: str) -> str:
     """脚本启发式语种识别：传统蒙文/西里尔→mn，CJK→zh，否则 en。"""
     for ch in text:
@@ -50,6 +82,8 @@ def infer_text(transcript: str, language: str) -> EmotionModalityInput | None:
     transcript = (transcript or "").strip()
     if not transcript:
         return None
+    if _text_backend is not None:
+        return _text_backend(transcript, language)
     if language == "mn":
         return _infer_text_mongolian(transcript)
     lexicon = _LEXICON.get(language)
@@ -84,12 +118,16 @@ def _infer_text_mongolian(transcript: str) -> EmotionModalityInput | None:
 def infer_face(reading: EmotionModalityInput | None) -> EmotionModalityInput | None:
     """视觉表情情绪（v0 可插拔桩）。
 
-    真实 FER 模型尚未接入：直接采用调用方/边缘给出的分布。接真实模型时替换此函数体
-    （输入改为帧/特征，输出仍为 EmotionModalityInput）。
+    真实 FER 模型未接入时：直接采用调用方/边缘给出的分布（桩）。用 register_face_model 注册
+    真实模型后，改由该后端推理（输入帧/特征，输出仍为 EmotionModalityInput）。
     """
+    if _face_backend is not None:
+        return _face_backend(reading)
     return reading
 
 
 def infer_voice(reading: EmotionModalityInput | None) -> EmotionModalityInput | None:
-    """语音韵律情绪（v0 可插拔桩）。同 infer_face，待接真实 SER 模型。"""
+    """语音韵律情绪。默认透传桩；用 register_voice_model 注册真实 SER 后端后改由其推理。"""
+    if _voice_backend is not None:
+        return _voice_backend(reading)
     return reading

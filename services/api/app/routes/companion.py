@@ -18,10 +18,13 @@ from app.companion import (
     stream_companion_reply,
 )
 from app.audit import record_audit
+from app.companion_persona import get_persona, update_persona
 from app.emotion_fusion import get_last_state
 from app.models import (
     CompanionGestureRequest,
     CompanionGestureResponse,
+    CompanionPersona,
+    CompanionPersonaUpdate,
     CompanionReplyRequest,
     CompanionReplyResponse,
     EmotionState,
@@ -110,3 +113,21 @@ def companion_gesture(payload: CompanionGestureRequest) -> CompanionGestureRespo
         reason=decision.reason,
         audit_log_id=audit.id,
     )
+
+
+@router.get("/persona", response_model=CompanionPersona)
+def companion_persona() -> CompanionPersona:
+    return get_persona()
+
+
+@router.post("/persona", response_model=CompanionPersona)
+def set_companion_persona(payload: CompanionPersonaUpdate) -> CompanionPersona:
+    persona = update_persona(payload)
+    record_audit(
+        actor="user",
+        action="update_companion_persona",
+        result="success",
+        details=f"陪伴人格已更新：{persona.name}（{persona.archetype}）。",
+        parameters=persona.model_dump(mode="json"),
+    )
+    return persona

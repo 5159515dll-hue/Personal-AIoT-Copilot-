@@ -18,6 +18,7 @@ from app import device_adapter as device_adapter_module
 from app import device_rate_limit as device_rate_limit_module
 from app import media_store as media_store_module
 from app import emotion_fusion as emotion_fusion_module
+from app import companion_persona as companion_persona_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
 from app import rule_engine as rule_engine_module
@@ -78,6 +79,7 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AIOT_STREAM_ROOT", str(tmp_path / "streams"))
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
     monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
+    monkeypatch.setattr(companion_persona_module.persona_store, "path", tmp_path / "companion_persona.json")
     emotion_fusion_module.reset_emotion_state()
 
 
@@ -3433,3 +3435,39 @@ def test_space_media_policy_gated_by_camera_privacy_and_retention() -> None:
     media_policy = resp.json()["space"]["perception"]["media_policy"]
     assert media_policy["allow_event_media"] is True
     assert media_policy["allow_realtime_stream"] is True
+
+
+def test_emotion_events_are_capped_by_retention(monkeypatch) -> None:
+    # 用小阈值验证高频情绪事件被裁剪回上限内，避免 device_events.json 无界增长。
+    monkeypatch.setattr(media_store_module, "EMOTION_EVENT_TRIGGER", 4)
+    monkeypatch.setattr(media_store_module, "EMOTION_EVENT_TARGET", 2)
+    _enable_emotion_gate()
+    cred = client.post("/api/devices/yanshee_robot_01/credentials")
+    headers = {"X-AIoT-Device-Token": cred.json()["token"]}
+    for i in range(6):
+        resp = client.post(
+            "/api/emotion/ingest",
+            headers=headers,
+            json={"space_id": "space_study_001", "device_id": "yanshee_robot_01", "transcript": f"第{i}次 我有点累"},
+        )
+        assert resp.status_code == 200
+    listed = client.get("/api/device-events", params={"event_type": "emotion_detected"})
+    count = len(listed.json())
+    assert 2 <= count <= 4  # 超过 TRIGGER=4 触发裁剪回 TARGET=2，6 条不会全留
+
+
+def test_companion_persona_default_and_update() -> None:
+    resp = client.get("/api/companion/persona")
+    assert resp.status_code == 200
+    persona = resp.json()
+    assert persona["archetype"] == "gentle_healing"  # §7 默认温柔治愈
+    assert persona["name"]
+
+    updated = client.post("/api/companion/persona", json={"name": "暖暖", "companion_for": "我自己"})
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "暖暖"
+    assert updated.json()["companion_for"] == "我自己"
+    assert updated.json()["archetype"] == "gentle_healing"  # 未改的字段保留
+
+    # 持久化
+    assert client.get("/api/companion/persona").json()["name"] == "暖暖"

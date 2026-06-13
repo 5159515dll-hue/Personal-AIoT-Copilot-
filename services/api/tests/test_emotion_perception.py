@@ -49,3 +49,26 @@ def test_infer_face_and_voice_are_passthrough_stubs() -> None:
     assert infer_voice(reading) is reading
     assert infer_face(None) is None
     assert infer_voice(None) is None
+
+
+def test_pluggable_model_backends_override_defaults() -> None:
+    from app import emotion_perception as ep
+
+    sentinel = EmotionModalityInput(distribution={"angry": 1.0}, confidence=0.99)
+    try:
+        ep.register_face_model(lambda reading: sentinel)
+        ep.register_voice_model(lambda reading: sentinel)
+        ep.register_text_model(lambda transcript, language: sentinel)
+        assert ep.infer_face(None) is sentinel
+        assert ep.infer_voice(None) is sentinel
+        assert ep.infer_text("anything", "zh") is sentinel
+        assert ep.infer_text("Би", "mn") is sentinel  # 蒙语也走注册的真实后端
+    finally:
+        ep.register_face_model(None)
+        ep.register_voice_model(None)
+        ep.register_text_model(None)
+
+    # 恢复默认后回到桩/关键词
+    assert ep.infer_text("我好累难过", "zh") is not None
+    reading = EmotionModalityInput(distribution={"happy": 1.0}, confidence=0.8)
+    assert ep.infer_face(reading) is reading

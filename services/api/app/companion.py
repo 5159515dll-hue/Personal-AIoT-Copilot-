@@ -14,27 +14,49 @@ from urllib.parse import urljoin
 
 import httpx
 
+from app.companion_persona import get_persona
 from app.model_providers import (
     _agent_model_timeout_seconds,
     _openai_headers,
     apply_speed_params,
     get_active_config,
 )
-from app.models import AgentModelUsage, EmotionState, ProviderProtocol
+from app.models import AgentModelUsage, CompanionPersona, EmotionState, ProviderProtocol
 
-COMPANION_SYSTEM_PROMPT_ZH = """你是一只温柔治愈的桌面情感陪伴机器人，像一个温暖的小伙伴，不是助手或客服。
-风格与规则：
-1. 用 2-3 句温柔、口语化的中文回应，简短贴心，不说教、不评判、不下命令。
-2. 先接住对方的情绪，再给一点点轻轻的陪伴或建议，绝不强迫。
-3. 不要输出 Markdown、列表或标题，直接像朋友一样说话。
-4. 绝不利用对方的情绪进行诱导、推销或操控。"""
+# 人格基调（archetype → 中/英语气）。默认 gentle_healing 温柔治愈（§7 决策）。
+_ARCHETYPE_TONE: dict[str, tuple[str, str]] = {
+    "gentle_healing": ("轻声、共情、温柔安抚", "soft-spoken, empathetic, gently comforting"),
+    "lively_playful": ("活泼、俏皮、有活力但不吵闹", "lively, playful, energetic but not noisy"),
+    "quiet_companion": ("安静、低打扰，只在需要时温柔回应", "quiet and unobtrusive, gently responding only when needed"),
+}
 
-COMPANION_SYSTEM_PROMPT_EN = """You are a gentle, healing desktop emotional-companion robot — a warm little friend, not an assistant.
-Style and rules:
-1. Reply in 2-3 short, warm, spoken-style English sentences. Never lecture or judge.
-2. Acknowledge the feeling first, then offer light companionship, never pushy.
-3. No Markdown, lists, or headings — just talk like a friend.
-4. Never exploit the person's emotion to persuade, sell, or manipulate."""
+_RULES_ZH = (
+    "规则：\n"
+    "1. 用 2-3 句温柔、口语化的中文回应，简短贴心，不说教、不评判、不下命令。\n"
+    "2. 先接住对方的情绪，再给一点点轻轻的陪伴或建议，绝不强迫。\n"
+    "3. 不要输出 Markdown、列表或标题，直接像朋友一样说话。\n"
+    "4. 绝不利用对方的情绪进行诱导、推销或操控。"
+)
+_RULES_EN = (
+    "Rules:\n"
+    "1. Reply in 2-3 short, warm, spoken-style English sentences. Never lecture or judge.\n"
+    "2. Acknowledge the feeling first, then offer light companionship, never pushy.\n"
+    "3. No Markdown, lists, or headings — just talk like a friend.\n"
+    "4. Never exploit the person's emotion to persuade, sell, or manipulate."
+)
+
+
+def _build_system_prompt(language: str, persona: CompanionPersona) -> str:
+    tone_zh, tone_en = _ARCHETYPE_TONE.get(persona.archetype, _ARCHETYPE_TONE["gentle_healing"])
+    if language == "en":
+        who = f"You are {persona.name}, a desktop emotional-companion robot"
+        if persona.companion_for:
+            who += f" mainly accompanying {persona.companion_for}"
+        return f"{who} — a warm little friend, not an assistant. Tone: {tone_en}.\n{_RULES_EN}"
+    who = f"你是「{persona.name}」，一只桌面情感陪伴机器人"
+    if persona.companion_for:
+        who += f"，主要陪伴{persona.companion_for}"
+    return f"{who}，像一个温暖的小伙伴，不是助手或客服。语气：{tone_zh}。\n{_RULES_ZH}"
 
 # 情绪 → 回应策略（确定性，温柔治愈基调）。gesture 对齐 M6 安全手势集。
 _STRATEGY: dict[str, dict[str, str]] = {
@@ -82,8 +104,10 @@ def _template_reply(emotion: str, language: str) -> str:
     return table.get(emotion, table["neutral"])
 
 
-def _messages(state: EmotionState, language: str, message: str | None) -> list[dict[str, str]]:
-    system = COMPANION_SYSTEM_PROMPT_EN if language == "en" else COMPANION_SYSTEM_PROMPT_ZH
+def _messages(
+    state: EmotionState, language: str, message: str | None, persona: CompanionPersona
+) -> list[dict[str, str]]:
+    system = _build_system_prompt(language, persona)
     context = [
         f"用户当前情绪：{state.primary_emotion}"
         f"（valence={state.valence}, arousal={state.arousal}, 置信度={state.confidence}）。",
@@ -136,7 +160,7 @@ async def generate_companion_reply(
             response = await client.post(
                 urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
                 headers=_openai_headers(config.provider_id, config.api_key or ""),
-                json=_payload(config, _messages(state, lang, message), stream=False),
+                json=_payload(config, _messages(state, lang, message, get_persona()), stream=False),
             )
         if response.status_code < 200 or response.status_code >= 300:
             raise ValueError(f"服务返回 {response.status_code}：{response.text[:200]}")
@@ -189,7 +213,7 @@ async def stream_companion_reply(
                 "POST",
                 urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
                 headers=_openai_headers(config.provider_id, config.api_key or ""),
-                json=_payload(config, _messages(state, lang, message), stream=True),
+                json=_payload(config, _messages(state, lang, message, get_persona()), stream=True),
             ) as response:
                 if response.status_code < 200 or response.status_code >= 300:
                     yield _template_reply(state.primary_emotion, lang)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +22,12 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "video/mp4"}
 VISUAL_EVENT_TYPES = {"presence_detected", "motion_detected", "face_detected", "emotion_detected"}
+
+# 情绪事件高频累积：超过 TRIGGER 时裁剪回 TARGET 并丢弃超过保留期的，避免 device_events.json
+# 无界增长 + 整文件重写放大（带滞回，不在每次写入时都重写）。
+EMOTION_EVENT_RETENTION_DAYS = 30
+EMOTION_EVENT_TARGET = 5000
+EMOTION_EVENT_TRIGGER = 5500
 
 event_store = JsonListStore("device_events.json", DeviceEvent)
 media_asset_store = JsonListStore("media_assets.json", MediaAsset)
@@ -57,7 +64,27 @@ def record_device_event(device_id: str, request: DeviceEventCreate) -> DeviceEve
         received_at=now(),
     )
     event_store.append(event)
+    if event.event_type == "emotion_detected":
+        _enforce_emotion_event_retention()
     return event
+
+
+def _enforce_emotion_event_retention() -> None:
+    """裁剪情绪事件：超过 TRIGGER 时，丢弃超过保留期的，并把数量收回 TARGET。
+
+    带滞回（TRIGGER > TARGET）→ 不在每次写入时都全量重写，约每 (TRIGGER-TARGET) 条触发一次。
+    非情绪事件全部保留，合并后按 received_at 排序。
+    """
+    events = event_store.list()
+    emotion_events = [item for item in events if item.event_type == "emotion_detected"]
+    if len(emotion_events) <= EMOTION_EVENT_TRIGGER:
+        return
+    cutoff = now() - timedelta(days=EMOTION_EVENT_RETENTION_DAYS)
+    fresh = [item for item in emotion_events if item.received_at >= cutoff]
+    kept_emotion = fresh[-EMOTION_EVENT_TARGET:]
+    others = [item for item in events if item.event_type != "emotion_detected"]
+    merged = sorted(others + kept_emotion, key=lambda item: item.received_at)
+    event_store.replace_all(merged)
 
 
 def ensure_event_allowed(space_id: str, event_type: str) -> None:
