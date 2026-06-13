@@ -19,6 +19,7 @@ from app import device_rate_limit as device_rate_limit_module
 from app import media_store as media_store_module
 from app import emotion_fusion as emotion_fusion_module
 from app import companion_persona as companion_persona_module
+from app import memory as memory_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
 from app import rule_engine as rule_engine_module
@@ -35,6 +36,7 @@ from app.models import (
     DeviceCapability,
     DeviceConnectionRecord,
     DeviceState,
+    EmotionState,
     ManagedDevice,
     Metric,
     ModelConfig,
@@ -80,6 +82,8 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
     monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
     monkeypatch.setattr(companion_persona_module.persona_store, "path", tmp_path / "companion_persona.json")
+    monkeypatch.setattr(memory_module.episode_store, "path", tmp_path / "memory_episodes.json")
+    monkeypatch.setattr(memory_module.profile_store, "path", tmp_path / "memory_profile.json")
     emotion_fusion_module.reset_emotion_state()
 
 
@@ -3471,3 +3475,46 @@ def test_companion_persona_default_and_update() -> None:
 
     # 持久化
     assert client.get("/api/companion/persona").json()["name"] == "暖暖"
+
+
+def test_memory_writes_facts_and_salient_episode() -> None:
+    state = EmotionState(
+        primary_emotion="sad", valence=-0.6, arousal=0.4, confidence=0.7, language="zh", modalities={}
+    )
+    memory_module.write_memory("xiaonuan", "user_default", "我喜欢猫，记住我怕黑", "好的", state)
+    profile = memory_module.get_profile("xiaonuan")
+    assert "猫" in profile.preferences
+    snapshot = memory_module.memory_snapshot("xiaonuan")
+    assert len(snapshot.episodes) >= 1  # 高情绪 + "记住" → 显著，写情节
+    context = memory_module.retrieve_memory_context("xiaonuan", "user_default", "猫")
+    assert "猫" in context
+
+
+def test_memory_low_salience_neutral_turn_writes_no_episode() -> None:
+    state = EmotionState(
+        primary_emotion="neutral", valence=0.0, arousal=0.2, confidence=0.5, language="zh", modalities={}
+    )
+    memory_module.write_memory("xiaonuan", "user_default", "今天星期三", "嗯", state)
+    assert memory_module.memory_snapshot("xiaonuan").episodes == []
+
+
+def test_companion_reply_writes_and_recalls_and_clears_memory() -> None:
+    resp = client.post(
+        "/api/companion/reply",
+        json={"space_id": "space_study_001", "primary_emotion": "happy", "message": "我喜欢猫，记住我叫小明"},
+    )
+    assert resp.status_code == 200
+
+    mem = client.get("/api/companion/memory")
+    assert mem.status_code == 200
+    profile = mem.json()["profile"]
+    assert profile is not None
+    assert profile["display_name"] == "小明"
+    assert "猫" in profile["preferences"]
+
+    cleared = client.delete("/api/companion/memory")
+    assert cleared.status_code == 200
+    assert cleared.json()["cleared_profile"] is True
+    after = client.get("/api/companion/memory").json()
+    assert after["profile"] is None
+    assert after["episodes"] == []

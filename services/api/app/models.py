@@ -594,10 +594,14 @@ CompanionArchetype = Literal["gentle_healing", "lively_playful", "quiet_companio
 
 
 class CompanionPersona(BaseModel):
-    """情感陪伴机器人的人格设定（注入共情提示）。默认温柔治愈型（§7 决策）。"""
+    """情感陪伴角色设定（注入共情提示）。默认温柔治愈型「小暖」（§7 决策）。
+
+    id 是稳定的角色身份（记忆按它分；角色↔躯体解耦，记忆跟角色走，不跟机器人走）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    id: str = Field(default="xiaonuan", min_length=1, max_length=40)
     name: str = Field(default="小暖", min_length=1, max_length=40)
     archetype: CompanionArchetype = "gentle_healing"
     companion_for: str = Field(default="", max_length=80)
@@ -611,6 +615,49 @@ class CompanionPersonaUpdate(BaseModel):
     archetype: CompanionArchetype | None = None
     companion_for: str | None = Field(default=None, max_length=80)
     notes: str | None = Field(default=None, max_length=240)
+
+
+# ── 长期记忆（plan companion-v2 §2）────────────────────────────────────
+class MemoryEpisode(BaseModel):
+    """情节记忆：按事件 + 时间的一条显著互动。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: f"ep_{uuid4().hex[:12]}")
+    character_id: str = Field(min_length=1, max_length=40)
+    subject_id: str = Field(default="user_default", max_length=64)
+    created_at: datetime
+    summary: str = Field(min_length=1, max_length=300)
+    emotion: EmotionLabel | None = None
+    valence: float = Field(default=0.0, ge=-1, le=1)
+    salience: float = Field(default=0.5, ge=0, le=1)
+    topics: list[str] = Field(default_factory=list, max_length=12)
+
+
+class UserProfile(BaseModel):
+    """画像记忆：关于用户的稳定事实（按事实），让陪伴"懂你"。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    character_id: str = Field(min_length=1, max_length=40)
+    subject_id: str = Field(default="user_default", max_length=64)
+    display_name: str | None = Field(default=None, max_length=40)
+    preferences: list[str] = Field(default_factory=list, max_length=40)
+    important_people: list[str] = Field(default_factory=list, max_length=40)
+    notes: list[str] = Field(default_factory=list, max_length=40)
+    updated_at: datetime
+
+
+class MemorySnapshot(BaseModel):
+    profile: UserProfile | None = None
+    episodes: list[MemoryEpisode] = Field(default_factory=list)
+
+
+class MemoryClearResponse(BaseModel):
+    character_id: str
+    cleared_episodes: int
+    cleared_profile: bool
+    audit_log_id: str
 
 
 class MediaAsset(BaseModel):

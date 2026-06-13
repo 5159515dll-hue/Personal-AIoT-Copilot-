@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from urllib.parse import urljoin
 
 import httpx
 
-from app.companion_persona import get_persona
+from app.companion_persona import get_active_character
+from app.policy import SAFE_COMPANION_GESTURES
 from app.model_providers import (
     _agent_model_timeout_seconds,
     _openai_headers,
@@ -104,10 +106,31 @@ def _template_reply(emotion: str, language: str) -> str:
     return table.get(emotion, table["neutral"])
 
 
+# 解析模型在回应末尾标注的动作行：「动作: nod」/「action: nod」。
+_GESTURE_TAG_RE = re.compile(r"[\n\r]+\s*(?:动作|action)\s*[:：]\s*([A-Za-z_]+)\s*$", re.IGNORECASE)
+
+
+def _split_gesture(content: str) -> tuple[str, str | None]:
+    """从回应末尾切出动作标签，返回 (纯回应文本, 建议手势|None)。"""
+    match = _GESTURE_TAG_RE.search(content)
+    if not match:
+        return content, None
+    gesture = match.group(1).strip().lower()
+    clean = content[: match.start()].rstrip()
+    return (clean or content), gesture
+
+
 def _messages(
-    state: EmotionState, language: str, message: str | None, persona: CompanionPersona
+    state: EmotionState,
+    language: str,
+    message: str | None,
+    persona: CompanionPersona,
+    memory_context: str = "",
+    tool_context: str = "",
 ) -> list[dict[str, str]]:
     system = _build_system_prompt(language, persona)
+    if memory_context:
+        system += f"\n\n你对Ta已有的记忆（自然融入，别生硬复述）：{memory_context}"
     context = [
         f"用户当前情绪：{state.primary_emotion}"
         f"（valence={state.valence}, arousal={state.arousal}, 置信度={state.confidence}）。",
@@ -115,7 +138,13 @@ def _messages(
     ]
     if message:
         context.append(f"用户刚说的话：{message}")
+    if tool_context:
+        context.append(f"【传感器实时数据】{tool_context}。请基于这些真实数据回答相关问题，不要编造数值。")
     context.append("请按你的人格风格，用 2-3 句温柔的话回应。")
+    context.append(
+        "回应之后另起一行，用「动作: X」标注一个最贴合的肢体动作，"
+        "X 只能从 nod、tilt_head、reach_out、wave、lean_back、idle_nod 里选一个。"
+    )
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": "\n".join(context)},
@@ -139,6 +168,39 @@ def _usable_openai_config():
     return config
 
 
+SUBJECT_DEFAULT = "user_default"  # 单用户阶段；多用户时按用户身份分
+
+
+def _safe_retrieve_memory(character_id: str, message: str | None) -> str:
+    """检索记忆上下文；失败降级为空（记忆故障不影响对话，容错隔离）。"""
+    try:
+        from app.memory import retrieve_memory_context
+
+        return retrieve_memory_context(character_id, SUBJECT_DEFAULT, message or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _safe_write_memory(character_id: str, message: str | None, reply: str, state: EmotionState) -> None:
+    """回应后写记忆；失败静默降级（不影响已生成的回应）。"""
+    try:
+        from app.memory import write_memory
+
+        write_memory(character_id, SUBJECT_DEFAULT, message or "", reply, state)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _safe_tool_context(message: str | None) -> str:
+    """按意图拉取真实传感器上下文注入提示；失败降级为空（工具故障不影响对话）。"""
+    try:
+        from app.companion_tools import gather_tool_context
+
+        return gather_tool_context(message or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 async def generate_companion_reply(
     state: EmotionState,
     language: str | None = None,
@@ -147,11 +209,16 @@ async def generate_companion_reply(
     lang = reply_language(language or state.language)
     strat = response_strategy(state.primary_emotion)
     meta = {"language": lang, "tone": strat["tone"], "gesture": strat["gesture"]}
+    character = get_active_character()
+    memory_context = _safe_retrieve_memory(character.id, message)
+    tool_context = _safe_tool_context(message)
 
     config = _usable_openai_config()
     if config is None:
+        reply = _template_reply(state.primary_emotion, lang)
+        _safe_write_memory(character.id, message, reply, state)
         return (
-            _template_reply(state.primary_emotion, lang),
+            reply,
             AgentModelUsage(status="not_configured", used=False, reason="未配置可用 OpenAI 兼容模型，已用温柔治愈模板回应。"),
             meta,
         )
@@ -160,17 +227,23 @@ async def generate_companion_reply(
             response = await client.post(
                 urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
                 headers=_openai_headers(config.provider_id, config.api_key or ""),
-                json=_payload(config, _messages(state, lang, message, get_persona()), stream=False),
+                json=_payload(config, _messages(state, lang, message, character, memory_context, tool_context), stream=False),
             )
         if response.status_code < 200 or response.status_code >= 300:
             raise ValueError(f"服务返回 {response.status_code}：{response.text[:200]}")
         content = (response.json()["choices"][0]["message"].get("content") or "").strip()
         if not content:
             raise ValueError("模型返回空内容")
+        content, proposed = _split_gesture(content)
+        if proposed in SAFE_COMPANION_GESTURES:
+            meta["gesture"] = proposed  # 内容驱动：模型在安全集内选的手势，贴合本句回应
+        _safe_write_memory(character.id, message, content, state)
         return content, AgentModelUsage(status="used", used=True, reason="已用当前大模型生成共情回应。"), meta
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+        reply = _template_reply(state.primary_emotion, lang)
+        _safe_write_memory(character.id, message, reply, state)
         return (
-            _template_reply(state.primary_emotion, lang),
+            reply,
             AgentModelUsage(status="fallback", used=False, reason=f"模型调用失败，已回退温柔治愈模板：{exc}"),
             meta,
         )
@@ -203,6 +276,9 @@ async def stream_companion_reply(
 ) -> AsyncIterator[str]:
     """流式生成共情回应，逐块产出正文文本。无模型/失败时一次性产出模板。"""
     lang = reply_language(language or state.language)
+    character = get_active_character()
+    memory_context = _safe_retrieve_memory(character.id, message)
+    tool_context = _safe_tool_context(message)
     config = _usable_openai_config()
     if config is None:
         yield _template_reply(state.primary_emotion, lang)
@@ -213,7 +289,7 @@ async def stream_companion_reply(
                 "POST",
                 urljoin(f"{config.base_url.rstrip('/')}/", "chat/completions"),
                 headers=_openai_headers(config.provider_id, config.api_key or ""),
-                json=_payload(config, _messages(state, lang, message, get_persona()), stream=True),
+                json=_payload(config, _messages(state, lang, message, character, memory_context, tool_context), stream=True),
             ) as response:
                 if response.status_code < 200 or response.status_code >= 300:
                     yield _template_reply(state.primary_emotion, lang)

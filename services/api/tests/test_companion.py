@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from app.companion import (
     _build_system_prompt,
+    _split_gesture,
     _template_reply,
     extract_sse_content_delta,
     reply_language,
@@ -35,6 +36,31 @@ def test_build_system_prompt_injects_persona() -> None:
     # 不同 archetype 改变语气
     lively = _build_system_prompt("zh", CompanionPersona(name="跳跳", archetype="lively_playful"))
     assert "活泼" in lively
+
+
+def test_tool_context_pulls_environment_on_intent() -> None:
+    from app.companion_tools import gather_tool_context
+
+    # 提到环境 → 注入真实环境读数（工具优先，让模型基于真实数据答）
+    env_ctx = gather_tool_context("房间是不是有点闷？")
+    assert env_ctx and ("环境" in env_ctx or "二氧化碳" in env_ctx)
+    # 无相关意图 → 不注入
+    assert gather_tool_context("我今天有点难过") == ""
+
+
+def test_split_gesture_extracts_and_strips_tag() -> None:
+    text, gesture = _split_gesture("辛苦啦，我陪着你。\n动作: reach_out")
+    assert gesture == "reach_out"
+    assert "动作" not in text
+    assert text.strip() == "辛苦啦，我陪着你。"
+
+    no_tag_text, no_tag = _split_gesture("就这样静静陪着你")
+    assert no_tag is None and no_tag_text == "就这样静静陪着你"
+
+    # 非法/越界手势会被切出，但 SAFE_COMPANION_GESTURES 成员校验会在上层拒绝它
+    _, walk = _split_gesture("hello\naction: walk_forward")
+    assert walk == "walk_forward"
+    assert "walk_forward" not in SAFE_COMPANION_GESTURES
 
 
 def test_reply_language_v0_only_zh_en() -> None:

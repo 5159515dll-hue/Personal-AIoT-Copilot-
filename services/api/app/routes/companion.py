@@ -18,8 +18,9 @@ from app.companion import (
     stream_companion_reply,
 )
 from app.audit import record_audit
-from app.companion_persona import get_persona, update_persona
+from app.companion_persona import get_active_character, get_persona, update_persona
 from app.emotion_fusion import get_last_state
+from app.memory import clear_memory, memory_snapshot
 from app.models import (
     CompanionGestureRequest,
     CompanionGestureResponse,
@@ -28,6 +29,8 @@ from app.models import (
     CompanionReplyRequest,
     CompanionReplyResponse,
     EmotionState,
+    MemoryClearResponse,
+    MemorySnapshot,
     PolicyResult,
 )
 from app.yanshee_control import plan_companion_gesture
@@ -131,3 +134,29 @@ def set_companion_persona(payload: CompanionPersonaUpdate) -> CompanionPersona:
         parameters=persona.model_dump(mode="json"),
     )
     return persona
+
+
+@router.get("/memory", response_model=MemorySnapshot)
+def companion_memory() -> MemorySnapshot:
+    """查看当前角色的记忆（画像 + 最近情节）。记忆是敏感数据，用户可查看。"""
+    return memory_snapshot(get_active_character().id)
+
+
+@router.delete("/memory", response_model=MemoryClearResponse)
+def clear_companion_memory() -> MemoryClearResponse:
+    """遗忘当前角色的全部记忆（用户的被遗忘权）。"""
+    character = get_active_character()
+    cleared_episodes, cleared_profile = clear_memory(character.id)
+    audit = record_audit(
+        actor="user",
+        action="clear_companion_memory",
+        result="success",
+        details=f"已清除角色 {character.id} 的记忆：情节 {cleared_episodes} 条，画像{'已清' if cleared_profile else '无'}。",
+        parameters={"character_id": character.id, "cleared_episodes": cleared_episodes, "cleared_profile": cleared_profile},
+    )
+    return MemoryClearResponse(
+        character_id=character.id,
+        cleared_episodes=cleared_episodes,
+        cleared_profile=cleared_profile,
+        audit_log_id=audit.id,
+    )
