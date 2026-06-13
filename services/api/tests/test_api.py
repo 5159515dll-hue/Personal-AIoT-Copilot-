@@ -66,6 +66,9 @@ client = TestClient(app)
 def isolate_json_stores(tmp_path, monkeypatch) -> None:
     client.cookies.clear()
     client.cookies.set(DASHBOARD_SESSION_COOKIE, session_token_for("admin123"))
+    # 测试默认走 JSON 存储路径，必须对真实数据库零接触——即使外部环境（如 source .dashboard-env）
+    # 设了 DATABASE_URL 也不能让用例打到生产库。需要数据库路径的用例各自 monkeypatch database_url。
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(audit_module.audit_store, "path", tmp_path / "audit_logs.json")
     monkeypatch.setattr(device_adapter_module.device_state_store, "path", tmp_path / "device_states.json")
     monkeypatch.setattr(device_rate_limit_module.device_control_rate_store, "path", tmp_path / "device_control_rate_events.json")
