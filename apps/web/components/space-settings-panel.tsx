@@ -338,6 +338,11 @@ function PerceptionFields({
   perception: SpacePerceptionSettings;
   onChange: (patch: Partial<SpacePerceptionSettings>) => void;
 }) {
+  // 与后端 _sanitize_perception 一致的依赖：媒体策略要求 摄像头+隐私模式 都为「仅本地处理」；
+  // 事件媒体还要求 图像保留=保存事件媒体。否则保存时后端会强制关闭，前端在此先禁用并说明，
+  // 保证控件真实有效、不做摆设。
+  const mediaReady = perception.camera === "local_only" && perception.privacy_mode === "local_only";
+  const eventMediaReady = mediaReady && perception.image_retention === "event_media";
   return (
     <div className="mt-4 rounded-lg border border-line bg-slate-50 p-3">
       <h3 className="text-sm font-semibold text-ink">感知能力规划</h3>
@@ -369,10 +374,11 @@ function PerceptionFields({
         />
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700">
+        <label className={`flex h-10 items-center gap-2 text-sm font-semibold ${eventMediaReady ? "text-slate-700" : "text-slate-400"}`}>
           <input
             type="checkbox"
-            checked={perception.media_policy.allow_event_media}
+            checked={eventMediaReady && perception.media_policy.allow_event_media}
+            disabled={!eventMediaReady}
             onChange={(event) =>
               onChange({
                 media_policy: {
@@ -381,14 +387,15 @@ function PerceptionFields({
                 }
               })
             }
-            className="h-4 w-4 rounded border-line text-teal-600"
+            className="h-4 w-4 rounded border-line text-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
           />
           允许事件媒体
         </label>
-        <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700">
+        <label className={`flex h-10 items-center gap-2 text-sm font-semibold ${mediaReady ? "text-slate-700" : "text-slate-400"}`}>
           <input
             type="checkbox"
-            checked={perception.media_policy.allow_realtime_stream}
+            checked={mediaReady && perception.media_policy.allow_realtime_stream}
+            disabled={!mediaReady}
             onChange={(event) =>
               onChange({
                 media_policy: {
@@ -397,7 +404,7 @@ function PerceptionFields({
                 }
               })
             }
-            className="h-4 w-4 rounded border-line text-teal-600"
+            className="h-4 w-4 rounded border-line text-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
           />
           允许实时流
         </label>
@@ -412,6 +419,15 @@ function PerceptionFields({
           onChange={(value) => onChange({ media_policy: { ...perception.media_policy, event_retention_days: value } })}
         />
       </div>
+      {!mediaReady ? (
+        <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs leading-5 text-amber-700">
+          媒体策略已锁定：要开启「允许实时流 / 允许事件媒体」，需先把<b>摄像头</b>和<b>隐私模式</b>都设为「仅本地处理」（事件媒体还需把「图像保留」设为「保存事件媒体」），否则保存时会被隐私策略自动关闭。
+        </p>
+      ) : !eventMediaReady ? (
+        <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs leading-5 text-amber-700">
+          「允许事件媒体」还需把「图像保留」设为「保存事件媒体」，否则保存时会被关闭。
+        </p>
+      ) : null}
       <p className="mt-2 text-xs leading-5 text-muted">
         严格模式会强制不保留图像并关闭媒体策略；“规划中”不会启用真实采集，只有“仅本地处理”可进入边缘识别链路。
       </p>

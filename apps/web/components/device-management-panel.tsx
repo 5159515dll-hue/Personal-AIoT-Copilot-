@@ -448,21 +448,23 @@ export function DeviceManagementPanel({
           />
           <TextField label="负载名称" value={createDraft.load_label ?? ""} onChange={(value) => updateCreateDraft({ load_label: value })} />
           <TextField label="硬件版本" value={createDraft.hardware_revision ?? ""} onChange={(value) => updateCreateDraft({ hardware_revision: value })} />
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700 xl:mt-5">
+          <label className={`flex h-10 items-center gap-2 text-sm font-semibold xl:mt-5 ${createDraft.risk_level === "low" ? "text-slate-700" : "text-slate-400"}`}>
             <input
               type="checkbox"
-              checked={Boolean(createDraft.controllable)}
+              checked={createDraft.risk_level === "low" && Boolean(createDraft.controllable)}
+              disabled={createDraft.risk_level !== "low"}
               onChange={(event) => updateCreateDraft({ controllable: event.target.checked })}
-              className="h-4 w-4 rounded border-line text-teal-600"
+              className="h-4 w-4 rounded border-line text-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
             />
             可控
           </label>
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700 xl:mt-5">
+          <label className={`flex h-10 items-center gap-2 text-sm font-semibold xl:mt-5 ${createDraft.risk_level === "medium" ? "text-slate-400" : "text-slate-700"}`}>
             <input
               type="checkbox"
-              checked={Boolean(createDraft.requires_confirmation)}
+              checked={createDraft.risk_level === "medium" ? true : Boolean(createDraft.requires_confirmation)}
+              disabled={createDraft.risk_level === "medium"}
               onChange={(event) => updateCreateDraft({ requires_confirmation: event.target.checked })}
-              className="h-4 w-4 rounded border-line text-teal-600"
+              className="h-4 w-4 rounded border-line text-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
             />
             需确认
           </label>

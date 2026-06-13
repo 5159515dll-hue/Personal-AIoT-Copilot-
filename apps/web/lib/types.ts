@@ -483,6 +483,37 @@ export type AuditLogQuery = {
 
 export type ProviderProtocol = "openai" | "anthropic";
 
+export type EmotionLabel = "happy" | "sad" | "angry" | "surprise" | "fear" | "disgust" | "neutral";
+export type EmotionLanguage = "zh" | "en" | "mn";
+
+export type EmotionModalitySummary = {
+  status: "ok" | "unavailable";
+  emotion?: EmotionLabel | null;
+  confidence?: number;
+  transcript_lang?: string | null;
+};
+
+export type EmotionState = {
+  primary_emotion: EmotionLabel;
+  valence: number;
+  arousal: number;
+  confidence: number;
+  language: EmotionLanguage;
+  modalities: Record<string, EmotionModalitySummary>;
+  fusion: string;
+  smoothed: boolean;
+};
+
+export type CompanionReplyResponse = {
+  reply: string;
+  primary_emotion: EmotionLabel;
+  language: EmotionLanguage;
+  tone: string;
+  gesture: string;
+  model_used: boolean;
+  model_status: string;
+};
+
 export type ProviderEndpoint = {
   id: string;
   label: string;

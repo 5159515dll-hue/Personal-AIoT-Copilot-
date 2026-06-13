@@ -45,7 +45,11 @@ import type {
   StreamSourceMutationResponse,
   StreamSourceUpdate,
   TelemetryStatus,
-  TelemetrySource
+  TelemetrySource,
+  CompanionReplyResponse,
+  EmotionLabel,
+  EmotionLanguage,
+  EmotionState
 } from "./types";
 
 function configured(value: string | undefined): string | null {
@@ -414,4 +418,25 @@ export async function testModelConnection(payload: ModelConfigRequest): Promise<
 
 export async function getAgentSafetyEvaluation(): Promise<AgentSafetyEvaluationReport> {
   return request<AgentSafetyEvaluationReport>("/api/evaluations/agent-safety");
+}
+
+export async function getEmotionState(spaceId: string): Promise<EmotionState | null> {
+  try {
+    return await request<EmotionState>(`/api/emotion/state?space_id=${encodeURIComponent(spaceId)}`);
+  } catch {
+    // 404 = 该空间暂无情绪状态
+    return null;
+  }
+}
+
+export async function postCompanionReply(body: {
+  space_id: string;
+  message?: string;
+  primary_emotion?: EmotionLabel;
+  language?: EmotionLanguage;
+}): Promise<CompanionReplyResponse> {
+  return request<CompanionReplyResponse>("/api/companion/reply", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
 }

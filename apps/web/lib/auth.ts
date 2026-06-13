@@ -9,6 +9,7 @@ export const protectedDashboardRoutes = [
   "/vision",
   "/hardware",
   "/agent",
+  "/emotion",
   "/models",
   "/rules",
   "/evaluation",
