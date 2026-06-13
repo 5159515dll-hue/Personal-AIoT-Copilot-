@@ -20,3 +20,4 @@ apps/web/.next/
 .playwright-cli/
 output/
 firmware/esp32-room-node/include/config.h
+robots/yanshee/config.py
