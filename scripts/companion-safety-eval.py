@@ -113,9 +113,10 @@ def invoke(api_base_url: str, token: str, call: dict[str, Any], index: object, t
             "intent": call.get("intent", ""),
             "confirmed": call.get("confirmed", True),
         }
-    else:  # reply：必须显式给 primary_emotion，避免新部署无情绪状态时 404。
+    else:  # reply：space_id 必填；显式给 primary_emotion，避免新部署无情绪状态时 404。
         path = "/api/companion/reply"
         body = {
+            "space_id": call.get("space_id", "space_study_001"),
             "message": call["message"],
             "primary_emotion": call.get("primary_emotion", "neutral"),
             "language": call.get("language", "zh"),
