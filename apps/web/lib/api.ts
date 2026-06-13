@@ -1,9 +1,5 @@
 import type {
-  AgentDataSource,
-  AgentChatResponse,
-  AgentConversationDeleteResponse,
-  AgentConversationEntry,
-  AgentSafetyEvaluationReport,
+  CompanionSafetyEvaluationReport,
   AnomalyEvent,
   AuditLog,
   AuditLogQuery,
@@ -47,7 +43,11 @@ import type {
   TelemetryStatus,
   TelemetrySource,
   CompanionPersona,
+  CompanionPersonaUpdate,
+  CompanionCharacterCreate,
   CompanionReplyResponse,
+  MemorySnapshot,
+  MemoryClearResponse,
   EmotionLabel,
   EmotionLanguage,
   EmotionState
@@ -336,27 +336,6 @@ export async function evaluateRules(source: TelemetrySource = "mock"): Promise<R
   });
 }
 
-export async function chat(message: string, sessionId?: string, dataSource: AgentDataSource = "mock"): Promise<AgentChatResponse> {
-  return request<AgentChatResponse>("/api/agent/chat", {
-    method: "POST",
-    body: JSON.stringify({ message, session_id: sessionId, data_source: dataSource })
-  });
-}
-
-export async function getAgentHistory(limit = 12, sessionId?: string): Promise<AgentConversationEntry[]> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (sessionId) {
-    params.set("session_id", sessionId);
-  }
-  return request<AgentConversationEntry[]>(`/api/agent/history?${params.toString()}`);
-}
-
-export async function deleteAgentHistoryEntry(id: string): Promise<AgentConversationDeleteResponse> {
-  return request<AgentConversationDeleteResponse>(`/api/agent/history/${id}`, {
-    method: "DELETE"
-  });
-}
-
 export async function getAuditLogs(query: AuditLogQuery = {}): Promise<AuditLog[]> {
   const params = new URLSearchParams();
   if (query.limit) {
@@ -417,8 +396,8 @@ export async function testModelConnection(payload: ModelConfigRequest): Promise<
   });
 }
 
-export async function getAgentSafetyEvaluation(): Promise<AgentSafetyEvaluationReport> {
-  return request<AgentSafetyEvaluationReport>("/api/evaluations/agent-safety");
+export async function getCompanionSafetyEvaluation(): Promise<CompanionSafetyEvaluationReport> {
+  return request<CompanionSafetyEvaluationReport>("/api/evaluations/companion-safety");
 }
 
 export async function getEmotionState(spaceId: string): Promise<EmotionState | null> {
@@ -446,9 +425,43 @@ export async function getCompanionPersona(): Promise<CompanionPersona> {
   return request<CompanionPersona>("/api/companion/persona");
 }
 
-export async function postCompanionPersona(body: Partial<CompanionPersona>): Promise<CompanionPersona> {
+export async function postCompanionPersona(body: CompanionPersonaUpdate): Promise<CompanionPersona> {
   return request<CompanionPersona>("/api/companion/persona", {
     method: "POST",
     body: JSON.stringify(body)
   });
+}
+
+export async function getCompanionMemory(): Promise<MemorySnapshot> {
+  return request<MemorySnapshot>("/api/companion/memory");
+}
+
+export async function clearCompanionMemory(): Promise<MemoryClearResponse> {
+  return request<MemoryClearResponse>("/api/companion/memory", { method: "DELETE" });
+}
+
+export async function listCompanionCharacters(): Promise<CompanionPersona[]> {
+  return request<CompanionPersona[]>("/api/companion/characters");
+}
+
+export async function createCompanionCharacter(body: CompanionCharacterCreate): Promise<CompanionPersona> {
+  return request<CompanionPersona>("/api/companion/characters", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function updateCompanionCharacter(id: string, body: CompanionPersonaUpdate): Promise<CompanionPersona> {
+  return request<CompanionPersona>(`/api/companion/characters/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function activateCompanionCharacter(id: string): Promise<CompanionPersona> {
+  return request<CompanionPersona>(`/api/companion/characters/${id}/activate`, { method: "POST" });
+}
+
+export async function deleteCompanionCharacter(id: string): Promise<CompanionPersona> {
+  return request<CompanionPersona>(`/api/companion/characters/${id}`, { method: "DELETE" });
 }

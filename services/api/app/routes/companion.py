@@ -18,10 +18,20 @@ from app.companion import (
     stream_companion_reply,
 )
 from app.audit import record_audit
-from app.companion_persona import get_active_character, get_persona, update_persona
+from app.companion_persona import (
+    activate_character,
+    create_character,
+    delete_character,
+    get_active_character,
+    get_persona,
+    list_characters,
+    update_character,
+    update_persona,
+)
 from app.emotion_fusion import get_last_state
 from app.memory import clear_memory, memory_snapshot
 from app.models import (
+    CompanionCharacterCreate,
     CompanionGestureRequest,
     CompanionGestureResponse,
     CompanionPersona,
@@ -160,3 +170,74 @@ def clear_companion_memory() -> MemoryClearResponse:
         cleared_profile=cleared_profile,
         audit_log_id=audit.id,
     )
+
+
+@router.get("/characters", response_model=list[CompanionPersona])
+def companion_characters() -> list[CompanionPersona]:
+    return list_characters()
+
+
+@router.post("/characters", response_model=CompanionPersona)
+def create_companion_character(payload: CompanionCharacterCreate) -> CompanionPersona:
+    try:
+        character = create_character(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        actor="user",
+        action="create_companion_character",
+        result="success",
+        details=f"新建陪伴角色：{character.name}（{character.id}）。",
+        parameters=character.model_dump(mode="json"),
+    )
+    return character
+
+
+@router.patch("/characters/{character_id}", response_model=CompanionPersona)
+def update_companion_character(character_id: str, payload: CompanionPersonaUpdate) -> CompanionPersona:
+    try:
+        character = update_character(character_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    record_audit(
+        actor="user",
+        action="update_companion_character",
+        result="success",
+        details=f"更新角色：{character.name}（{character.id}）。",
+        parameters=character.model_dump(mode="json"),
+    )
+    return character
+
+
+@router.post("/characters/{character_id}/activate", response_model=CompanionPersona)
+def activate_companion_character(character_id: str) -> CompanionPersona:
+    try:
+        character = activate_character(character_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    record_audit(
+        actor="user",
+        action="activate_companion_character",
+        result="success",
+        details=f"切换当前角色为：{character.name}（{character.id}）。",
+        parameters={"character_id": character.id},
+    )
+    return character
+
+
+@router.delete("/characters/{character_id}", response_model=CompanionPersona)
+def delete_companion_character(character_id: str) -> CompanionPersona:
+    try:
+        character = delete_character(character_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        actor="user",
+        action="delete_companion_character",
+        result="success",
+        details=f"删除角色：{character.name}（{character.id}）。",
+        parameters={"character_id": character.id},
+    )
+    return character

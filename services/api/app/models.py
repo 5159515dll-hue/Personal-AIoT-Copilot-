@@ -606,6 +606,7 @@ class CompanionPersona(BaseModel):
     archetype: CompanionArchetype = "gentle_healing"
     companion_for: str = Field(default="", max_length=80)
     notes: str | None = Field(default=None, max_length=240)
+    active: bool = True
 
 
 class CompanionPersonaUpdate(BaseModel):
@@ -614,6 +615,18 @@ class CompanionPersonaUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=40)
     archetype: CompanionArchetype | None = None
     companion_for: str | None = Field(default=None, max_length=80)
+    notes: str | None = Field(default=None, max_length=240)
+
+
+class CompanionCharacterCreate(BaseModel):
+    """新建一个陪伴角色（多角色）。id 不传则服务端生成。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = Field(default=None, min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=40)
+    archetype: CompanionArchetype = "gentle_healing"
+    companion_for: str = Field(default="", max_length=80)
     notes: str | None = Field(default=None, max_length=240)
 
 
@@ -806,24 +819,12 @@ class RuleEvaluation(BaseModel):
     audit_log_id: str | None = None
 
 
-class AgentChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
-    session_id: str | None = None
-    data_source: Literal["mock", "database"] = "mock"
-
-
 class ToolCall(BaseModel):
     id: str = Field(default_factory=lambda: f"tool_{uuid4().hex[:10]}")
     name: str
     parameters: dict[str, Any]
     result: dict[str, Any]
     policy: PolicyDecision | None = None
-    created_at: datetime
-
-
-class AgentMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
     created_at: datetime
 
 
@@ -835,38 +836,6 @@ class AgentModelUsage(BaseModel):
     status: Literal["not_configured", "used", "fallback", "blocked"]
     used: bool
     reason: str
-
-
-class AgentChatResponse(BaseModel):
-    session_id: str
-    message: AgentMessage
-    used_data: list[str]
-    tool_calls: list[ToolCall]
-    needs_confirmation: bool
-    model_usage: AgentModelUsage
-    policy: PolicyDecision | None = None
-    rule_draft: AutomationRuleCreate | None = None
-
-
-class AgentConversationEntry(BaseModel):
-    id: str = Field(default_factory=lambda: f"agent_history_{uuid4().hex[:12]}")
-    session_id: str
-    data_source: Literal["mock", "database"]
-    user_message: AgentMessage
-    assistant_message: AgentMessage
-    used_data: list[str]
-    tool_calls: list[ToolCall]
-    needs_confirmation: bool
-    model_usage: AgentModelUsage
-    policy: PolicyDecision | None = None
-    rule_draft: AutomationRuleCreate | None = None
-    created_at: datetime
-
-
-class AgentConversationDeleteResponse(BaseModel):
-    deleted: bool
-    id: str
-    audit_log_id: str | None = None
 
 
 class AuditLog(BaseModel):
@@ -1010,7 +979,7 @@ class ResearchEvaluationCase(BaseModel):
     failure: str | None = None
 
 
-class AgentSafetyEvaluationReport(BaseModel):
+class CompanionSafetyEvaluationReport(BaseModel):
     generated_at: datetime
     source: Literal["report_file", "fallback"]
     total_cases: int

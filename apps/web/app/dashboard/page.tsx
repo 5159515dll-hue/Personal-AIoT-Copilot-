@@ -44,15 +44,15 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     <AppShell>
       <PageHeader
         title="空间总览"
-        description={`查看当前${telemetrySourceLabel(source)}、智能体建议、安全状态和最近审计活动。`}
+        description={`查看当前${telemetrySourceLabel(source)}、情感陪伴、安全状态和最近审计活动。`}
         action={
           <div className="flex flex-wrap items-center gap-2">
             <TelemetrySourceSwitch source={source} basePath="/dashboard" />
             <Link
-              href="/agent"
+              href="/emotion"
               className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white"
             >
-              询问智能体
+              情感陪伴
               <ArrowRight size={16} aria-hidden />
             </Link>
           </div>

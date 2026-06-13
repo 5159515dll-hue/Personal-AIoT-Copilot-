@@ -2,10 +2,10 @@ import Link from "next/link";
 import {
   Activity,
   ArrowRight,
-  Bot,
   Database,
   Eye,
   FileClock,
+  Heart,
   LockKeyhole,
   RadioTower,
   ShieldCheck,
@@ -48,18 +48,18 @@ const evidence = [
     text: "同一套接口支持模拟数据和数据库遥测，按 5 分钟、15 分钟、1 小时和 1 天聚合。"
   },
   {
-    icon: Bot,
-    title: "智能体工具层",
+    icon: Heart,
+    title: "陪伴工具层",
     text: "房间状态、历史曲线、异常检测、规则草案和安全策略都先走本地工具，再由模型增强说明。"
   },
   {
     icon: FileClock,
     title: "可追溯审计",
-    text: "模型切换、工具调用、规则确认、设备控制、拒绝操作和对话删除都会写入审计日志。"
+    text: "模型切换、工具调用、规则确认、设备控制、拒绝操作和记忆清除都会写入审计日志。"
   }
 ];
 
-const architectureSteps = ["传感器节点", "MQTT / HTTP", "时序数据库", "控制台与智能体", "策略与审计"];
+const architectureSteps = ["传感器节点", "MQTT / HTTP", "时序数据库", "控制台与陪伴", "策略与审计"];
 
 export default function HomePage() {
   return (
@@ -76,8 +76,8 @@ export default function HomePage() {
               <Link href="/dashboard" className="focus-ring hover:text-white">
                 控制台
               </Link>
-              <Link href="/agent" className="focus-ring hover:text-white">
-                智能体
+              <Link href="/emotion" className="focus-ring hover:text-white">
+                陪伴
               </Link>
               <Link href="/models" className="focus-ring hover:text-white">
                 模型
@@ -88,7 +88,7 @@ export default function HomePage() {
         <div className="relative z-10 flex min-h-[92svh] items-center px-5 pb-14 pt-24 sm:px-8 lg:px-12">
           <div className="mx-auto w-full max-w-7xl">
             <div className="max-w-[780px]">
-              <p className="text-sm font-semibold tracking-[0.18em] text-amber-200">模拟空间 · 安全策略 · 可审计智能体</p>
+              <p className="text-sm font-semibold tracking-[0.18em] text-amber-200">模拟空间 · 安全策略 · 情感陪伴</p>
               <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-normal text-white sm:text-5xl md:whitespace-nowrap lg:text-6xl">
                 <span className="block sm:inline">个人空间智能</span>
                 <span className="block sm:inline">物联助手</span>
@@ -177,7 +177,7 @@ export default function HomePage() {
             <div>
               <h2 className="text-2xl font-semibold tracking-normal">已经跑通的工程证据</h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-                这个版本不是静态展示页。控制台、接口、数据库、智能体、安全策略和审计都可以在服务器上直接演示。
+                这个版本不是静态展示页。控制台、接口、数据库、情感陪伴、安全策略和审计都可以在服务器上直接演示。
               </p>
             </div>
             <Link
@@ -212,7 +212,7 @@ export default function HomePage() {
               <h2 className="text-2xl font-semibold tracking-normal">端到端闭环</h2>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
                 真实传感器接入前，系统用模拟数据保证演示稳定；服务器部署同时保留 MQTT、数据库和健康检查，
-                用于验证硬件上报后如何进入同一个智能体和控制台闭环。
+                用于验证硬件上报后如何进入同一个陪伴和控制台闭环。
               </p>
             </div>
           </div>
@@ -232,17 +232,17 @@ export default function HomePage() {
       <section className="px-5 py-14 sm:px-8 lg:px-12">
         <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
           <div>
-            <h2 className="text-2xl font-semibold tracking-normal">安全优先的智能体闭环</h2>
+            <h2 className="text-2xl font-semibold tracking-normal">安全优先的陪伴闭环</h2>
             <p className="mt-3 text-sm leading-6 text-muted">
-              智能体不会直接调用物理设备接口。它先生成行动意图，再由受约束工具收集数据或请求动作，
-              策略引擎做最终判断，每个关键步骤都会写入审计日志。
+              情感陪伴不会直接调用物理设备接口。它先生成回应与动作意图，再由受约束工具读取传感器数据，
+              策略引擎对动作做最终判断，每个关键步骤都会写入审计日志。
             </p>
             <Link
-              href="/agent"
+              href="/emotion"
               className="focus-ring mt-6 inline-flex h-10 items-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-white"
             >
-              试用智能体
-              <Bot size={16} aria-hidden />
+              体验情感陪伴
+              <Heart size={16} aria-hidden />
             </Link>
           </div>
           <div className="rounded-lg border border-line bg-white p-5 shadow-sm">
@@ -266,7 +266,7 @@ function architectureDescription(step: string): string {
     传感器节点: "ESP32 固件骨架只发布环境遥测，不订阅远程控制命令。",
     "MQTT / HTTP": "批量、单指标和扁平 map payload 会被统一解析。",
     时序数据库: "读数进入 sensor_readings，并保留来源、设备和质量状态。",
-    控制台与智能体: "页面和工具层共享同一套房间状态、趋势和设备接口。",
+    控制台与陪伴: "页面和工具层共享同一套房间状态、趋势和设备接口。",
     策略与审计: "允许、确认、拒绝、触发和删除动作都有审计记录。"
   };
   return descriptions[step] ?? "";

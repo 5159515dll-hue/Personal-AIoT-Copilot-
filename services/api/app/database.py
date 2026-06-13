@@ -5,7 +5,6 @@ import json
 from datetime import datetime
 
 from app.models import (
-    AgentConversationEntry,
     AuditLog,
     AutomationRule,
     Device,
@@ -135,27 +134,6 @@ CREATE TABLE IF NOT EXISTS automation_rules (
 
 CREATE INDEX IF NOT EXISTS idx_automation_rules_created
     ON automation_rules (created_at DESC);
-
-CREATE TABLE IF NOT EXISTS agent_conversations (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    data_source TEXT NOT NULL,
-    user_message JSONB NOT NULL,
-    assistant_message JSONB NOT NULL,
-    used_data JSONB NOT NULL DEFAULT '[]'::jsonb,
-    tool_calls JSONB NOT NULL DEFAULT '[]'::jsonb,
-    needs_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
-    model_usage JSONB NOT NULL,
-    policy JSONB,
-    rule_draft JSONB,
-    created_at TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_conversations_session
-    ON agent_conversations (session_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_agent_conversations_created
-    ON agent_conversations (created_at DESC);
 
 CREATE TABLE IF NOT EXISTS device_credentials (
     device_id TEXT PRIMARY KEY,
@@ -955,135 +933,6 @@ def record_rule_trigger_db(
     return _row_to_rule(row) if row else None
 
 
-def insert_agent_conversation_db(
-    entry: AgentConversationEntry,
-    *,
-    retention_days: int = 30,
-    url: str | None = None,
-    ensure_schema: bool = True,
-) -> AgentConversationEntry:
-    if ensure_schema:
-        init_persistence_db(url)
-    psycopg = _import_psycopg()
-    db_url = _require_url(url)
-    with psycopg.connect(db_url, autocommit=True) as conn:
-        conn.execute(
-            "DELETE FROM agent_conversations WHERE created_at < now() - (%s * interval '1 day')",
-            (retention_days,),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_conversations (
-                id,
-                session_id,
-                data_source,
-                user_message,
-                assistant_message,
-                used_data,
-                tool_calls,
-                needs_confirmation,
-                model_usage,
-                policy,
-                rule_draft,
-                created_at
-            )
-            VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            (
-                entry.id,
-                entry.session_id,
-                entry.data_source,
-                json.dumps(entry.user_message.model_dump(mode="json"), ensure_ascii=False, default=str),
-                json.dumps(entry.assistant_message.model_dump(mode="json"), ensure_ascii=False, default=str),
-                json.dumps(entry.used_data, ensure_ascii=False, default=str),
-                json.dumps([tool.model_dump(mode="json") for tool in entry.tool_calls], ensure_ascii=False, default=str),
-                entry.needs_confirmation,
-                json.dumps(entry.model_usage.model_dump(mode="json"), ensure_ascii=False, default=str),
-                json.dumps(entry.policy.model_dump(mode="json"), ensure_ascii=False, default=str) if entry.policy else None,
-                json.dumps(entry.rule_draft.model_dump(mode="json"), ensure_ascii=False, default=str) if entry.rule_draft else None,
-                entry.created_at,
-            ),
-        )
-    return entry
-
-
-def list_agent_conversations_db(
-    limit: int = 50,
-    *,
-    session_id: str | None = None,
-    retention_days: int = 30,
-    url: str | None = None,
-) -> list[AgentConversationEntry]:
-    init_persistence_db(url)
-    psycopg = _import_psycopg()
-    dict_row = _dict_row_factory()
-    db_url = _require_url(url)
-    filters = ["created_at >= now() - (%s * interval '1 day')"]
-    params: list[object] = [retention_days]
-    if session_id:
-        filters.append("session_id = %s")
-        params.append(session_id)
-    params.append(limit)
-    with psycopg.connect(db_url, row_factory=dict_row) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT
-                id,
-                session_id,
-                data_source,
-                user_message,
-                assistant_message,
-                used_data,
-                tool_calls,
-                needs_confirmation,
-                model_usage,
-                policy,
-                rule_draft,
-                created_at
-            FROM agent_conversations
-            WHERE {' AND '.join(filters)}
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,
-            params,
-        ).fetchall()
-    return [_row_to_agent_conversation(row) for row in rows]
-
-
-def delete_agent_conversation_db(
-    entry_id: str,
-    *,
-    url: str | None = None,
-) -> AgentConversationEntry | None:
-    init_persistence_db(url)
-    psycopg = _import_psycopg()
-    dict_row = _dict_row_factory()
-    db_url = _require_url(url)
-    with psycopg.connect(db_url, autocommit=True, row_factory=dict_row) as conn:
-        row = conn.execute(
-            """
-            DELETE FROM agent_conversations
-            WHERE id = %s
-            RETURNING
-                id,
-                session_id,
-                data_source,
-                user_message,
-                assistant_message,
-                used_data,
-                tool_calls,
-                needs_confirmation,
-                model_usage,
-                policy,
-                rule_draft,
-                created_at
-            """,
-            (entry_id,),
-        ).fetchone()
-    return _row_to_agent_conversation(row) if row else None
-
-
 def insert_sensor_readings(
     readings: list[SensorReading],
     *,
@@ -1366,25 +1215,6 @@ def _row_to_rule(row: dict) -> AutomationRule:
         created_at=row["created_at"],
         trigger_count=int(row["trigger_count"] or 0),
         last_triggered_at=row["last_triggered_at"],
-    )
-
-
-def _row_to_agent_conversation(row: dict) -> AgentConversationEntry:
-    return AgentConversationEntry.model_validate(
-        {
-            "id": row["id"],
-            "session_id": row["session_id"],
-            "data_source": row["data_source"],
-            "user_message": _json_object(row["user_message"]),
-            "assistant_message": _json_object(row["assistant_message"]),
-            "used_data": _json_array(row["used_data"]),
-            "tool_calls": _json_array(row["tool_calls"]),
-            "needs_confirmation": bool(row["needs_confirmation"]),
-            "model_usage": _json_object(row["model_usage"]),
-            "policy": _json_object(row["policy"]) if row["policy"] is not None else None,
-            "rule_draft": _json_object(row["rule_draft"]) if row["rule_draft"] is not None else None,
-            "created_at": row["created_at"],
-        }
     )
 
 

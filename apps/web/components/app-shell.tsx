@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Activity,
-  Bot,
   Cable,
   Camera,
   FileClock,
@@ -30,7 +29,6 @@ const navItems = [
   { href: "/devices", label: "设备", icon: SlidersHorizontal },
   { href: "/vision", label: "视觉", icon: Camera },
   { href: "/hardware", label: "接入", icon: Cable },
-  { href: "/agent", label: "智能体", icon: Bot },
   { href: "/emotion", label: "陪伴", icon: Heart },
   { href: "/models", label: "模型", icon: KeyRound },
   { href: "/rules", label: "规则", icon: ListChecks },

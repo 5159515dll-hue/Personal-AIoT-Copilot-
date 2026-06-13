@@ -49,7 +49,6 @@ def main() -> int:
         ("Device 设备清单契约", lambda: check_devices(client)),
         ("PolicyDecision 设备控制拒绝契约", lambda: check_control_policy_and_audit(client)),
         ("AutomationRule 创建和评估契约", lambda: check_rules(client)),
-        ("AgentMessage 与 ToolCall 智能体契约", lambda: check_agent_chat(client)),
         ("模型厂商目录与密钥脱敏契约", lambda: check_model_provider_catalog(client)),
         ("AuditLog 审计筛选契约", lambda: check_audit_logs(client)),
     ]
@@ -221,26 +220,6 @@ def check_rules(client: ApiClient) -> None:
     assert_automation_rule(patched)
 
 
-def check_agent_chat(client: ApiClient) -> None:
-    payload = client.post(
-        "/api/agent/chat",
-        {
-            "message": "今天二氧化碳情况怎么样？",
-            "data_source": "mock",
-            "session_id": f"api-contract-{int(time.time())}",
-        },
-    )
-    require_keys(payload, {"session_id", "message", "used_data", "tool_calls", "needs_confirmation", "model_usage"}, "AgentChatResponse")
-    assert_agent_message(payload["message"])
-    assert_true(isinstance(payload["used_data"], list), "used_data 必须是数组")
-    assert_true("current_room_state" in payload["used_data"], "环境问答必须声明 current_room_state 数据依据")
-    assert_true(isinstance(payload["tool_calls"], list) and payload["tool_calls"], "tool_calls 不能为空")
-    for tool in payload["tool_calls"]:
-        assert_tool_call(tool)
-    assert_true(any(tool["name"] == "get_current_room_state" for tool in payload["tool_calls"]), "环境问答缺少 get_current_room_state 工具")
-    assert_model_usage(payload["model_usage"])
-
-
 def check_model_provider_catalog(client: ApiClient) -> None:
     catalog = client.get("/api/model-providers")
     require_keys(catalog, {"providers", "active_config", "saved_configs"}, "ModelProviderCatalog")
@@ -280,11 +259,10 @@ def check_audit_logs(client: ApiClient) -> None:
     for log in logs[:5]:
         assert_audit_log(log)
 
-    filtered = client.get("/api/audit-logs?actor=agent&action=agent_chat&limit=20")
+    filtered = client.get("/api/audit-logs?action=control_device&limit=20")
     assert_true(isinstance(filtered, list), "审计筛选响应必须是数组")
     if filtered:
-        assert_equal(filtered[0]["actor"], "agent", "按 actor 筛选失效")
-        assert_equal(filtered[0]["action"], "agent_chat", "按 action 筛选失效")
+        assert_equal(filtered[0]["action"], "control_device", "按 action 筛选失效")
 
 
 def assert_room_state(payload: Any) -> None:
@@ -352,30 +330,6 @@ def assert_rule_evaluation(payload: Any) -> None:
     assert_true(isinstance(payload["matched"], bool), "RuleEvaluation.matched 必须是布尔值")
     assert_in(payload["status"], {"triggered", "not_matched", "disabled", "unsupported"}, "RuleEvaluation.status")
     assert_true(isinstance(payload["observed"], dict), "RuleEvaluation.observed 必须是对象")
-
-
-def assert_agent_message(payload: Any) -> None:
-    require_keys(payload, {"role", "content", "created_at"}, "AgentMessage")
-    assert_in(payload["role"], {"user", "assistant"}, "AgentMessage.role")
-    assert_true(isinstance(payload["content"], str) and payload["content"], "AgentMessage.content 不能为空")
-    assert_true(isinstance(payload["created_at"], str) and payload["created_at"], "AgentMessage.created_at 不能为空")
-
-
-def assert_tool_call(payload: Any) -> None:
-    require_keys(payload, {"id", "name", "parameters", "result", "policy", "created_at"}, "ToolCall")
-    assert_true(str(payload["id"]).startswith("tool_"), "ToolCall.id 格式错误")
-    assert_true(isinstance(payload["name"], str) and payload["name"], "ToolCall.name 不能为空")
-    assert_true(isinstance(payload["parameters"], dict), "ToolCall.parameters 必须是对象")
-    assert_true(isinstance(payload["result"], dict), "ToolCall.result 必须是对象")
-    if payload["policy"] is not None:
-        assert_policy_decision(payload["policy"])
-
-
-def assert_model_usage(payload: Any) -> None:
-    require_keys(payload, {"provider_id", "provider_label", "model", "protocol", "status", "used", "reason"}, "AgentModelUsage")
-    assert_in(payload["status"], MODEL_STATUSES, "AgentModelUsage.status")
-    assert_true(isinstance(payload["used"], bool), "AgentModelUsage.used 必须是布尔值")
-    assert_true(isinstance(payload["reason"], str) and payload["reason"], "AgentModelUsage.reason 不能为空")
 
 
 def assert_model_provider_definition(payload: Any) -> None:

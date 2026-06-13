@@ -34,7 +34,7 @@ run_step "Web 页面路由烟测" npm run smoke:web
 run_step "MQTT 遥测入站烟测" npm run smoke:mqtt
 run_step "媒体事件与实时流烟测" npm run smoke:media
 run_step "服务器部署烟测" npm run smoke:server
-run_step "智能体安全评测" npm run eval:agent-safety
+run_step "情感陪伴安全评测" npm run eval:companion-safety
 run_step "3 分钟演示验收" npm run acceptance:demo
 
 elapsed="$(( $(date +%s) - started_at ))"

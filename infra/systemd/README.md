@@ -43,7 +43,7 @@ systemctl status aiot-api aiot-web aiot-mqtt-ingestor aiot-mediamtx --no-pager
 ```bash
 npm run smoke:server
 npm run smoke:media
-npm run eval:agent-safety
+npm run eval:companion-safety
 ```
 
 如果系统没有通过 Nginx 或其他反向代理暴露 80 端口，可以把 `WEB_BASE_URL` 指向 `http://82.157.148.249:3000`。

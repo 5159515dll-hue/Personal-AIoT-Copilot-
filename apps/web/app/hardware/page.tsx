@@ -207,7 +207,7 @@ export default function HardwarePage() {
             <div className="space-y-2 text-sm leading-6 text-slate-700">
               <p>`docs/device-connection-interface.md`：完整接口设计。</p>
               <p>`docs/device-protocol.md`：MQTT 与 HTTP payload 规范。</p>
-              <p>`docs/agent-tools.md`：智能体工具和策略链路。</p>
+              <p>`docs/companion-v2-plan.md`：情感陪伴认知架构（记忆/角色/工具/动作）。</p>
               <p>`docs/security-policy.md`：控制风险和审计边界。</p>
             </div>
           </Panel>

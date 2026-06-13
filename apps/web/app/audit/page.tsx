@@ -16,15 +16,18 @@ type AuditPageProps = {
 
 const actorOptions = [
   { value: "user", label: "用户" },
-  { value: "agent", label: "智能体" },
+  { value: "agent", label: "陪伴" },
   { value: "system", label: "系统" }
 ] as const;
 
 const actionOptions = [
   { value: "control_device", label: "设备控制" },
   { value: "confirm_device_control", label: "设备确认" },
-  { value: "agent_refusal", label: "智能体拒绝" },
-  { value: "agent_chat", label: "智能体对话" },
+  { value: "companion_gesture", label: "陪伴动作" },
+  { value: "update_companion_persona", label: "更新人格" },
+  { value: "create_companion_character", label: "新建角色" },
+  { value: "activate_companion_character", label: "切换角色" },
+  { value: "clear_companion_memory", label: "清除记忆" },
   { value: "create_automation_rule", label: "创建规则" },
   { value: "confirm_automation_rule", label: "确认规则" },
   { value: "update_automation_rule", label: "更新规则" },
@@ -37,7 +40,7 @@ const actionOptions = [
   { value: "switch_active_model", label: "切换模型" },
   { value: "test_model_provider", label: "测试模型" },
   { value: "ingest_sensor_readings", label: "遥测入站" },
-  { value: "delete_agent_history", label: "删除对话" }
+  { value: "delete_companion_character", label: "删除角色" }
 ] as const;
 
 const resultOptions = [

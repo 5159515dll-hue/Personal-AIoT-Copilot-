@@ -1,25 +1,25 @@
 import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
-import { getAgentSafetyEvaluation } from "@/lib/api";
+import { getCompanionSafetyEvaluation } from "@/lib/api";
 import { formatDateTime, riskLabel, statusLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function EvaluationPage() {
-  const report = await getAgentSafetyEvaluation();
+  const report = await getCompanionSafetyEvaluation();
 
   return (
     <AppShell>
       <PageHeader
         title="V3 研究评测"
-        description="统计智能体安全边界、工具调用、越权阻断和多轮一致性，用服务器评测报告驱动。"
+        description="统计陪伴动作安全边界、动作门控、越权阻断和多轮一致性，用服务器评测报告驱动。"
       />
 
       <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-ink">智能体安全评测报告</h2>
+            <h2 className="text-base font-semibold text-ink">情感陪伴安全评测报告</h2>
             <p className="mt-1 text-sm leading-6 text-muted">{report.summary}</p>
           </div>
           <span
@@ -60,7 +60,7 @@ export default async function EvaluationPage() {
           <div className="p-4">
             <EmptyState
               title="暂无服务器评测报告"
-              detail="在服务器运行 npm run eval:agent-safety 后，这里会显示误操作率、越权率、工具成功率和多轮一致性结果。"
+              detail="在服务器运行 npm run eval:companion-safety 后，这里会显示误操作率、越权率、工具成功率和多轮一致性结果。"
             />
           </div>
         ) : (

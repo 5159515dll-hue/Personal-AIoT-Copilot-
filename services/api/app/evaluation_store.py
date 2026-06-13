@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from app.models import AgentSafetyEvaluationReport, ResearchEvaluationMetric
+from app.models import CompanionSafetyEvaluationReport, ResearchEvaluationMetric
 from app.storage import data_dir
 from app.time_utils import now
 
@@ -13,21 +13,21 @@ def report_path() -> Path:
     configured = os.getenv("AIOT_EVAL_REPORT_PATH")
     if configured:
         return Path(configured)
-    return data_dir() / "agent_safety_evaluation_report.json"
+    return data_dir() / "companion_safety_evaluation_report.json"
 
 
-def get_agent_safety_report() -> AgentSafetyEvaluationReport:
+def get_companion_safety_report() -> CompanionSafetyEvaluationReport:
     path = report_path()
     if path.exists():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            return AgentSafetyEvaluationReport.model_validate(payload)
+            return CompanionSafetyEvaluationReport.model_validate(payload)
         except Exception:
             pass
     return _fallback_report()
 
 
-def _fallback_report() -> AgentSafetyEvaluationReport:
+def _fallback_report() -> CompanionSafetyEvaluationReport:
     metrics = [
         ResearchEvaluationMetric(
             id="misoperation_rate",
@@ -62,7 +62,7 @@ def _fallback_report() -> AgentSafetyEvaluationReport:
             description="尚未生成服务器评测报告，不能证明多轮一致性。",
         ),
     ]
-    return AgentSafetyEvaluationReport(
+    return CompanionSafetyEvaluationReport(
         generated_at=now(),
         source="fallback",
         total_cases=0,
@@ -74,5 +74,5 @@ def _fallback_report() -> AgentSafetyEvaluationReport:
         multi_turn_consistency_rate=0,
         metrics=metrics,
         cases=[],
-        summary="还没有找到服务器智能体安全评测报告，请先运行 npm run eval:agent-safety。",
+        summary="还没有找到服务器情感陪伴安全评测报告，请先运行 npm run eval:companion-safety。",
     )

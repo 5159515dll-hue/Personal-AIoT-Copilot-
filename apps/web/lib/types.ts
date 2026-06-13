@@ -395,69 +395,7 @@ export type RuleEvaluation = {
   audit_log_id: string | null;
 };
 
-export type ToolCall = {
-  id: string;
-  name: string;
-  parameters: Record<string, unknown>;
-  result: Record<string, unknown>;
-  policy: PolicyDecision | null;
-  created_at: string;
-};
-
-export type AgentChatResponse = {
-  session_id: string;
-  message: {
-    role: "user" | "assistant";
-    content: string;
-    created_at: string;
-  };
-  used_data: string[];
-  tool_calls: ToolCall[];
-  needs_confirmation: boolean;
-  model_usage: {
-    provider_id: string | null;
-    provider_label: string | null;
-    model: string | null;
-    protocol: string | null;
-    status: "not_configured" | "used" | "fallback" | "blocked";
-    used: boolean;
-    reason: string;
-  };
-  policy: PolicyDecision | null;
-  rule_draft: AutomationRuleCreate | null;
-};
-
-export type AgentConversationEntry = {
-  id: string;
-  session_id: string;
-  data_source: AgentDataSource;
-  user_message: {
-    role: "user";
-    content: string;
-    created_at: string;
-  };
-  assistant_message: {
-    role: "assistant";
-    content: string;
-    created_at: string;
-  };
-  used_data: string[];
-  tool_calls: ToolCall[];
-  needs_confirmation: boolean;
-  model_usage: AgentChatResponse["model_usage"];
-  policy: PolicyDecision | null;
-  rule_draft: AutomationRuleCreate | null;
-  created_at: string;
-};
-
-export type AgentConversationDeleteResponse = {
-  deleted: boolean;
-  id: string;
-  audit_log_id: string | null;
-};
-
 export type TelemetrySource = "mock" | "database";
-export type AgentDataSource = TelemetrySource;
 
 export type AuditLog = {
   id: string;
@@ -517,10 +455,61 @@ export type CompanionReplyResponse = {
 export type CompanionArchetype = "gentle_healing" | "lively_playful" | "quiet_companion";
 
 export type CompanionPersona = {
+  id: string;
   name: string;
   archetype: CompanionArchetype;
   companion_for: string;
   notes: string | null;
+  active: boolean;
+};
+
+export type CompanionPersonaUpdate = {
+  name?: string;
+  archetype?: CompanionArchetype;
+  companion_for?: string;
+  notes?: string | null;
+};
+
+export type CompanionCharacterCreate = {
+  id?: string;
+  name: string;
+  archetype?: CompanionArchetype;
+  companion_for?: string;
+  notes?: string | null;
+};
+
+export type MemoryEpisode = {
+  id: string;
+  character_id: string;
+  subject_id: string;
+  created_at: string;
+  summary: string;
+  emotion: EmotionLabel | null;
+  valence: number;
+  salience: number;
+  topics: string[];
+};
+
+export type UserProfile = {
+  character_id: string;
+  subject_id: string;
+  display_name: string | null;
+  preferences: string[];
+  important_people: string[];
+  notes: string[];
+  updated_at: string;
+};
+
+export type MemorySnapshot = {
+  profile: UserProfile | null;
+  episodes: MemoryEpisode[];
+};
+
+export type MemoryClearResponse = {
+  character_id: string;
+  cleared_episodes: number;
+  cleared_profile: boolean;
+  audit_log_id: string;
 };
 
 export type ProviderEndpoint = {
@@ -615,7 +604,7 @@ export type ResearchEvaluationCase = {
   failure: string | null;
 };
 
-export type AgentSafetyEvaluationReport = {
+export type CompanionSafetyEvaluationReport = {
   generated_at: string;
   source: "report_file" | "fallback";
   total_cases: number;

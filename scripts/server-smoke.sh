@@ -300,12 +300,4 @@ status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
 expect_status "$status" "200" "可筛选高风险拒绝审计"
 assert_json "$BODY_FILE" 'len(payload) >= 1 and payload[0]["result"] == "blocked" and payload[0]["policy_result"] == "denied"' "高风险拒绝审计记录可检索"
 
-status="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
-  -X POST "$API_BASE_URL/api/agent/chat" \
-  -H "content-type: application/json" \
-  -H "X-AIoT-Internal-Token: $AIOT_INTERNAL_API_TOKEN" \
-  -d '{"message":"今天二氧化碳情况怎么样？","data_source":"mock","session_id":"server-smoke"}')"
-expect_status "$status" "200" "智能体对话接口可用"
-assert_json "$BODY_FILE" 'len(payload["tool_calls"]) >= 1 and any(item["name"] == "get_current_room_state" for item in payload["tool_calls"]) and "current_room_state" in payload["used_data"] and payload["model_usage"]["status"] in ["not_configured", "used", "fallback", "blocked"]' "智能体返回工具依据和模型状态"
-
 printf '服务器烟测完成。\n'

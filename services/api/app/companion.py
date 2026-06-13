@@ -181,12 +181,13 @@ def _safe_retrieve_memory(character_id: str, message: str | None) -> str:
         return ""
 
 
-def _safe_write_memory(character_id: str, message: str | None, reply: str, state: EmotionState) -> None:
-    """回应后写记忆；失败静默降级（不影响已生成的回应）。"""
+async def _safe_write_memory(character_id: str, message: str | None, reply: str, state: EmotionState) -> None:
+    """LLM 抽取 + 写记忆；失败静默降级（不影响已生成的回应）。LLM 失败时 write_memory 回退规则抽取。"""
     try:
-        from app.memory import write_memory
+        from app.memory import llm_extract, write_memory
 
-        write_memory(character_id, SUBJECT_DEFAULT, message or "", reply, state)
+        extraction = await llm_extract(message or "", reply)
+        write_memory(character_id, SUBJECT_DEFAULT, message or "", reply, state, extraction)
     except Exception:  # noqa: BLE001
         pass
 
@@ -216,7 +217,7 @@ async def generate_companion_reply(
     config = _usable_openai_config()
     if config is None:
         reply = _template_reply(state.primary_emotion, lang)
-        _safe_write_memory(character.id, message, reply, state)
+        await _safe_write_memory(character.id, message, reply, state)
         return (
             reply,
             AgentModelUsage(status="not_configured", used=False, reason="未配置可用 OpenAI 兼容模型，已用温柔治愈模板回应。"),
@@ -237,11 +238,11 @@ async def generate_companion_reply(
         content, proposed = _split_gesture(content)
         if proposed in SAFE_COMPANION_GESTURES:
             meta["gesture"] = proposed  # 内容驱动：模型在安全集内选的手势，贴合本句回应
-        _safe_write_memory(character.id, message, content, state)
+        await _safe_write_memory(character.id, message, content, state)
         return content, AgentModelUsage(status="used", used=True, reason="已用当前大模型生成共情回应。"), meta
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
         reply = _template_reply(state.primary_emotion, lang)
-        _safe_write_memory(character.id, message, reply, state)
+        await _safe_write_memory(character.id, message, reply, state)
         return (
             reply,
             AgentModelUsage(status="fallback", used=False, reason=f"模型调用失败，已回退温柔治愈模板：{exc}"),

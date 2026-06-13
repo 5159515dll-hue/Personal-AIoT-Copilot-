@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 
 from app.auth import api_auth_enabled, is_public_api_path, request_is_authorized
 from app.routes import (
-    agent,
     anomalies,
     audit_logs,
     companion,
@@ -70,7 +69,6 @@ app.include_router(media_assets.router)
 app.include_router(streams.router)
 app.include_router(ingest.router)
 app.include_router(rules.router)
-app.include_router(agent.router)
 app.include_router(companion.router)
 app.include_router(audit_logs.router)
 app.include_router(model_providers.router)

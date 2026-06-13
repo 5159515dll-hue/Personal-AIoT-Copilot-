@@ -48,6 +48,23 @@ def test_tool_context_pulls_environment_on_intent() -> None:
     assert gather_tool_context("我今天有点难过") == ""
 
 
+def test_tool_context_device_and_anomaly_intents() -> None:
+    from app.companion_tools import gather_tool_context
+
+    assert "设备" in gather_tool_context("台灯还开着吗？")
+    assert "异常" in gather_tool_context("家里有没有异常？")
+
+
+def test_memory_extraction_json_parsing() -> None:
+    from app.memory import _parse_extraction_json
+
+    parsed = _parse_extraction_json('```json\n{"preferences":["猫"],"salience":0.8}\n```')
+    assert parsed == {"preferences": ["猫"], "salience": 0.8}
+    # 容忍前后多余文字
+    assert _parse_extraction_json('好的，结果是 {"display_name":"小明"} 这样') == {"display_name": "小明"}
+    assert _parse_extraction_json("没有 JSON") is None
+
+
 def test_split_gesture_extracts_and_strips_tag() -> None:
     text, gesture = _split_gesture("辛苦啦，我陪着你。\n动作: reach_out")
     assert gesture == "reach_out"
