@@ -38,6 +38,19 @@ def test_build_system_prompt_injects_persona() -> None:
     assert "活泼" in lively
 
 
+def test_messages_prioritizes_user_action_requests() -> None:
+    """用户随口让机器人做动作时，提示让模型自主判断并从安全集选最接近的手势。"""
+    from app.companion import _messages
+    from app.models import EmotionState
+
+    state = EmotionState(primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language="zh")
+    persona = CompanionPersona(name="小暖", archetype="gentle_healing", companion_for="")
+    user = _messages(state, "zh", "你能举起你的双手吗", persona)[-1]["content"]
+    assert "动作" in user and "由你判断意图" in user
+    assert "wave" in user and "reach_out" in user  # 安全集内可选
+    assert "不能走动" in user  # 越界动作温柔拒绝
+
+
 def test_tool_context_pulls_environment_on_intent() -> None:
     from app.companion_tools import gather_tool_context
 
