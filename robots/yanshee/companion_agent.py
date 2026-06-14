@@ -373,69 +373,66 @@ def _is_wake(text, wake_words):
 
 
 def _wait_for_wake(yanapi, wake_words):
-    """持续监听唤醒词；窗口内喊到 WAKE_HITS 次才触发（降误唤醒）。返回 True 表示已唤醒。"""
+    """单次识别循环监听唤醒词（continuous 模式引擎会立刻 idle，故用单次反复）。
+    窗口内喊到 WAKE_HITS 次唤醒词才触发（降误唤醒）。返回 True 表示已唤醒。"""
     need = int(getattr(config, "WAKE_HITS", 2))
     window = float(getattr(config, "WAKE_WINDOW", 8.0))
-    try:
-        yanapi.start_voice_asr(continues=True)
-    except Exception as exc:
-        print("voice: start_asr 失败 %s" % exc, flush=True)
-        time.sleep(3)
-        return False
     hits = []
-    last = ""
-    try:
-        while True:
-            time.sleep(0.4)
-            try:
-                state = yanapi.get_voice_asr_state()
-            except Exception:
-                continue
-            data = state.get("data") if isinstance(state, dict) else None
-            text = _asr_text(data)
-            if text and text != last:
-                last = text
-                print("voice: 识别到「%s」" % text[:40], flush=True)
-                if _is_wake(text, wake_words):
-                    now = time.time()
-                    hits = [h for h in hits if now - h < window] + [now]
-                    if len(hits) >= need:
-                        return True
-    finally:
+    while True:
         try:
-            yanapi.stop_voice_asr()
-        except Exception:
-            pass
+            res = yanapi.sync_do_voice_asr_value()
+        except Exception as exc:
+            print("voice: 唤醒识别出错 %s" % exc, flush=True)
+            time.sleep(1)
+            continue
+        heard = ((res.get("question") if isinstance(res, dict) else res) or "").strip()
+        if not heard:
+            continue
+        if _is_wake(heard, wake_words):
+            now = time.time()
+            hits = [h for h in hits if now - h < window] + [now]
+            print("voice: 唤醒命中 %d/%d（听到「%s」）" % (len(hits), need, heard[:20]), flush=True)
+            if len(hits) >= need:
+                return True
+        else:
+            print("voice: 听到「%s」（非唤醒词，忽略）" % heard[:20], flush=True)
 
 
 def _converse(yanapi, space_id):
-    """已唤醒：多轮短对话。每轮听写 → 服务器流式回复并播放；听不到内容则结束回到待唤醒。"""
-    print("voice: 已唤醒，请说…", flush=True)
-    max_turns = int(getattr(config, "MAX_CONV_TURNS", 3))
-    for _ in range(max_turns):
+    """已唤醒：听用户说话 → 服务器流式回复并播放。
+    CONV_IDLE_TIMEOUT 秒内没有有效声音则自动退出，回到待唤醒（避免醒着空耗+一直滴）。
+    每说成功一句就把空闲计时续上。"""
+    idle_timeout = float(getattr(config, "CONV_IDLE_TIMEOUT", 10.0))
+    max_turns = int(getattr(config, "MAX_CONV_TURNS", 5))
+    print("voice: 已唤醒，请说…（%.0fs 内没说话就自动退出）" % idle_timeout, flush=True)
+    deadline = time.time() + idle_timeout
+    turns = 0
+    while time.time() < deadline and turns < max_turns:
         try:
             text = (yanapi.sync_do_voice_iat_value() or "").strip()
         except Exception as exc:
             print("voice: 听写出错 %s" % exc, flush=True)
             break
         if len(text) < 2:
-            break
+            if time.time() >= deadline:
+                break
+            continue   # 本轮没听清，但还没到空闲上限，再听一次
+        turns += 1
         print("voice: 你说「%s」" % text, flush=True)
         try:
-            played = _play_audio_stream(
+            if not _play_audio_stream(
                 "/api/device-connections/{id}/companion-voice-stream",
                 {"space_id": space_id, "message": text}, timeout=45,
-            )
-            if not played:
+            ):
                 print("voice: 无回复音频", flush=True)
-                break
         except Exception as exc:
             print("voice: 回复出错 %s" % exc, flush=True)
-            break
-    print("voice: 对话结束，回到待唤醒", flush=True)
+        deadline = time.time() + idle_timeout   # 有有效对话 → 续 10s
+    print("voice: 空闲超时/结束，回到待唤醒", flush=True)
 
 
 def _voice_loop():
+    # 喊名字唤醒（用户已确认接受待唤醒时的周期"滴"声——本机任何在听的识别都会响，无法关）。
     if not getattr(config, "VOICE_INPUT_ENABLED", True):
         print("voice: 语音输入已关闭（VOICE_INPUT_ENABLED=False）", flush=True)
         return

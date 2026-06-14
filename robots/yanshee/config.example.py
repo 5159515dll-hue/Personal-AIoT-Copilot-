@@ -79,4 +79,5 @@ VOICE_INPUT_ENABLED = os.getenv("AIOT_VOICE_INPUT", "1") not in ("0", "false", "
 WAKE_WORDS = ["小暖", "小暖小暖", "你好小暖", "小暖在吗"]   # 离线命令词唤醒
 WAKE_HITS = int(os.getenv("AIOT_WAKE_HITS", "2"))            # 窗口内喊到几次才唤醒（降误触发；嫌难触发可设 1）
 WAKE_WINDOW = float(os.getenv("AIOT_WAKE_WINDOW", "8"))       # 计数窗口秒数
-MAX_CONV_TURNS = int(os.getenv("AIOT_MAX_CONV_TURNS", "3"))   # 唤醒后最多连续对话轮数
+MAX_CONV_TURNS = int(os.getenv("AIOT_MAX_CONV_TURNS", "5"))   # 唤醒后最多连续对话轮数
+CONV_IDLE_TIMEOUT = float(os.getenv("AIOT_CONV_IDLE_TIMEOUT", "10"))  # 唤醒后这么多秒没有效声音就退出，等下次唤醒
