@@ -403,7 +403,14 @@ def _converse(yanapi, space_id):
     每说成功一句就把空闲计时续上。"""
     idle_timeout = float(getattr(config, "CONV_IDLE_TIMEOUT", 10.0))
     max_turns = int(getattr(config, "MAX_CONV_TURNS", 5))
-    print("voice: 已唤醒，请说…（%.0fs 内没说话就自动退出）" % idle_timeout, flush=True)
+    greeting = getattr(config, "WAKE_GREETING", "你好呀，我是小暖")
+    print("voice: 已唤醒", flush=True)
+    if greeting:
+        try:
+            _speak(greeting)   # 唤醒应答（自然音色），说完再开始听问题
+        except Exception as exc:
+            print("voice: 唤醒应答出错 %s" % exc, flush=True)
+    print("voice: 请说…（%.0fs 内没说话就自动退出）" % idle_timeout, flush=True)
     deadline = time.time() + idle_timeout
     turns = 0
     while time.time() < deadline and turns < max_turns:
