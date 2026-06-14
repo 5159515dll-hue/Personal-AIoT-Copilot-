@@ -70,41 +70,47 @@ def on_message(client, userdata, message):
         _speak(text)
 
 
-def _speak(text):
-    """朗读陪伴回复：服务器火山 TTS 合成自然语音（可在服务器切换音色），流式播放；失败回退本机机械 TTS。"""
-    _note_speaking(text)
+def _play_audio_stream(path, body_dict, timeout=40):
+    """POST 到服务器流式 TTS 端点，把返回的 MP3 边收边喂给 mpg123 播放。返回是否播到音频。"""
+    import subprocess
     base = getattr(config, "AIOT_API_BASE_URL", "")
     token = getattr(config, "DEVICE_TOKEN", "")
     device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
-    if base and token:
+    if not (base and token):
+        return False
+    url = base.rstrip("/") + path.replace("{id}", device_id)
+    req = urllib.request.Request(
+        url, data=json.dumps(body_dict).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", "X-AIoT-Device-Token": token},
+    )
+    resp = urllib.request.urlopen(req, timeout=timeout)
+    player = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
+    got = False
+    try:
+        while True:
+            chunk = resp.read(4096)
+            if not chunk:
+                break
+            got = True
+            player.stdin.write(chunk)
+    finally:
         try:
-            import subprocess
-            url = base.rstrip("/") + "/api/device-connections/" + device_id + "/tts-stream"
-            body = json.dumps({"text": text[:600]}).encode("utf-8")
-            req = urllib.request.Request(
-                url, data=body, method="POST",
-                headers={"Content-Type": "application/json", "X-AIoT-Device-Token": token},
-            )
-            resp = urllib.request.urlopen(req, timeout=30)
-            player = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
-            got = False
-            while True:
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
-                got = True
-                player.stdin.write(chunk)
-            try:
-                player.stdin.close()
-                player.wait()
-            except Exception:
-                pass
-            if got:
-                return
-            print("say: 服务器 TTS 无音频，回退本机", flush=True)
-        except Exception as exc:
-            print("say: 服务器 TTS 失败，回退本机 %s" % exc, flush=True)
-    # 回退：本机机械 TTS
+            player.stdin.close()
+            player.wait()
+        except Exception:
+            pass
+    return got
+
+
+def _speak(text):
+    """朗读陪伴回复：服务器火山 TTS 合成自然语音（可在服务器切换音色），流式播放；失败回退本机机械 TTS。"""
+    _note_speaking(text)
+    try:
+        if _play_audio_stream("/api/device-connections/{id}/tts-stream", {"text": text[:600]}, timeout=30):
+            return
+        print("say: 服务器 TTS 无音频，回退本机", flush=True)
+    except Exception as exc:
+        print("say: 服务器 TTS 失败，回退本机 %s" % exc, flush=True)
     try:
         import YanAPI
         YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
@@ -312,22 +318,9 @@ def _live_stop():
         _LIVE["space_id"] = None
 
 
-# ---- 语音输入（Step 3）：直接和机器人对话。听写 → 服务器生成回复 → 本机朗读(+手势)。
-# 浏览器输入路径照常保留（走 /api/companion/reply + MQTT）。防回声：机器人说话时不聆听，
-# 且朗读用同步 sync_do_tts 阻塞聆听循环。----
-def _ask_companion(base, token, space_id, message):
-    device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
-    url = base.rstrip("/") + "/api/device-connections/" + device_id + "/companion-voice"
-    body = json.dumps({"space_id": space_id, "message": message}).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json", "X-AIoT-Device-Token": token},
-    )
-    raw = urllib.request.urlopen(req, timeout=30).read()
-    data = json.loads(raw.decode("utf-8"))
-    return data.get("reply") or "", data.get("gesture")
-
-
+# ---- 语音对话（Step 3，唤醒触发）：喊两次"小暖"唤醒 → 听写 → 服务器流式回复
+# （大模型流式 → 逐句火山 TTS）→ mpg123 边收边播（≤3s 开口）。浏览器输入路径照常保留。
+# 唤醒用离线命令词 ASR（喊名字）。识别结果结构未知 → 宽松解析 + 打日志便于调参。----
 def _play_gesture_async(gesture):
     """在独立线程播手势（带自己的事件循环），与朗读并行。"""
     def run():
@@ -345,21 +338,109 @@ def _play_gesture_async(gesture):
     t.start()
 
 
+def _setup_wake_grammar(yanapi, wake_words):
+    try:
+        grammar = {
+            "grammar": "wake",
+            "rule": [{"name": "name", "value": "|".join(wake_words)}],
+            "slot": [{"name": "name"}],
+            "start": "wakeStart",
+            "startinfo": "<name>",
+        }
+        yanapi.create_voice_asr_offline_syntax(grammar)
+    except Exception as exc:
+        print("voice: 注册唤醒词失败 %s" % exc, flush=True)
+
+
+def _asr_text(data):
+    """从语义识别结果里尽量抠出识别文本（结构未知，宽松解析 + 兜底 stringify）。"""
+    if not data:
+        return ""
+    if isinstance(data, str):
+        return data
+    if isinstance(data, dict):
+        for key in ("text", "result", "content", "answer", "question", "nlu"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return json.dumps(data, ensure_ascii=False)
+    return ""
+
+
+def _is_wake(text, wake_words):
+    cleaned = (text or "").replace(" ", "")
+    return any(w in cleaned for w in wake_words) or "小暖" in cleaned
+
+
+def _wait_for_wake(yanapi, wake_words):
+    """持续监听唤醒词；窗口内喊到 WAKE_HITS 次才触发（降误唤醒）。返回 True 表示已唤醒。"""
+    need = int(getattr(config, "WAKE_HITS", 2))
+    window = float(getattr(config, "WAKE_WINDOW", 8.0))
+    try:
+        yanapi.start_voice_asr(continues=True)
+    except Exception as exc:
+        print("voice: start_asr 失败 %s" % exc, flush=True)
+        time.sleep(3)
+        return False
+    hits = []
+    last = ""
+    try:
+        while True:
+            time.sleep(0.4)
+            try:
+                state = yanapi.get_voice_asr_state()
+            except Exception:
+                continue
+            data = state.get("data") if isinstance(state, dict) else None
+            text = _asr_text(data)
+            if text and text != last:
+                last = text
+                print("voice: 识别到「%s」" % text[:40], flush=True)
+                if _is_wake(text, wake_words):
+                    now = time.time()
+                    hits = [h for h in hits if now - h < window] + [now]
+                    if len(hits) >= need:
+                        return True
+    finally:
+        try:
+            yanapi.stop_voice_asr()
+        except Exception:
+            pass
+
+
+def _converse(yanapi, space_id):
+    """已唤醒：多轮短对话。每轮听写 → 服务器流式回复并播放；听不到内容则结束回到待唤醒。"""
+    print("voice: 已唤醒，请说…", flush=True)
+    max_turns = int(getattr(config, "MAX_CONV_TURNS", 3))
+    for _ in range(max_turns):
+        try:
+            text = (yanapi.sync_do_voice_iat_value() or "").strip()
+        except Exception as exc:
+            print("voice: 听写出错 %s" % exc, flush=True)
+            break
+        if len(text) < 2:
+            break
+        print("voice: 你说「%s」" % text, flush=True)
+        try:
+            played = _play_audio_stream(
+                "/api/device-connections/{id}/companion-voice-stream",
+                {"space_id": space_id, "message": text}, timeout=45,
+            )
+            if not played:
+                print("voice: 无回复音频", flush=True)
+                break
+        except Exception as exc:
+            print("voice: 回复出错 %s" % exc, flush=True)
+            break
+    print("voice: 对话结束，回到待唤醒", flush=True)
+
+
 def _voice_loop():
-    # 旧版"持续听写"每隔几秒有提示音且耗电；已停用，待"唤醒触发 + 火山 TTS 流式回话"版上线。
-    # （浏览器聊天的朗读已改走服务器火山 TTS，自然且可切音色。）临时恢复旧版可设 AIOT_LEGACY_VOICE_LOOP=1。
-    if not getattr(config, "LEGACY_VOICE_LOOP", False):
-        print("voice: 持续语音输入已停用（待唤醒触发版；浏览器聊天朗读正常）", flush=True)
-        return
     if not getattr(config, "VOICE_INPUT_ENABLED", True):
         print("voice: 语音输入已关闭（VOICE_INPUT_ENABLED=False）", flush=True)
         return
-    base = getattr(config, "AIOT_API_BASE_URL", "")
-    token = getattr(config, "DEVICE_TOKEN", "")
     space_id = getattr(config, "SPACE_ID", "space_study_001")
-    if not (base and token):
-        print("voice: 缺 base/token，语音输入关闭", flush=True)
-        return
+    wake_words = getattr(config, "WAKE_WORDS", ["小暖", "小暖小暖", "你好小暖", "小暖在吗"])
     try:
         import asyncio
         asyncio.set_event_loop(asyncio.new_event_loop())
@@ -367,35 +448,15 @@ def _voice_loop():
         print("voice: 建事件循环失败 %s" % exc, flush=True)
     import YanAPI
     YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
-    print("voice: 语音输入已启动，开始聆听…", flush=True)
+    _setup_wake_grammar(YanAPI, wake_words)
+    print("voice: 待唤醒——喊两次「%s」开始对话" % wake_words[0], flush=True)
     while True:
-        while time.time() < _speaking_until:   # 机器人说话时不聆听
-            time.sleep(0.3)
-        listen_start = time.time()
         try:
-            text = (YanAPI.sync_do_voice_iat_value() or "").strip()
+            if _wait_for_wake(YanAPI, wake_words):
+                _converse(YanAPI, space_id)
         except Exception as exc:
-            print("voice: 听写出错 %s" % exc, flush=True)
+            print("voice: 循环出错 %s" % exc, flush=True)
             time.sleep(2)
-            continue
-        # 太短/聆听期间机器人开始说话（如浏览器聊天）→ 可能含 TTS，丢弃
-        if len(text) < 2 or _speaking_until > listen_start:
-            continue
-        print("voice: 听到「%s」" % text, flush=True)
-        try:
-            reply, gesture = _ask_companion(base, token, space_id, text)
-        except Exception as exc:
-            print("voice: 请求回复出错 %s" % exc, flush=True)
-            continue
-        if gesture:
-            _play_gesture_async(gesture)
-        if reply:
-            print("voice: 回复「%s」" % reply[:50], flush=True)
-            _note_speaking(reply)
-            try:
-                YanAPI.sync_do_tts(reply[:300], True)   # 同步：朗读期间阻塞聆听 → 不会听到自己
-            except Exception as exc:
-                print("voice: tts 出错 %s" % exc, flush=True)
 
 
 def _make_client():

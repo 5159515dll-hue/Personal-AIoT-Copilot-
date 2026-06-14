@@ -13,7 +13,11 @@ from app.device_connections import (
     record_ingest_connection,
     register_device_connection,
 )
-from app.companion import generate_companion_reply
+import re as _re
+
+from starlette.concurrency import run_in_threadpool
+
+from app.companion import generate_companion_reply, stream_companion_reply
 from app.companion_voice import get_voice as get_companion_voice
 from app.emotion_fusion import get_last_state
 from app.ingestion import readings_from_request
@@ -323,6 +327,51 @@ async def device_companion_voice(
         "language": meta.get("language"),
         "tone": meta.get("tone"),
     }
+
+
+@router.post("/{device_id}/companion-voice-stream")
+async def device_companion_voice_stream(device_id: str, request: Request, payload: DeviceCompanionVoiceRequest):
+    """机器人语音对话（流式，为"说完话 3s 内回话"）：识别文本 → 大模型流式回复 → 逐句火山 TTS
+    → 流式 MP3，机器人 mpg123 边收边播。第一句一就绪就下发 → 压低开口延迟。不经 MQTT 广播。
+    """
+    _require_device_ingest_auth(request, device_id)
+    state = get_last_state(payload.space_id) or EmotionState(
+        primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language=payload.language or "zh"
+    )
+    voice = get_companion_voice()
+    record_audit(
+        actor="system",
+        action="companion_voice_reply",
+        result="success",
+        details=f"机器人语音对话（流式）：{payload.message[:40]}",
+        parameters={"device_id": device_id, "space_id": payload.space_id, "message": payload.message},
+    )
+
+    async def gen():
+        buffer = ""
+        async for delta in stream_companion_reply(state, payload.language, payload.message):
+            buffer += delta
+            while True:
+                match = _re.search(r"[。！？!?\n；;，,]", buffer)
+                if not match:
+                    break
+                sentence = buffer[: match.end()].strip()
+                buffer = buffer[match.end():]
+                if len(sentence) >= 2:
+                    mp3 = await run_in_threadpool(tts_synthesize, sentence, voice)
+                    if mp3:
+                        yield mp3
+        tail = buffer.strip()
+        if tail:
+            mp3 = await run_in_threadpool(tts_synthesize, tail, voice)
+            if mp3:
+                yield mp3
+
+    return StreamingResponse(
+        gen(),
+        media_type="audio/mpeg",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+    )
 
 
 @router.post("/{device_id}/tts-stream")

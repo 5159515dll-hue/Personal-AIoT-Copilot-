@@ -55,7 +55,7 @@ def request_is_authorized(request: Request) -> bool:
     ):
         return True
 
-    device_match = re.match(r"^/api/device-connections/([^/]+)/(events|media|heartbeat|telemetry|vision-live|vision-live-stream|companion-voice|tts-stream)$", request.url.path)
+    device_match = re.match(r"^/api/device-connections/([^/]+)/(events|media|heartbeat|telemetry|vision-live|vision-live-stream|companion-voice|companion-voice-stream|tts-stream)$", request.url.path)
     if device_match and verify_device_token(device_match.group(1), request.headers.get(DEVICE_TOKEN_HEADER)):
         return True
 
