@@ -444,8 +444,13 @@ def _voice_loop():
         print("voice: 建事件循环失败 %s" % exc, flush=True)
     import YanAPI
     YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
-    _setup_wake_grammar(YanAPI, wake_words)
-    print("voice: 待唤醒——喊两次「%s」开始对话" % wake_words[0], flush=True)
+    # 清掉上次残留的识别会话（否则引擎卡在"运行中"，新的听写起不来、不录音也不滴）。
+    for _stop in ("stop_voice_iat", "stop_voice_asr", "stop_voice_tts"):
+        try:
+            getattr(YanAPI, _stop)()
+        except Exception:
+            pass
+    print("voice: 待唤醒——喊「%s」开始对话" % wake_words[0], flush=True)
     while True:
         try:
             if _wait_for_wake(YanAPI, wake_words):
