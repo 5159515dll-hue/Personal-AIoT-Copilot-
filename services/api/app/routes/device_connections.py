@@ -12,10 +12,13 @@ from app.device_connections import (
     record_ingest_connection,
     register_device_connection,
 )
+from app.companion import generate_companion_reply
+from app.emotion_fusion import get_last_state
 from app.ingestion import readings_from_request
 from app.live_stream import set_frame as set_live_frame
 from app.media_store import _assert_space_allows_stream, record_device_event, save_media_asset
 from app.models import (
+    DeviceCompanionVoiceRequest,
     DeviceEventCreate,
     DeviceEventIngestResponse,
     DeviceConnectionRecord,
@@ -24,6 +27,7 @@ from app.models import (
     DeviceRegistrationRequest,
     DeviceTelemetryRequest,
     DeviceTelemetryResponse,
+    EmotionState,
     MediaAssetUploadResponse,
     SensorIngestRequest,
 )
@@ -258,6 +262,37 @@ async def ingest_vision_live(
     data = await request.body()
     set_live_frame(space_id, data)
     return {"ok": True, "bytes": len(data)}
+
+
+@router.post("/{device_id}/companion-voice")
+async def device_companion_voice(
+    device_id: str,
+    request: Request,
+    payload: DeviceCompanionVoiceRequest,
+) -> dict:
+    """机器人语音输入（Step 3）：把识别文本生成陪伴回复返回给机器人本机朗读。
+
+    用设备令牌鉴权（机器人已有），不经 MQTT 广播（避免与机器人自身朗读重复）；浏览器输入路径
+    （/api/companion/reply）不受影响、照常保留。情绪取该空间最近状态，无则按 neutral 兜底。
+    """
+    _require_device_ingest_auth(request, device_id)
+    state = get_last_state(payload.space_id) or EmotionState(
+        primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language=payload.language or "zh"
+    )
+    reply, _usage, meta = await generate_companion_reply(state, payload.language, payload.message)
+    record_audit(
+        actor="system",
+        action="companion_voice_reply",
+        result="success",
+        details=f"机器人语音对话：{payload.message[:40]}",
+        parameters={"device_id": device_id, "space_id": payload.space_id, "message": payload.message},
+    )
+    return {
+        "reply": reply,
+        "gesture": meta.get("gesture"),
+        "language": meta.get("language"),
+        "tone": meta.get("tone"),
+    }
 
 
 def _require_device_ingest_auth(request: Request, device_id: str) -> None:

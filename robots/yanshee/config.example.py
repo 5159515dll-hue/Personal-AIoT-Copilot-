@@ -68,3 +68,8 @@ LIVE_LOCAL_MJPEG_URL = os.getenv("AIOT_LIVE_MJPEG_URL", "http://127.0.0.1:8000/s
 LIVE_RESOLUTION = os.getenv("AIOT_LIVE_RESOLUTION", "640x480")
 LIVE_TARGET_FPS = float(os.getenv("AIOT_LIVE_FPS", "5"))           # 限速丢帧，控带宽/CPU
 LIVE_IDLE_TIMEOUT = float(os.getenv("AIOT_LIVE_IDLE_TIMEOUT", "60"))  # 浏览器停发心跳后自动停的秒数
+
+# ——语音输入（Step 3：直接和机器人对话）——
+# 开启后机器人持续听写（sync_do_voice_iat_value）→ 送服务器生成回复 → 本机朗读+手势。
+# 浏览器输入照常保留。设 AIOT_VOICE_INPUT=0 可关闭（如嫌一直开麦）。
+VOICE_INPUT_ENABLED = os.getenv("AIOT_VOICE_INPUT", "1") not in ("0", "false", "False", "")

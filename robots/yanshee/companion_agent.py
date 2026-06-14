@@ -27,6 +27,14 @@ from paho.mqtt import client as mqtt
 TOPIC = getattr(config, "COMMAND_TOPIC", "aiot/companion/command")
 CLIENT_ID = getattr(config, "MQTT_CLIENT_ID", "yanshee-companion-agent")
 
+# 机器人正在说话的截止时间戳：语音输入循环据此避免听到机器人自己的 TTS（防回声）。
+_speaking_until = 0.0
+
+
+def _note_speaking(text):
+    global _speaking_until
+    _speaking_until = time.time() + min(20.0, 1.2 + len(text or "") * 0.22)
+
 
 def on_connect(client, userdata, flags, rc, *args):
     print("MQTT connected rc=%s; 订阅 %s" % (rc, TOPIC), flush=True)
@@ -67,6 +75,7 @@ def on_message(client, userdata, message):
 
 def _speak(text):
     """朗读陪伴回复（Step 2）。start_voice_tts 异步：立即返回，与手势同时进行；interrupt=True 让新回复打断旧的。"""
+    _note_speaking(text)
     try:
         import YanAPI
         YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
@@ -282,6 +291,87 @@ def _live_stop():
         _LIVE["space_id"] = None
 
 
+# ---- 语音输入（Step 3）：直接和机器人对话。听写 → 服务器生成回复 → 本机朗读(+手势)。
+# 浏览器输入路径照常保留（走 /api/companion/reply + MQTT）。防回声：机器人说话时不聆听，
+# 且朗读用同步 sync_do_tts 阻塞聆听循环。----
+def _ask_companion(base, token, space_id, message):
+    device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
+    url = base.rstrip("/") + "/api/device-connections/" + device_id + "/companion-voice"
+    body = json.dumps({"space_id": space_id, "message": message}).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-AIoT-Device-Token": token},
+    )
+    raw = urllib.request.urlopen(req, timeout=30).read()
+    data = json.loads(raw.decode("utf-8"))
+    return data.get("reply") or "", data.get("gesture")
+
+
+def _play_gesture_async(gesture):
+    """在独立线程播手势（带自己的事件循环），与朗读并行。"""
+    def run():
+        try:
+            import asyncio
+            asyncio.set_event_loop(asyncio.new_event_loop())
+        except Exception:
+            pass
+        try:
+            play_gesture(gesture)
+        except Exception as exc:
+            print("voice: play_gesture 出错 %s" % exc, flush=True)
+    t = threading.Thread(target=run)
+    t.daemon = True
+    t.start()
+
+
+def _voice_loop():
+    if not getattr(config, "VOICE_INPUT_ENABLED", True):
+        print("voice: 语音输入已关闭（VOICE_INPUT_ENABLED=False）", flush=True)
+        return
+    base = getattr(config, "AIOT_API_BASE_URL", "")
+    token = getattr(config, "DEVICE_TOKEN", "")
+    space_id = getattr(config, "SPACE_ID", "space_study_001")
+    if not (base and token):
+        print("voice: 缺 base/token，语音输入关闭", flush=True)
+        return
+    try:
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    except Exception as exc:
+        print("voice: 建事件循环失败 %s" % exc, flush=True)
+    import YanAPI
+    YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
+    print("voice: 语音输入已启动，开始聆听…", flush=True)
+    while True:
+        while time.time() < _speaking_until:   # 机器人说话时不聆听
+            time.sleep(0.3)
+        listen_start = time.time()
+        try:
+            text = (YanAPI.sync_do_voice_iat_value() or "").strip()
+        except Exception as exc:
+            print("voice: 听写出错 %s" % exc, flush=True)
+            time.sleep(2)
+            continue
+        # 太短/聆听期间机器人开始说话（如浏览器聊天）→ 可能含 TTS，丢弃
+        if len(text) < 2 or _speaking_until > listen_start:
+            continue
+        print("voice: 听到「%s」" % text, flush=True)
+        try:
+            reply, gesture = _ask_companion(base, token, space_id, text)
+        except Exception as exc:
+            print("voice: 请求回复出错 %s" % exc, flush=True)
+            continue
+        if gesture:
+            _play_gesture_async(gesture)
+        if reply:
+            print("voice: 回复「%s」" % reply[:50], flush=True)
+            _note_speaking(reply)
+            try:
+                YanAPI.sync_do_tts(reply[:300], True)   # 同步：朗读期间阻塞聆听 → 不会听到自己
+            except Exception as exc:
+                print("voice: tts 出错 %s" % exc, flush=True)
+
+
 def _make_client():
     # 兼容 paho v2（需 CallbackAPIVersion）与 v1（树莓派 3.5 上为 1.6.x）。
     try:
@@ -300,6 +390,10 @@ def main():
     hb = threading.Thread(target=_heartbeat_loop)
     hb.daemon = True
     hb.start()
+    # 语音输入线程（Step 3）：守护线程，独立聆听 → 生成回复 → 本机朗读+手势。
+    vc = threading.Thread(target=_voice_loop)
+    vc.daemon = True
+    vc.start()
     print("连接 %s:%s ..." % (config.MQTT_BROKER_HOST, config.MQTT_BROKER_PORT), flush=True)
     # connect_async + loop_forever：开机网络未就绪或断线都会自动重连（重启后只要联网就恢复）。
     try:

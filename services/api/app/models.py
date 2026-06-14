@@ -606,6 +606,16 @@ class CompanionVisionCaptureRequest(BaseModel):
     zone: str | None = Field(default=None, max_length=40)
 
 
+class DeviceCompanionVoiceRequest(BaseModel):
+    """机器人侧语音输入（Step 3）：识别出的文本送来生成陪伴回复，由机器人本机朗读，不经 MQTT 广播。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=500)
+    language: str | None = Field(default=None, max_length=8)
+
+
 class CompanionGestureRequest(BaseModel):
     """请求执行一个情绪驱动的原地手势（经策略门控）。"""
 

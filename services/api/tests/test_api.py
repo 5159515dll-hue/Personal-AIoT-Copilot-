@@ -2586,6 +2586,21 @@ def test_companion_reply_404_without_state_or_explicit_emotion() -> None:
     assert resp.status_code == 404
 
 
+def test_device_companion_voice_reply(monkeypatch) -> None:
+    """Step 3：机器人语音输入端点用设备令牌鉴权，无情绪状态时按 neutral 兜底生成回复。"""
+    monkeypatch.setenv("AIOT_INTERNAL_API_TOKEN", "test-internal-token")
+    resp = client.post(
+        "/api/device-connections/yanshee_robot_01/companion-voice",
+        headers={INTERNAL_API_TOKEN_HEADER: "test-internal-token"},
+        json={"space_id": "space_study_001", "message": "你好呀小暖"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["reply"]) > 0
+    assert "gesture" in body
+    assert body["language"] == "zh"
+
+
 def test_companion_reply_uses_last_emotion_state_from_ingest() -> None:
     _enable_emotion_gate()
     cred = client.post("/api/devices/yanshee_robot_01/credentials")
