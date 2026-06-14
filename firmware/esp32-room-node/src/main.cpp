@@ -118,6 +118,9 @@ void connectWifi() {
 
   Serial.printf("Connecting Wi-Fi SSID=%s\n", WIFI_SSID);
   WiFi.mode(WIFI_STA);
+  // Lower TX power to shrink the radio current inrush (brownout mitigation when
+  // powered over a weak USB/cable path). Raise toward WIFI_POWER_19_5dBm if the AP is far.
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
