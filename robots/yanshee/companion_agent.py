@@ -375,17 +375,16 @@ def _is_wake(text, wake_words):
 def _wait_for_wake(yanapi, wake_words):
     """单次识别循环监听唤醒词（continuous 模式引擎会立刻 idle，故用单次反复）。
     窗口内喊到 WAKE_HITS 次唤醒词才触发（降误唤醒）。返回 True 表示已唤醒。"""
-    need = int(getattr(config, "WAKE_HITS", 2))
-    window = float(getattr(config, "WAKE_WINDOW", 8.0))
+    need = int(getattr(config, "WAKE_HITS", 1))
+    window = float(getattr(config, "WAKE_WINDOW", 12.0))
     hits = []
     while True:
         try:
-            res = yanapi.sync_do_voice_asr_value()
+            heard = (yanapi.sync_do_voice_iat_value() or "").strip()   # 听写：纯转文字，比语义理解快、无 'text' 报错
         except Exception as exc:
             print("voice: 唤醒识别出错 %s" % exc, flush=True)
-            time.sleep(1)
+            time.sleep(0.5)
             continue
-        heard = ((res.get("question") if isinstance(res, dict) else res) or "").strip()
         if not heard:
             continue
         if _is_wake(heard, wake_words):
