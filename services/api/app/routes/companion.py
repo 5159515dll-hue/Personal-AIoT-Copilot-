@@ -38,13 +38,14 @@ from app.models import (
     CompanionPersonaUpdate,
     CompanionReplyRequest,
     CompanionReplyResponse,
+    CompanionVisionCaptureRequest,
     EmotionState,
     MemoryClearResponse,
     MemorySnapshot,
     PolicyResult,
 )
 from app.yanshee_control import plan_companion_gesture
-from app.companion_mqtt import publish_companion_command
+from app.companion_mqtt import publish_companion_command, publish_vision_capture
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
 
@@ -134,6 +135,20 @@ def companion_gesture(payload: CompanionGestureRequest) -> CompanionGestureRespo
         reason=decision.reason,
         audit_log_id=audit.id,
     )
+
+
+@router.post("/vision/capture")
+def companion_vision_capture(payload: CompanionVisionCaptureRequest) -> dict:
+    """请求机器人拍一张照片并上传到媒体库（出现在 /vision）。"""
+    requested = publish_vision_capture(space_id=payload.space_id, zone=payload.zone)
+    record_audit(
+        actor="user",
+        action="companion_vision_capture",
+        result="success" if requested else "blocked",
+        details=f"已请求机器人拍照（空间 {payload.space_id}）。",
+        parameters=payload.model_dump(mode="json"),
+    )
+    return {"requested": requested}
 
 
 @router.get("/persona", response_model=CompanionPersona)

@@ -601,6 +601,11 @@ class CompanionReplyResponse(BaseModel):
     model_status: str
 
 
+class CompanionVisionCaptureRequest(BaseModel):
+    space_id: str = Field(min_length=1, max_length=80)
+    zone: str | None = Field(default=None, max_length=40)
+
+
 class CompanionGestureRequest(BaseModel):
     """请求执行一个情绪驱动的原地手势（经策略门控）。"""
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Eye, FileVideo2, Plus, Radio, Trash2 } from "lucide-react";
-import { createStream, deleteMediaAsset, deleteStream, updateStream } from "@/lib/api";
+import { captureCompanionPhoto, createStream, deleteMediaAsset, deleteStream, getMediaAssets, updateStream } from "@/lib/api";
 import type { DeviceEvent, MediaAsset, RoomSpace, StreamSource, StreamSourceCreate } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 
@@ -132,6 +132,25 @@ export function VisualMediaPanel({
     }
   }
 
+  async function capturePhoto() {
+    if (!spaceId) {
+      setMessage("请先选择空间。");
+      return;
+    }
+    setPending("capture");
+    setMessage("已请求机器人拍照，约 3–5 秒后照片会出现…");
+    try {
+      await captureCompanionPhoto(spaceId);
+      await new Promise((resolve) => setTimeout(resolve, 4500));
+      setAssets(await getMediaAssets({ space_id: spaceId, limit: 80 }));
+      setMessage("已刷新媒体库（若没看到照片，请确认机器人在线后再点一次）。");
+    } catch (captureError) {
+      setMessage(captureError instanceof Error ? captureError.message : "拍照请求失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
@@ -169,6 +188,19 @@ export function VisualMediaPanel({
             <PolicyItem label="事件媒体" value={selectedSpace.perception.media_policy.allow_event_media ? "允许" : "关闭"} />
             <PolicyItem label="实时流" value={selectedSpace.perception.media_policy.allow_realtime_stream ? "允许" : "关闭"} />
             <PolicyItem label="保留策略" value={`${selectedSpace.perception.media_policy.media_retention_days} 天媒体 / ${selectedSpace.perception.media_policy.event_retention_days} 天事件`} />
+          </div>
+        )}
+        {selectedSpace && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void capturePhoto()}
+              disabled={pending === "capture"}
+              className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-teal-600 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Camera size={15} aria-hidden />
+              {pending === "capture" ? "拍照中…" : "机器人拍照"}
+            </button>
           </div>
         )}
         {message && <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{message}</p>}

@@ -39,6 +39,10 @@ def on_message(client, userdata, message):
     except Exception as exc:
         print("非法消息：%s" % exc, flush=True)
         return
+    if data.get("action") == "capture":
+        print("收到拍照指令 space=%s" % data.get("space_id"), flush=True)
+        _capture_and_upload(data.get("space_id"), data.get("zone", ""))
+        return
     gesture = data.get("gesture")
     text = (data.get("text") or "")[:50]
     print("收到指令 gesture=%s text=%s" % (gesture, text), flush=True)
@@ -74,6 +78,56 @@ def _heartbeat_loop():
     while True:
         _heartbeat_once()
         time.sleep(max(10, interval))
+
+
+def _upload_media(path, space_id, zone, base, token, device_id):
+    """把本地照片以 multipart 上传到 /api/device-connections/{id}/media（device token）。3.5 手写 multipart。"""
+    boundary = "----aiotyanshee7e3b9c"
+    with open(path, "rb") as fh:
+        img = fh.read()
+    fname = os.path.basename(path)
+
+    def _field(name, value):
+        return ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % (boundary, name, value)).encode("utf-8")
+
+    body = _field("space_id", space_id)
+    if zone:
+        body += _field("zone", zone)
+    body += ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: image/jpeg\r\n\r\n" % (boundary, fname)).encode("utf-8")
+    body += img + b"\r\n" + ("--%s--\r\n" % boundary).encode("utf-8")
+    url = base.rstrip("/") + "/api/device-connections/" + device_id + "/media"
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary, "X-AIoT-Device-Token": token},
+    )
+    urllib.request.urlopen(req, timeout=30).read()
+
+
+def _capture_and_upload(space_id, zone):
+    """拍一张照片并上传到服务器媒体库（出现在 /vision）。"""
+    base = getattr(config, "AIOT_API_BASE_URL", "")
+    token = getattr(config, "DEVICE_TOKEN", "")
+    device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
+    if not (base and token and space_id):
+        print("capture: 缺少 base/token/space_id，跳过", flush=True)
+        return
+    try:
+        import YanAPI
+        YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
+        res = YanAPI.take_vision_photo(getattr(config, "PHOTO_RESOLUTION", "640x480"))
+        name = (res or {}).get("data", {}).get("name")
+        if not name:
+            print("capture: take_vision_photo 无 name：%s" % res, flush=True)
+            return
+        YanAPI.get_vision_photo(name, "/tmp/")
+    except Exception as exc:
+        print("capture: 拍照失败 %s" % exc, flush=True)
+        return
+    try:
+        _upload_media("/tmp/" + name, space_id, zone, base, token, device_id)
+        print("capture: 已上传照片 %s" % name, flush=True)
+    except Exception as exc:
+        print("capture: 上传失败 %s" % exc, flush=True)
 
 
 def _make_client():

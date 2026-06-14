@@ -192,6 +192,13 @@ export async function getNodes(): Promise<NodeSummary[]> {
   return request<NodeSummary[]>("/api/nodes");
 }
 
+export async function captureCompanionPhoto(spaceId: string, zone?: string): Promise<{ requested: boolean }> {
+  return request<{ requested: boolean }>("/api/companion/vision/capture", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId, zone: zone || null })
+  });
+}
+
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {
   return request<DeviceManagementResponse>("/api/devices/management", {
     method: "POST",
