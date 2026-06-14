@@ -28,6 +28,9 @@ AIOT_INTERNAL_API_TOKEN = os.getenv("AIOT_INTERNAL_API_TOKEN", "")
 DEVICE_ID = os.getenv("AIOT_DEVICE_ID", "yanshee_robot_01")
 DEVICE_NAME = os.getenv("AIOT_DEVICE_NAME", "Yanshee 人形机器人")
 
+# 设备心跳间隔（秒）：companion_agent.py 定期上报，让机器人保持在设备界面"在线"（offline 阈值约 180s）。
+HEARTBEAT_INTERVAL = int(os.getenv("AIOT_HEARTBEAT_INTERVAL", "45"))
+
 # ——情绪采集（perception/capture.py）——
 # 机器人所属空间；需先在 /spaces 把该空间的 camera + emotion_recognition 开成 local_only（双门控）。
 SPACE_ID = os.getenv("AIOT_SPACE_ID", "space_study_001")
