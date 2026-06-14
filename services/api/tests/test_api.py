@@ -18,6 +18,7 @@ from app import device_rate_limit as device_rate_limit_module
 from app import media_store as media_store_module
 from app import emotion_fusion as emotion_fusion_module
 from app import companion_persona as companion_persona_module
+from app import companion_voice as companion_voice_module
 from app import memory as memory_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
@@ -83,6 +84,7 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
     monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
     monkeypatch.setattr(companion_persona_module.persona_store, "path", tmp_path / "companion_persona.json")
+    monkeypatch.setattr(companion_voice_module.voice_store, "path", tmp_path / "companion_voice.json")
     monkeypatch.setattr(memory_module.episode_store, "path", tmp_path / "memory_episodes.json")
     monkeypatch.setattr(memory_module.profile_store, "path", tmp_path / "memory_profile.json")
     emotion_fusion_module.reset_emotion_state()
@@ -2939,3 +2941,18 @@ def test_live_stream_endpoint_returns_multipart(monkeypatch) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("multipart/x-mixed-replace")
     assert "boundary=" in resp.headers["content-type"]
+
+
+def test_companion_voice_get_and_set() -> None:
+    """音色：列表 + 当前 + 切换；非法 voice 回退到合法默认。"""
+    body = client.get("/api/companion/voice").json()
+    assert len(body["voices"]) >= 1
+    assert "current" in body and "configured" in body
+    target = body["voices"][-1]["voice_type"]
+    setres = client.post("/api/companion/voice", json={"voice": target})
+    assert setres.status_code == 200
+    assert setres.json()["current"] == target
+    assert client.get("/api/companion/voice").json()["current"] == target
+    fallback = client.post("/api/companion/voice", json={"voice": "nope_invalid"})
+    assert fallback.status_code == 200
+    assert fallback.json()["current"] != "nope_invalid"

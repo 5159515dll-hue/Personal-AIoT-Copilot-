@@ -49,6 +49,9 @@ from app.companion_mqtt import publish_companion_command, publish_vision_capture
 from app import live_stream
 from app.live_stream import clear as clear_live_frames, get_frame as get_live_frame
 from app.media_store import _assert_space_allows_stream
+from app.companion_voice import get_voice, set_voice
+from app.volc_tts import VOICE_CATALOG, is_configured as tts_configured
+from app.models import CompanionVoiceUpdate
 import asyncio
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
@@ -232,6 +235,26 @@ async def companion_vision_live_stream(space_id: str):
         media_type="multipart/x-mixed-replace; boundary=" + live_stream.LIVE_BOUNDARY,
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/voice")
+def companion_voice_options() -> dict:
+    """可选音色列表 + 当前音色（用户在前端切换）。"""
+    return {"current": get_voice(), "configured": tts_configured(), "voices": VOICE_CATALOG}
+
+
+@router.post("/voice")
+def update_companion_voice(payload: CompanionVoiceUpdate) -> dict:
+    """切换机器人朗读音色（服务端火山 TTS voice_type）。"""
+    voice = set_voice(payload.voice)
+    record_audit(
+        actor="user",
+        action="set_companion_voice",
+        result="success",
+        details=f"切换机器人音色为 {voice}。",
+        parameters={"voice": voice},
+    )
+    return {"current": voice}
 
 
 @router.get("/persona", response_model=CompanionPersona)

@@ -63,25 +63,54 @@ def on_message(client, userdata, message):
     gesture = data.get("gesture")
     text = data.get("text") or ""
     print("收到指令 gesture=%s text=%s" % (gesture, text[:50]), flush=True)
-    # Step 2：先异步开始朗读（start_voice_tts 立即返回），再播手势 → 说话与动作并行。
+    # 手势与朗读并行：手势独立线程播，朗读在本线程流式播放。
+    if gesture:
+        _play_gesture_async(gesture)
     if text:
         _speak(text)
-    if gesture:
-        try:
-            play_gesture(gesture)
-        except Exception as exc:
-            print("play_gesture 出错：%s" % exc, flush=True)
 
 
 def _speak(text):
-    """朗读陪伴回复（Step 2）。start_voice_tts 异步：立即返回，与手势同时进行；interrupt=True 让新回复打断旧的。"""
+    """朗读陪伴回复：服务器火山 TTS 合成自然语音（可在服务器切换音色），流式播放；失败回退本机机械 TTS。"""
     _note_speaking(text)
+    base = getattr(config, "AIOT_API_BASE_URL", "")
+    token = getattr(config, "DEVICE_TOKEN", "")
+    device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
+    if base and token:
+        try:
+            import subprocess
+            url = base.rstrip("/") + "/api/device-connections/" + device_id + "/tts-stream"
+            body = json.dumps({"text": text[:600]}).encode("utf-8")
+            req = urllib.request.Request(
+                url, data=body, method="POST",
+                headers={"Content-Type": "application/json", "X-AIoT-Device-Token": token},
+            )
+            resp = urllib.request.urlopen(req, timeout=30)
+            player = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
+            got = False
+            while True:
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+                got = True
+                player.stdin.write(chunk)
+            try:
+                player.stdin.close()
+                player.wait()
+            except Exception:
+                pass
+            if got:
+                return
+            print("say: 服务器 TTS 无音频，回退本机", flush=True)
+        except Exception as exc:
+            print("say: 服务器 TTS 失败，回退本机 %s" % exc, flush=True)
+    # 回退：本机机械 TTS
     try:
         import YanAPI
         YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
         YanAPI.start_voice_tts(text[:300], True)
     except Exception as exc:
-        print("tts 出错：%s" % exc, flush=True)
+        print("say: 本机 tts 失败 %s" % exc, flush=True)
 
 
 def _heartbeat_once():
@@ -317,6 +346,11 @@ def _play_gesture_async(gesture):
 
 
 def _voice_loop():
+    # 旧版"持续听写"每隔几秒有提示音且耗电；已停用，待"唤醒触发 + 火山 TTS 流式回话"版上线。
+    # （浏览器聊天的朗读已改走服务器火山 TTS，自然且可切音色。）临时恢复旧版可设 AIOT_LEGACY_VOICE_LOOP=1。
+    if not getattr(config, "LEGACY_VOICE_LOOP", False):
+        print("voice: 持续语音输入已停用（待唤醒触发版；浏览器聊天朗读正常）", flush=True)
+        return
     if not getattr(config, "VOICE_INPUT_ENABLED", True):
         print("voice: 语音输入已关闭（VOICE_INPUT_ENABLED=False）", flush=True)
         return

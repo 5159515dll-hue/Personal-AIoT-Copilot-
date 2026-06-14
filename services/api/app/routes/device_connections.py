@@ -1,6 +1,7 @@
 import hmac
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.audit import record_audit
 from app.auth import INTERNAL_API_TOKEN_HEADER, internal_api_token
@@ -13,12 +14,15 @@ from app.device_connections import (
     register_device_connection,
 )
 from app.companion import generate_companion_reply
+from app.companion_voice import get_voice as get_companion_voice
 from app.emotion_fusion import get_last_state
 from app.ingestion import readings_from_request
 from app.live_stream import publish as publish_live_stream, set_frame as set_live_frame
 from app.media_store import _assert_space_allows_stream, record_device_event, save_media_asset
+from app.volc_tts import split_sentences as tts_split, synthesize as tts_synthesize
 from app.models import (
     DeviceCompanionVoiceRequest,
+    DeviceTtsRequest,
     DeviceEventCreate,
     DeviceEventIngestResponse,
     DeviceConnectionRecord,
@@ -319,6 +323,32 @@ async def device_companion_voice(
         "language": meta.get("language"),
         "tone": meta.get("tone"),
     }
+
+
+@router.post("/{device_id}/tts-stream")
+async def device_tts_stream(device_id: str, request: Request, payload: DeviceTtsRequest):
+    """把文本合成为自然语音（火山 TTS），流式返回 MP3 给机器人 mpg123 播放。
+
+    按句合成、逐句下发 → 机器人第一句就能开口，压低"开口延迟"。当前音色取服务端设置（可在前端切换）。
+    """
+    _require_device_ingest_auth(request, device_id)
+    voice = payload.voice or get_companion_voice()
+    sentences = tts_split(payload.text) or [payload.text]
+
+    def gen():
+        for sentence in sentences:
+            try:
+                mp3 = tts_synthesize(sentence, voice)
+            except Exception:  # noqa: BLE001 - 单句失败跳过，不中断整段
+                mp3 = b""
+            if mp3:
+                yield mp3
+
+    return StreamingResponse(
+        gen(),
+        media_type="audio/mpeg",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+    )
 
 
 def _require_device_ingest_auth(request: Request, device_id: str) -> None:

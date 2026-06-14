@@ -223,6 +223,20 @@ export function companionLiveStreamUrl(spaceId: string): string {
   return `/api/companion/vision/live/stream?space_id=${encodeURIComponent(spaceId)}`;
 }
 
+export type CompanionVoiceOption = { voice_type: string; name: string };
+export type CompanionVoiceConfig = { current: string; configured: boolean; voices: CompanionVoiceOption[] };
+
+export async function getCompanionVoice(): Promise<CompanionVoiceConfig> {
+  return request<CompanionVoiceConfig>("/api/companion/voice");
+}
+
+export async function setCompanionVoice(voice: string): Promise<{ current: string }> {
+  return request<{ current: string }>("/api/companion/voice", {
+    method: "POST",
+    body: JSON.stringify({ voice })
+  });
+}
+
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {
   return request<DeviceManagementResponse>("/api/devices/management", {
     method: "POST",

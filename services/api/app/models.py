@@ -616,6 +616,27 @@ class DeviceCompanionVoiceRequest(BaseModel):
     language: str | None = Field(default=None, max_length=8)
 
 
+class CompanionVoiceSetting(BaseModel):
+    """陪伴朗读音色设置（服务端火山 TTS 的 voice_type）。"""
+
+    voice: str = Field(default="zh_female_vv_uranus_bigtts", max_length=80)
+
+
+class CompanionVoiceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voice: str = Field(min_length=1, max_length=80)
+
+
+class DeviceTtsRequest(BaseModel):
+    """机器人请求把一段文本合成为语音（设备令牌鉴权，返回流式 MP3）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=600)
+    voice: str | None = Field(default=None, max_length=80)
+
+
 class CompanionGestureRequest(BaseModel):
     """请求执行一个情绪驱动的原地手势（经策略门控）。"""
 
