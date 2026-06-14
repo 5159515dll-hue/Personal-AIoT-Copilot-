@@ -17,7 +17,7 @@ import re as _re
 
 from starlette.concurrency import run_in_threadpool
 
-from app.companion import generate_companion_reply, stream_companion_reply
+from app.companion import generate_companion_reply, response_strategy, stream_companion_reply, _split_gesture
 from app.chat_log import record_turn as record_chat_turn
 from app.companion_voice import get_voice as get_companion_voice
 from app.emotion_fusion import get_last_state
@@ -330,16 +330,40 @@ async def device_companion_voice(
     }
 
 
+# 语音对话的内容驱动手势：用户话里明确提到的动作优先，否则按情绪。结果与网页聊天一致地配合动作。
+_VOICE_GESTURE_KEYWORDS = [
+    (("举手", "举起", "挥手", "招手", "打招呼", "你好呀", "再见", "拜拜"), "wave"),
+    (("抱抱", "拥抱", "抱一下", "抱我"), "reach_out"),
+    (("伸手", "握手", "击掌", "过来"), "reach_out"),
+    (("点头", "同意", "对的", "好的"), "nod"),
+    (("歪头", "疑惑", "为什么"), "tilt_head"),
+    (("后仰", "往后", "靠一下", "累了"), "lean_back"),
+]
+
+
+def _voice_gesture(message: str | None, emotion: str) -> str:
+    msg = message or ""
+    for keywords, gesture in _VOICE_GESTURE_KEYWORDS:
+        if any(k in msg for k in keywords):
+            return gesture
+    return response_strategy(emotion).get("gesture", "idle_nod")
+
+
+_GESTURE_LINE_RE = _re.compile(r"^\s*(?:动作|action)\s*[:：]", _re.IGNORECASE)
+
+
 @router.post("/{device_id}/companion-voice-stream")
 async def device_companion_voice_stream(device_id: str, request: Request, payload: DeviceCompanionVoiceRequest):
     """机器人语音对话（流式，为"说完话 3s 内回话"）：识别文本 → 大模型流式回复 → 逐句火山 TTS
-    → 流式 MP3，机器人 mpg123 边收边播。第一句一就绪就下发 → 压低开口延迟。不经 MQTT 广播。
+    → 流式 MP3，机器人 mpg123 边收边播。手势经响应头 X-Companion-Gesture 下发，机器人收到即并行做动作
+    （与网页聊天一致地配合动作）。不经 MQTT 广播。
     """
     _require_device_ingest_auth(request, device_id)
     state = get_last_state(payload.space_id) or EmotionState(
         primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language=payload.language or "zh"
     )
     voice = get_companion_voice()
+    gesture = _voice_gesture(payload.message, state.primary_emotion)
     record_audit(
         actor="system",
         action="companion_voice_reply",
@@ -360,24 +384,26 @@ async def device_companion_voice_stream(device_id: str, request: Request, payloa
                     break
                 sentence = buffer[: match.end()].strip()
                 buffer = buffer[match.end():]
-                if len(sentence) >= 2:
+                # 跳过模型末尾的「动作: X」标签行，别念出来（手势已走响应头）
+                if len(sentence) >= 2 and not _GESTURE_LINE_RE.match(sentence):
                     mp3 = await run_in_threadpool(tts_synthesize, sentence, voice)
                     if mp3:
                         yield mp3
         tail = buffer.strip()
-        if tail:
+        if tail and not _GESTURE_LINE_RE.match(tail):
             mp3 = await run_in_threadpool(tts_synthesize, tail, voice)
             if mp3:
                 yield mp3
         try:
-            record_chat_turn(payload.message, full, source="voice")
+            clean, _proposed = _split_gesture(full)   # 落库去掉动作标签
+            record_chat_turn(payload.message, clean, source="voice", gesture=gesture)
         except Exception:  # noqa: BLE001 - 记录失败不影响回话
             pass
 
     return StreamingResponse(
         gen(),
         media_type="audio/mpeg",
-        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store", "X-Companion-Gesture": gesture},
     )
 
 

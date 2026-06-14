@@ -84,6 +84,13 @@ def _play_audio_stream(path, body_dict, timeout=40):
         headers={"Content-Type": "application/json", "X-AIoT-Device-Token": token},
     )
     resp = urllib.request.urlopen(req, timeout=timeout)
+    # 服务器在响应头给出配合的手势（与网页聊天一致）；收到即并行做动作。
+    try:
+        gesture = resp.headers.get("X-Companion-Gesture")
+    except Exception:
+        gesture = None
+    if gesture:
+        _play_gesture_async(gesture)
     player = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
     got = False
     try:
