@@ -53,14 +53,26 @@ def on_message(client, userdata, message):
         _live_stop()
         return
     gesture = data.get("gesture")
-    text = (data.get("text") or "")[:50]
-    print("收到指令 gesture=%s text=%s" % (gesture, text), flush=True)
-    if not gesture:
-        return
+    text = data.get("text") or ""
+    print("收到指令 gesture=%s text=%s" % (gesture, text[:50]), flush=True)
+    # Step 2：先异步开始朗读（start_voice_tts 立即返回），再播手势 → 说话与动作并行。
+    if text:
+        _speak(text)
+    if gesture:
+        try:
+            play_gesture(gesture)
+        except Exception as exc:
+            print("play_gesture 出错：%s" % exc, flush=True)
+
+
+def _speak(text):
+    """朗读陪伴回复（Step 2）。start_voice_tts 异步：立即返回，与手势同时进行；interrupt=True 让新回复打断旧的。"""
     try:
-        play_gesture(gesture)
+        import YanAPI
+        YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
+        YanAPI.start_voice_tts(text[:300], True)
     except Exception as exc:
-        print("play_gesture 出错：%s" % exc, flush=True)
+        print("tts 出错：%s" % exc, flush=True)
 
 
 def _heartbeat_once():
