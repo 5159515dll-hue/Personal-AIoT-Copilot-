@@ -14,6 +14,7 @@
 """
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -76,10 +77,23 @@ def play_gesture(gesture):
     try:
         YanAPI.sync_play_motion(name=motion, direction="", speed="normal", repeat=1)
         print("已播放手势 {0} -> 动作 {1}".format(gesture, motion))
-        return True
     except Exception as exc:
         print("播放出错：{0!r}".format(exc))
         return False
+
+    # 结束动作：保持表情若干秒后回到初始姿态（否则手举着不放）。可在 config.py 调或设 RESET_MOTION=None 关闭。
+    reset_motion = getattr(config, "RESET_MOTION", "Reset")
+    if reset_motion:
+        try:
+            time.sleep(max(0, getattr(config, "RESET_AFTER_SECONDS", 5)))
+            if (not available) or (reset_motion in available):
+                YanAPI.sync_play_motion(name=reset_motion, direction="", speed="normal", repeat=1)
+                print("已复位 -> {0}".format(reset_motion))
+            else:
+                print("复位动作「{0}」不在动作表中，跳过。".format(reset_motion))
+        except Exception as exc:
+            print("复位出错：{0!r}".format(exc))
+    return True
 
 
 def main():
