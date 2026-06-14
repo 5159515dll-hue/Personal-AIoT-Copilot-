@@ -39,9 +39,18 @@ def on_message(client, userdata, message):
     except Exception as exc:
         print("非法消息：%s" % exc, flush=True)
         return
-    if data.get("action") == "capture":
+    action = data.get("action")
+    if action == "capture":
         print("收到拍照指令 space=%s" % data.get("space_id"), flush=True)
         _capture_and_upload(data.get("space_id"), data.get("zone", ""))
+        return
+    if action == "live_start":
+        print("收到直播开始 space=%s" % data.get("space_id"), flush=True)
+        _live_start(data.get("space_id"))
+        return
+    if action == "live_stop":
+        print("收到直播停止", flush=True)
+        _live_stop()
         return
     gesture = data.get("gesture")
     text = (data.get("text") or "")[:50]
@@ -128,6 +137,137 @@ def _capture_and_upload(space_id, zone):
         print("capture: 已上传照片 %s" % name, flush=True)
     except Exception as exc:
         print("capture: 上传失败 %s" % exc, flush=True)
+
+
+# ---- 实时画面（MJPEG 中继直播）：收到 live_start 后把本地 open_vision_stream 的
+# MJPEG 逐帧出站推到服务器 vision-live；浏览器轮询最新帧。看门狗：浏览器停发 keepalive
+# （关页面）则 LIVE_IDLE_TIMEOUT 秒后自动停，避免摄像头一直开着。----
+_LIVE_LOCK = threading.Lock()
+_LIVE = {"thread": None, "stop": None, "space_id": None, "last_keepalive": 0.0}
+
+
+def _post_frame(url, token, frame):
+    req = urllib.request.Request(
+        url, data=frame, method="POST",
+        headers={"Content-Type": "image/jpeg", "X-AIoT-Device-Token": token},
+    )
+    urllib.request.urlopen(req, timeout=10).read()
+
+
+def _live_loop(space_id, stop_event):
+    base = getattr(config, "AIOT_API_BASE_URL", "")
+    token = getattr(config, "DEVICE_TOKEN", "")
+    device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
+    mjpeg_url = getattr(config, "LIVE_LOCAL_MJPEG_URL", "http://127.0.0.1:8000/stream.mjpg")
+    resolution = getattr(config, "LIVE_RESOLUTION", "640x480")
+    target_fps = float(getattr(config, "LIVE_TARGET_FPS", 5))
+    idle_timeout = float(getattr(config, "LIVE_IDLE_TIMEOUT", 60))
+    min_interval = (1.0 / target_fps) if target_fps > 0 else 0.2
+    ingest_url = base.rstrip("/") + "/api/device-connections/" + device_id + "/vision-live?space_id=" + space_id
+
+    # YanAPI 内部用 asyncio；在工作线程里 get_event_loop 会报「no current event loop」，
+    # 故先给本线程建一个事件循环（主线程的回调路径不需要，这里是独立线程）。
+    try:
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    except Exception as exc:
+        print("live: 建事件循环失败 %s" % exc, flush=True)
+
+    try:
+        import YanAPI
+        YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
+        YanAPI.open_vision_stream(resolution)
+    except Exception as exc:
+        print("live: open_vision_stream 失败 %s" % exc, flush=True)
+
+    last_post = 0.0
+    print("live: 开始中继 space=%s -> %s" % (space_id, ingest_url), flush=True)
+    while not stop_event.is_set():
+        with _LIVE_LOCK:
+            last_ka = _LIVE["last_keepalive"]
+        if time.time() - last_ka > idle_timeout:
+            print("live: 看门狗超时，自动停止", flush=True)
+            break
+        try:
+            stream = urllib.request.urlopen(mjpeg_url, timeout=8)
+        except Exception as exc:
+            print("live: 打开本地 MJPEG 失败 %s（2s 后重试）" % exc, flush=True)
+            time.sleep(2)
+            continue
+        buf = b""
+        try:
+            while not stop_event.is_set():
+                with _LIVE_LOCK:
+                    last_ka = _LIVE["last_keepalive"]
+                if time.time() - last_ka > idle_timeout:
+                    print("live: 看门狗超时，自动停止", flush=True)
+                    stop_event.set()
+                    break
+                chunk = stream.read(8192)
+                if not chunk:
+                    break
+                buf += chunk
+                if len(buf) > 4 * 1024 * 1024:   # 找不到完整帧时避免无限增长
+                    buf = buf[-1024 * 1024:]
+                while True:
+                    soi = buf.find(b"\xff\xd8")
+                    if soi < 0:
+                        break
+                    eoi = buf.find(b"\xff\xd9", soi + 2)
+                    if eoi < 0:
+                        if soi > 0:
+                            buf = buf[soi:]
+                        break
+                    frame = buf[soi:eoi + 2]
+                    buf = buf[eoi + 2:]
+                    now_t = time.time()
+                    if now_t - last_post < min_interval:
+                        continue   # 限速丢帧
+                    last_post = now_t
+                    try:
+                        _post_frame(ingest_url, token, frame)
+                    except Exception as exc:
+                        print("live: 推帧失败 %s" % exc, flush=True)
+        except Exception as exc:
+            print("live: 读流出错 %s" % exc, flush=True)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    try:
+        import YanAPI
+        YanAPI.close_vision_stream()
+    except Exception as exc:
+        print("live: close_vision_stream %s" % exc, flush=True)
+    print("live: 中继已停止 space=%s" % space_id, flush=True)
+
+
+def _live_start(space_id):
+    if not space_id:
+        return
+    with _LIVE_LOCK:
+        _LIVE["last_keepalive"] = time.time()
+        running = _LIVE["thread"] is not None and _LIVE["thread"].is_alive()
+        if running and _LIVE["space_id"] == space_id:
+            return   # 已在直播该空间：仅刷新 keepalive（浏览器心跳）
+        if running and _LIVE["stop"] is not None:
+            _LIVE["stop"].set()   # 切换空间：先停旧的
+        stop_event = threading.Event()
+        t = threading.Thread(target=_live_loop, args=(space_id, stop_event))
+        t.daemon = True
+        _LIVE["thread"] = t
+        _LIVE["stop"] = stop_event
+        _LIVE["space_id"] = space_id
+        t.start()
+
+
+def _live_stop():
+    with _LIVE_LOCK:
+        if _LIVE["stop"] is not None:
+            _LIVE["stop"].set()
+        _LIVE["space_id"] = None
 
 
 def _make_client():

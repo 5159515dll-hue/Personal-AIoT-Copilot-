@@ -13,7 +13,8 @@ from app.device_connections import (
     register_device_connection,
 )
 from app.ingestion import readings_from_request
-from app.media_store import record_device_event, save_media_asset
+from app.live_stream import set_frame as set_live_frame
+from app.media_store import _assert_space_allows_stream, record_device_event, save_media_asset
 from app.models import (
     DeviceEventCreate,
     DeviceEventIngestResponse,
@@ -235,6 +236,28 @@ async def upload_device_media(
         },
     )
     return MediaAssetUploadResponse(asset=asset, audit_log_id=audit.id)
+
+
+@router.post("/{device_id}/vision-live")
+async def ingest_vision_live(
+    device_id: str,
+    request: Request,
+    space_id: str = Query(...),
+) -> dict:
+    """机器人直播帧入口：逐帧 JPEG 出站推送，服务端只在内存留最新一帧供浏览器轮询。
+
+    与媒体上传同源门控：空间须 camera=local_only 且允许实时流，否则 403。直播帧不落库。
+    """
+    _require_device_ingest_auth(request, device_id)
+    try:
+        _assert_space_allows_stream(space_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    data = await request.body()
+    set_live_frame(space_id, data)
+    return {"ok": True, "bytes": len(data)}
 
 
 def _require_device_ingest_auth(request: Request, device_id: str) -> None:

@@ -2829,3 +2829,76 @@ def test_companion_reply_writes_and_recalls_and_clears_memory() -> None:
     after = client.get("/api/companion/memory").json()
     assert after["profile"] is None
     assert after["episodes"] == []
+
+
+def _enable_study_realtime() -> None:
+    space = client.get("/api/spaces/current").json()
+    space["perception"].update(
+        {
+            "camera": "local_only",
+            "privacy_mode": "local_only",
+            "media_policy": {
+                "allow_realtime_stream": True,
+                "allow_event_media": True,
+                "media_retention_days": 7,
+                "event_retention_days": 30,
+            },
+        }
+    )
+    resp = client.patch("/api/spaces/space_study_001", json={"perception": space["perception"]})
+    assert resp.status_code == 200
+
+
+def test_companion_vision_live_frame_flow() -> None:
+    from app import live_stream
+
+    live_stream.clear("space_study_001")
+    _enable_study_realtime()
+
+    # 无帧 → 404；status=false
+    assert client.get("/api/companion/vision/live/frame?space_id=space_study_001").status_code == 404
+    assert client.get("/api/companion/vision/live/status?space_id=space_study_001").json()["live"] is False
+
+    # 注入一帧 → 200 image/jpeg，原样返回字节
+    jpeg = b"\xff\xd8\xff\xe0fake-jpeg-body\xff\xd9"
+    live_stream.set_frame("space_study_001", jpeg)
+    frame_resp = client.get("/api/companion/vision/live/frame?space_id=space_study_001")
+    assert frame_resp.status_code == 200
+    assert frame_resp.headers["content-type"] == "image/jpeg"
+    assert frame_resp.content == jpeg
+    assert client.get("/api/companion/vision/live/status?space_id=space_study_001").json()["live"] is True
+
+    # start：空间已允许实时流 → 200（无 broker 时 publish 容错为 False，但接口照常 200）
+    start_resp = client.post("/api/companion/vision/live/start", json={"space_id": "space_study_001"})
+    assert start_resp.status_code == 200
+    assert "requested" in start_resp.json()
+
+    # 不存在的空间 → 404（门控 KeyError）
+    assert client.post("/api/companion/vision/live/start", json={"space_id": "space_nope_999"}).status_code == 404
+
+    # stop：清空缓冲 → 之后取帧 404
+    stop_resp = client.post("/api/companion/vision/live/stop", json={"space_id": "space_study_001"})
+    assert stop_resp.status_code == 200
+    assert client.get("/api/companion/vision/live/frame?space_id=space_study_001").status_code == 404
+
+
+def test_vision_live_ingest_with_internal_token(monkeypatch) -> None:
+    from app import live_stream
+
+    live_stream.clear("space_study_001")
+    _enable_study_realtime()
+    monkeypatch.setenv("AIOT_INTERNAL_API_TOKEN", "test-internal-token")
+
+    jpeg = b"\xff\xd8\xff\xe0pushed-frame\xff\xd9"
+    ingest = client.post(
+        "/api/device-connections/yanshee_robot_01/vision-live?space_id=space_study_001",
+        headers={INTERNAL_API_TOKEN_HEADER: "test-internal-token", "Content-Type": "image/jpeg"},
+        content=jpeg,
+    )
+    assert ingest.status_code == 200
+    assert ingest.json()["bytes"] == len(jpeg)
+
+    frame_resp = client.get("/api/companion/vision/live/frame?space_id=space_study_001")
+    assert frame_resp.status_code == 200
+    assert frame_resp.content == jpeg
+    live_stream.clear("space_study_001")

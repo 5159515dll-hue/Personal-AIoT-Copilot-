@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.companion import (
     generate_companion_reply,
@@ -45,7 +45,9 @@ from app.models import (
     PolicyResult,
 )
 from app.yanshee_control import plan_companion_gesture
-from app.companion_mqtt import publish_companion_command, publish_vision_capture
+from app.companion_mqtt import publish_companion_command, publish_vision_capture, publish_vision_live
+from app.live_stream import clear as clear_live_frames, get_frame as get_live_frame
+from app.media_store import _assert_space_allows_stream
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
 
@@ -149,6 +151,56 @@ def companion_vision_capture(payload: CompanionVisionCaptureRequest) -> dict:
         parameters=payload.model_dump(mode="json"),
     )
     return {"requested": requested}
+
+
+@router.post("/vision/live/start")
+def companion_vision_live_start(payload: CompanionVisionCaptureRequest) -> dict:
+    """开始实时画面：校验空间允许实时流后，下发直播开始指令；浏览器随后轮询 live/frame。"""
+    try:
+        _assert_space_allows_stream(payload.space_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    requested = publish_vision_live(space_id=payload.space_id, action="live_start")
+    record_audit(
+        actor="user",
+        action="companion_vision_live_start",
+        result="success" if requested else "blocked",
+        details=f"已请求机器人开始实时画面（空间 {payload.space_id}）。",
+        parameters=payload.model_dump(mode="json"),
+    )
+    return {"requested": requested}
+
+
+@router.post("/vision/live/stop")
+def companion_vision_live_stop(payload: CompanionVisionCaptureRequest) -> dict:
+    """停止实时画面：下发停止指令并清空服务端缓冲帧。"""
+    requested = publish_vision_live(space_id=payload.space_id, action="live_stop")
+    clear_live_frames(payload.space_id)
+    record_audit(
+        actor="user",
+        action="companion_vision_live_stop",
+        result="success",
+        details=f"已请求机器人停止实时画面（空间 {payload.space_id}）。",
+        parameters=payload.model_dump(mode="json"),
+    )
+    return {"requested": requested}
+
+
+@router.get("/vision/live/frame")
+def companion_vision_live_frame(space_id: str) -> Response:
+    """返回该空间最新一帧 JPEG（浏览器 <img> 轮询）。无帧或已超时返回 404。"""
+    frame = get_live_frame(space_id)
+    if frame is None:
+        raise HTTPException(status_code=404, detail="暂无实时画面（机器人未在推流或已超时）。")
+    return Response(content=frame, media_type="image/jpeg", headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/vision/live/status")
+def companion_vision_live_status(space_id: str) -> dict:
+    """前端用来判断是否已有画面（区分"未推流/正在连接"）。"""
+    return {"live": get_live_frame(space_id) is not None}
 
 
 @router.get("/persona", response_model=CompanionPersona)

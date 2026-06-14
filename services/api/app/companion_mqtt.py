@@ -59,3 +59,8 @@ def publish_companion_command(
 def publish_vision_capture(*, space_id: str, zone: str | None = None) -> bool:
     """下发拍照指令：机器人收到后 take_vision_photo + 上传到媒体库（出现在 /vision）。"""
     return _publish({"action": "capture", "space_id": space_id, "zone": zone})
+
+
+def publish_vision_live(*, space_id: str, action: str) -> bool:
+    """下发直播开关：action 为 'live_start' / 'live_stop'，机器人侧开/关 MJPEG 出站中继。"""
+    return _publish({"action": action, "space_id": space_id})

@@ -199,6 +199,25 @@ export async function captureCompanionPhoto(spaceId: string, zone?: string): Pro
   });
 }
 
+export async function startCompanionLive(spaceId: string): Promise<{ requested: boolean }> {
+  return request<{ requested: boolean }>("/api/companion/vision/live/start", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId })
+  });
+}
+
+export async function stopCompanionLive(spaceId: string): Promise<{ requested: boolean }> {
+  return request<{ requested: boolean }>("/api/companion/vision/live/stop", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId })
+  });
+}
+
+// 直播帧用 <img> 同源轮询（浏览器带会话 Cookie，经 nginx 直达 API），不走 request()。
+export function companionLiveFrameUrl(spaceId: string): string {
+  return `/api/companion/vision/live/frame?space_id=${encodeURIComponent(spaceId)}`;
+}
+
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {
   return request<DeviceManagementResponse>("/api/devices/management", {
     method: "POST",

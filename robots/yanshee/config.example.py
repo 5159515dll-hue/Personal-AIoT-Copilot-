@@ -60,3 +60,11 @@ GESTURE_MOTION_MAP = {
 # 结束动作：每次手势后保持几秒再回到初始姿态（避免手举着不放）。设 RESET_MOTION=None 可关闭。
 RESET_MOTION = os.getenv("AIOT_RESET_MOTION", "Reset")
 RESET_AFTER_SECONDS = int(os.getenv("AIOT_RESET_AFTER_SECONDS", "5"))
+
+# ——实时画面（MJPEG 中继直播）——
+# open_vision_stream 在机器人本机 :8000/stream.mjpg 发布 MJPEG（multipart/x-mixed-replace）；
+# agent 逐帧扫出 JPEG 出站推到服务器，浏览器在 /vision 轮询最新帧（NAT 后出站推送是唯一可达路径）。
+LIVE_LOCAL_MJPEG_URL = os.getenv("AIOT_LIVE_MJPEG_URL", "http://127.0.0.1:8000/stream.mjpg")
+LIVE_RESOLUTION = os.getenv("AIOT_LIVE_RESOLUTION", "640x480")
+LIVE_TARGET_FPS = float(os.getenv("AIOT_LIVE_FPS", "5"))           # 限速丢帧，控带宽/CPU
+LIVE_IDLE_TIMEOUT = float(os.getenv("AIOT_LIVE_IDLE_TIMEOUT", "60"))  # 浏览器停发心跳后自动停的秒数
