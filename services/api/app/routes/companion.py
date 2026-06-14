@@ -44,6 +44,7 @@ from app.models import (
     PolicyResult,
 )
 from app.yanshee_control import plan_companion_gesture
+from app.companion_mqtt import publish_companion_command
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
 
@@ -88,6 +89,13 @@ async def companion_reply(payload: CompanionReplyRequest):
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     reply, usage, meta = await generate_companion_reply(state, payload.language, payload.message)
+    # 下发陪伴指令到机器人（Step 1：手势；Step 2 起含 text 做 TTS）。容错，不影响回复。
+    publish_companion_command(
+        gesture=meta.get("gesture"),
+        text=reply,
+        language=meta.get("language"),
+        emotion=state.primary_emotion,
+    )
     return CompanionReplyResponse(
         reply=reply,
         primary_emotion=state.primary_emotion,
