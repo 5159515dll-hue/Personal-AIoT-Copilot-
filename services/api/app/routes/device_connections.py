@@ -15,7 +15,7 @@ from app.device_connections import (
 from app.companion import generate_companion_reply
 from app.emotion_fusion import get_last_state
 from app.ingestion import readings_from_request
-from app.live_stream import set_frame as set_live_frame
+from app.live_stream import publish as publish_live_stream, set_frame as set_live_frame
 from app.media_store import _assert_space_allows_stream, record_device_event, save_media_asset
 from app.models import (
     DeviceCompanionVoiceRequest,
@@ -262,6 +262,32 @@ async def ingest_vision_live(
     data = await request.body()
     set_live_frame(space_id, data)
     return {"ok": True, "bytes": len(data)}
+
+
+@router.post("/{device_id}/vision-live-stream")
+async def ingest_vision_live_stream(
+    device_id: str,
+    request: Request,
+    space_id: str = Query(...),
+) -> dict:
+    """机器人直播流入口（真·流式）：一条长连接 chunked 推 multipart MJPEG，服务端扇出给浏览器。
+
+    nginx 该路径须 `proxy_request_buffering off`（否则会缓冲整条无限请求体导致永不转发）。
+    """
+    _require_device_ingest_auth(request, device_id)
+    try:
+        _assert_space_allows_stream(space_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        async for chunk in request.stream():
+            if chunk:
+                publish_live_stream(space_id, chunk)
+    except Exception:  # noqa: BLE001 - 机器人断开/网络抖动正常结束
+        pass
+    return {"ok": True}
 
 
 @router.post("/{device_id}/companion-voice")

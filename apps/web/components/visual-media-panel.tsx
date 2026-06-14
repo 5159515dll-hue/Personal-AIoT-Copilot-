@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Eye, FileVideo2, Plus, Radio, Trash2 } from "lucide-react";
 import {
   captureCompanionPhoto,
-  companionLiveFrameUrl,
+  companionLiveStreamUrl,
   createStream,
   deleteMediaAsset,
   deleteStream,
@@ -55,11 +55,9 @@ export function VisualMediaPanel({
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(error ?? null);
   const [liveOn, setLiveOn] = useState(false);
-  const [liveSrc, setLiveSrc] = useState("");
   const [liveWaiting, setLiveWaiting] = useState(true);
   const [liveError, setLiveError] = useState<string | null>(null);
-  const liveOnRef = useRef(false);
-  const liveTimer = useRef<number | null>(null);
+  const [liveNonce, setLiveNonce] = useState(0);
 
   const selectedSpace = initialSpaces.find((space) => space.id === spaceId) ?? activeSpace;
   const realtimeAllowed =
@@ -169,20 +167,6 @@ export function VisualMediaPanel({
     }
   }
 
-  function scheduleNextFrame() {
-    if (!liveOnRef.current || !spaceId) {
-      return;
-    }
-    if (liveTimer.current) {
-      window.clearTimeout(liveTimer.current);
-    }
-    liveTimer.current = window.setTimeout(() => {
-      if (liveOnRef.current) {
-        setLiveSrc(`${companionLiveFrameUrl(spaceId)}&t=${Date.now()}`);
-      }
-    }, 180);
-  }
-
   async function startLive() {
     if (!spaceId) {
       setMessage("请先选择空间。");
@@ -192,6 +176,8 @@ export function VisualMediaPanel({
     setPending("live");
     try {
       await startCompanionLive(spaceId);
+      setLiveWaiting(true);
+      setLiveNonce(Date.now());   // 每次开始都换 URL，强制 <img> 重新建立流连接
       setLiveOn(true);
     } catch (startError) {
       setLiveError(startError instanceof Error ? startError.message : "开始实时画面失败");
@@ -214,28 +200,15 @@ export function VisualMediaPanel({
     setLiveOn(false);
   }, [spaceId]);
 
-  // liveOn 同步到 ref，供 onLoad/onError 链式取帧时判断是否仍在直播。
-  useEffect(() => {
-    liveOnRef.current = liveOn;
-  }, [liveOn]);
-
-  // 直播期间：拉首帧 + 周期性 keepalive（让机器人看门狗知道有人在看）。
+  // 直播期间周期性 keepalive：让机器人看门狗知道还有人在看（关页面/停止后自动停推）。
   useEffect(() => {
     if (!liveOn || !spaceId) {
       return;
     }
-    setLiveWaiting(true);
-    setLiveSrc(`${companionLiveFrameUrl(spaceId)}&t=${Date.now()}`);
     const keepalive = window.setInterval(() => {
       void startCompanionLive(spaceId).catch(() => undefined);
     }, 25000);
-    return () => {
-      window.clearInterval(keepalive);
-      if (liveTimer.current) {
-        window.clearTimeout(liveTimer.current);
-        liveTimer.current = null;
-      }
-    };
+    return () => window.clearInterval(keepalive);
   }, [liveOn, spaceId]);
 
   return (
@@ -321,17 +294,11 @@ export function VisualMediaPanel({
               <div className="overflow-hidden rounded-xl border border-line bg-slate-900">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={liveSrc}
+                  src={`${companionLiveStreamUrl(spaceId)}&t=${liveNonce}`}
                   alt="机器人实时画面"
                   className="block w-full max-w-xl"
-                  onLoad={() => {
-                    setLiveWaiting(false);
-                    scheduleNextFrame();
-                  }}
-                  onError={() => {
-                    setLiveWaiting(true);
-                    scheduleNextFrame();
-                  }}
+                  onLoad={() => setLiveWaiting(false)}
+                  onError={() => setLiveWaiting(true)}
                 />
                 <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-300">
                   <span className="inline-flex items-center gap-1.5">
@@ -339,9 +306,9 @@ export function VisualMediaPanel({
                       className={`inline-block h-2 w-2 rounded-full ${liveWaiting ? "bg-amber-400" : "bg-emerald-400"}`}
                       aria-hidden
                     />
-                    {liveWaiting ? "等待机器人画面…（约 1-2 秒）" : "实时中 · 机器人摄像头"}
+                    {liveWaiting ? "连接机器人画面…（约 2-3 秒）" : "实时中 · 机器人摄像头"}
                   </span>
-                  <span>≈5 fps · MJPEG 中继</span>
+                  <span>30 fps · MJPEG 流</span>
                 </div>
               </div>
             )}

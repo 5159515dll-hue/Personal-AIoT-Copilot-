@@ -2917,3 +2917,25 @@ def test_vision_live_ingest_with_internal_token(monkeypatch) -> None:
     assert frame_resp.status_code == 200
     assert frame_resp.content == jpeg
     live_stream.clear("space_study_001")
+
+
+def test_live_stream_scan_extracts_latest_frame() -> None:
+    """publish() 无订阅者时也会从字节流里扫出最新完整 JPEG，供 /frame 快照。"""
+    from app import live_stream
+
+    live_stream.clear("space_scan_test")
+    jpeg = b"\xff\xd8\xff\xe0HELLO\xff\xd9"
+    live_stream.publish("space_scan_test", b"--boundary garbage" + jpeg + b"\r\n--tail")
+    assert live_stream.get_frame("space_scan_test") == jpeg
+    live_stream.clear("space_scan_test")
+
+
+def test_live_stream_endpoint_returns_multipart(monkeypatch) -> None:
+    """直播流端点返回 multipart/x-mixed-replace；无数据时按空闲超时优雅结束。"""
+    from app import live_stream
+
+    monkeypatch.setattr(live_stream, "STREAM_IDLE_TIMEOUT", 0.2)
+    resp = client.get("/api/companion/vision/live/stream?space_id=space_study_001")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("multipart/x-mixed-replace")
+    assert "boundary=" in resp.headers["content-type"]

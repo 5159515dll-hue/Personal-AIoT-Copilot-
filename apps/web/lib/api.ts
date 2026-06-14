@@ -213,9 +213,14 @@ export async function stopCompanionLive(spaceId: string): Promise<{ requested: b
   });
 }
 
-// 直播帧用 <img> 同源轮询（浏览器带会话 Cookie，经 nginx 直达 API），不走 request()。
+// 直播单帧快照（轮询兜底/缩略），不走 request()。
 export function companionLiveFrameUrl(spaceId: string): string {
   return `/api/companion/vision/live/frame?space_id=${encodeURIComponent(spaceId)}`;
+}
+
+// 实时画面：浏览器 <img> 直连的 MJPEG 流（multipart/x-mixed-replace），满帧率、单连接。
+export function companionLiveStreamUrl(spaceId: string): string {
+  return `/api/companion/vision/live/stream?space_id=${encodeURIComponent(spaceId)}`;
 }
 
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {

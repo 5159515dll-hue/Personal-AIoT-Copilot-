@@ -46,8 +46,10 @@ from app.models import (
 )
 from app.yanshee_control import plan_companion_gesture
 from app.companion_mqtt import publish_companion_command, publish_vision_capture, publish_vision_live
+from app import live_stream
 from app.live_stream import clear as clear_live_frames, get_frame as get_live_frame
 from app.media_store import _assert_space_allows_stream
+import asyncio
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
 
@@ -201,6 +203,35 @@ def companion_vision_live_frame(space_id: str) -> Response:
 def companion_vision_live_status(space_id: str) -> dict:
     """前端用来判断是否已有画面（区分"未推流/正在连接"）。"""
     return {"live": get_live_frame(space_id) is not None}
+
+
+@router.get("/vision/live/stream")
+async def companion_vision_live_stream(space_id: str):
+    """浏览器 <img> 直连的 MJPEG 流（multipart/x-mixed-replace）：满帧率、单连接、不轮询。
+
+    X-Accel-Buffering: no → nginx 不缓冲该响应（无需为响应侧改 nginx 配置）。
+    连续 STREAM_IDLE_TIMEOUT 秒无新数据（机器人停推/离线）则结束，浏览器连接随之关闭。
+    """
+    queue = live_stream.subscribe(space_id)
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(queue.get(), timeout=live_stream.STREAM_IDLE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    break
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            live_stream.unsubscribe(space_id, queue)
+
+    return StreamingResponse(
+        gen(),
+        media_type="multipart/x-mixed-replace; boundary=" + live_stream.LIVE_BOUNDARY,
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/persona", response_model=CompanionPersona)

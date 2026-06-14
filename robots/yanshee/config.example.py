@@ -61,13 +61,16 @@ GESTURE_MOTION_MAP = {
 RESET_MOTION = os.getenv("AIOT_RESET_MOTION", "Reset")
 RESET_AFTER_SECONDS = int(os.getenv("AIOT_RESET_AFTER_SECONDS", "5"))
 
-# ——实时画面（MJPEG 中继直播）——
-# open_vision_stream 在机器人本机 :8000/stream.mjpg 发布 MJPEG（multipart/x-mixed-replace）；
-# agent 逐帧扫出 JPEG 出站推到服务器，浏览器在 /vision 轮询最新帧（NAT 后出站推送是唯一可达路径）。
-LIVE_LOCAL_MJPEG_URL = os.getenv("AIOT_LIVE_MJPEG_URL", "http://127.0.0.1:8000/stream.mjpg")
-LIVE_RESOLUTION = os.getenv("AIOT_LIVE_RESOLUTION", "640x480")
-LIVE_TARGET_FPS = float(os.getenv("AIOT_LIVE_FPS", "5"))           # 限速丢帧，控带宽/CPU
+# ——实时画面（真·MJPEG 流式中继，30fps）——
+# 用树莓派官方 raspivid 直驱 CSI 摄像头出 MJPEG（YanAPI 流被限在 ~10fps，绕不过），
+# agent 包成 multipart 经一条长连接 chunked POST 推到服务器，浏览器 <img> 直接渲染。
+# 直播期间 raspivid 独占摄像头（YanAPI 拍照/人脸暂不可同时用），停播即释放。
+LIVE_WIDTH = int(os.getenv("AIOT_LIVE_WIDTH", "640"))
+LIVE_HEIGHT = int(os.getenv("AIOT_LIVE_HEIGHT", "480"))
+LIVE_FPS = int(os.getenv("AIOT_LIVE_FPS", "30"))
 LIVE_IDLE_TIMEOUT = float(os.getenv("AIOT_LIVE_IDLE_TIMEOUT", "60"))  # 浏览器停发心跳后自动停的秒数
+# 注：本机 raspivid 不支持 -q（MJPEG 质量），帧约 40-50KB；若上行带宽不足想省流量，
+# 把 AIOT_LIVE_WIDTH/HEIGHT 调小（如 480x360）即可，帧率不变。
 
 # ——语音输入（Step 3：直接和机器人对话）——
 # 开启后机器人持续听写（sync_do_voice_iat_value）→ 送服务器生成回复 → 本机朗读+手势。

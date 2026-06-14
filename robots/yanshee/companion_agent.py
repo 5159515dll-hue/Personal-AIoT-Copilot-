@@ -160,63 +160,56 @@ def _capture_and_upload(space_id, zone):
         print("capture: 上传失败 %s" % exc, flush=True)
 
 
-# ---- 实时画面（MJPEG 中继直播）：收到 live_start 后把本地 open_vision_stream 的
-# MJPEG 逐帧出站推到服务器 vision-live；浏览器轮询最新帧。看门狗：浏览器停发 keepalive
-# （关页面）则 LIVE_IDLE_TIMEOUT 秒后自动停，避免摄像头一直开着。----
+# ---- 实时画面（真·MJPEG 流式中继）：收到 live_start 后用 raspivid 直驱 CSI 摄像头(30fps)，
+# 把 MJPEG 逐帧包成 multipart，经一条长连接 chunked POST 出站推到服务器 vision-live-stream；
+# 服务端扇出给浏览器 <img> 直接渲染（满帧率、单连接、不轮询）。看门狗：浏览器停发 keepalive
+# 后 LIVE_IDLE_TIMEOUT 秒自动停。注意：直播期间 raspivid 独占摄像头（YanAPI 拍照/人脸暂不可
+# 同时用），停播即 terminate 释放。----
 _LIVE_LOCK = threading.Lock()
 _LIVE = {"thread": None, "stop": None, "space_id": None, "last_keepalive": 0.0}
 
-
-def _post_frame(url, token, frame):
-    req = urllib.request.Request(
-        url, data=frame, method="POST",
-        headers={"Content-Type": "image/jpeg", "X-AIoT-Device-Token": token},
-    )
-    urllib.request.urlopen(req, timeout=10).read()
+_LIVE_BOUNDARY = b"aiotmjpegframe"
 
 
 def _live_loop(space_id, stop_event):
+    import subprocess
+    import http.client
+    from urllib.parse import urlparse
+
     base = getattr(config, "AIOT_API_BASE_URL", "")
     token = getattr(config, "DEVICE_TOKEN", "")
     device_id = getattr(config, "DEVICE_ID", "yanshee_robot_01")
-    mjpeg_url = getattr(config, "LIVE_LOCAL_MJPEG_URL", "http://127.0.0.1:8000/stream.mjpg")
-    resolution = getattr(config, "LIVE_RESOLUTION", "640x480")
-    target_fps = float(getattr(config, "LIVE_TARGET_FPS", 5))
+    width = int(getattr(config, "LIVE_WIDTH", 640))
+    height = int(getattr(config, "LIVE_HEIGHT", 480))
+    fps = int(getattr(config, "LIVE_FPS", 30))
     idle_timeout = float(getattr(config, "LIVE_IDLE_TIMEOUT", 60))
-    min_interval = (1.0 / target_fps) if target_fps > 0 else 0.2
-    ingest_url = base.rstrip("/") + "/api/device-connections/" + device_id + "/vision-live?space_id=" + space_id
 
-    # YanAPI 内部用 asyncio；在工作线程里 get_event_loop 会报「no current event loop」，
-    # 故先给本线程建一个事件循环（主线程的回调路径不需要，这里是独立线程）。
-    try:
-        import asyncio
-        asyncio.set_event_loop(asyncio.new_event_loop())
-    except Exception as exc:
-        print("live: 建事件循环失败 %s" % exc, flush=True)
+    u = urlparse(base)
+    host = u.hostname or "127.0.0.1"
+    port = u.port or 80
+    path = "/api/device-connections/" + device_id + "/vision-live-stream?space_id=" + space_id
 
-    try:
-        import YanAPI
-        YanAPI.yan_api_init(getattr(config, "ROBOT_IP", "127.0.0.1"))
-        YanAPI.open_vision_stream(resolution)
-    except Exception as exc:
-        print("live: open_vision_stream 失败 %s" % exc, flush=True)
-
-    last_post = 0.0
-    print("live: 开始中继 space=%s -> %s" % (space_id, ingest_url), flush=True)
+    print("live: raspivid %dx%d@%dfps -> 流式推送 space=%s" % (width, height, fps, space_id), flush=True)
     while not stop_event.is_set():
         with _LIVE_LOCK:
             last_ka = _LIVE["last_keepalive"]
         if time.time() - last_ka > idle_timeout:
             print("live: 看门狗超时，自动停止", flush=True)
             break
+        proc = None
+        conn = None
         try:
-            stream = urllib.request.urlopen(mjpeg_url, timeout=8)
-        except Exception as exc:
-            print("live: 打开本地 MJPEG 失败 %s（2s 后重试）" % exc, flush=True)
-            time.sleep(2)
-            continue
-        buf = b""
-        try:
+            cmd = ["raspivid", "-t", "0", "-w", str(width), "-h", str(height),
+                   "-fps", str(fps), "-cd", "MJPEG", "-n", "-fl", "-o", "-"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+            conn = http.client.HTTPConnection(host, port, timeout=15)
+            conn.putrequest("POST", path, skip_accept_encoding=True)
+            conn.putheader("X-AIoT-Device-Token", token)
+            conn.putheader("Content-Type", "multipart/x-mixed-replace; boundary=aiotmjpegframe")
+            conn.putheader("Transfer-Encoding", "chunked")
+            conn.endheaders()
+            sock = conn.sock
+            buf = b""
             while not stop_event.is_set():
                 with _LIVE_LOCK:
                     last_ka = _LIVE["last_keepalive"]
@@ -224,11 +217,11 @@ def _live_loop(space_id, stop_event):
                     print("live: 看门狗超时，自动停止", flush=True)
                     stop_event.set()
                     break
-                chunk = stream.read(8192)
+                chunk = proc.stdout.read(16384)
                 if not chunk:
                     break
                 buf += chunk
-                if len(buf) > 4 * 1024 * 1024:   # 找不到完整帧时避免无限增长
+                if len(buf) > 4 * 1024 * 1024:
                     buf = buf[-1024 * 1024:]
                 while True:
                     soi = buf.find(b"\xff\xd8")
@@ -241,27 +234,26 @@ def _live_loop(space_id, stop_event):
                         break
                     frame = buf[soi:eoi + 2]
                     buf = buf[eoi + 2:]
-                    now_t = time.time()
-                    if now_t - last_post < min_interval:
-                        continue   # 限速丢帧
-                    last_post = now_t
-                    try:
-                        _post_frame(ingest_url, token, frame)
-                    except Exception as exc:
-                        print("live: 推帧失败 %s" % exc, flush=True)
+                    part = (b"--" + _LIVE_BOUNDARY + b"\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                            + str(len(frame)).encode("ascii") + b"\r\n\r\n" + frame + b"\r\n")
+                    sock.sendall(("%X\r\n" % len(part)).encode("ascii") + part + b"\r\n")
         except Exception as exc:
-            print("live: 读流出错 %s" % exc, flush=True)
+            print("live: 推流出错 %s（2s 后重试）" % exc, flush=True)
+            time.sleep(2)
         finally:
             try:
-                stream.close()
+                if conn is not None:
+                    conn.close()
             except Exception:
                 pass
-
-    try:
-        import YanAPI
-        YanAPI.close_vision_stream()
-    except Exception as exc:
-        print("live: close_vision_stream %s" % exc, flush=True)
+            try:
+                if proc is not None:
+                    proc.terminate()
+                    proc.wait()
+            except Exception:
+                pass
+        if not stop_event.is_set():
+            time.sleep(0.5)   # raspivid 异常退出时避免忙重启
     print("live: 中继已停止 space=%s" % space_id, flush=True)
 
 
