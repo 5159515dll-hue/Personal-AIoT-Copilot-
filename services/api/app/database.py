@@ -1068,6 +1068,26 @@ def latest_sensor_readings_db(*, url: str | None = None) -> dict[Metric, SensorR
     return {_row_to_reading(row).metric: _row_to_reading(row) for row in rows}
 
 
+def latest_readings_by_node_db(*, url: str | None = None) -> dict[str, list[SensorReading]]:
+    """每个 device_id 的每个 metric 的最新一条读数，按节点分组。"""
+    psycopg = _import_psycopg()
+    dict_row = _dict_row_factory()
+    db_url = _require_url(url)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT ON (device_id, metric) time, device_id, metric, value, unit, quality
+            FROM sensor_readings
+            ORDER BY device_id, metric, time DESC
+            """
+        ).fetchall()
+    result: dict[str, list[SensorReading]] = {}
+    for row in rows:
+        reading = _row_to_reading(row)
+        result.setdefault(reading.device_id, []).append(reading)
+    return result
+
+
 def telemetry_status_db(*, url: str | None = None) -> TelemetryStatus:
     if not (url or database_url()):
         return TelemetryStatus(

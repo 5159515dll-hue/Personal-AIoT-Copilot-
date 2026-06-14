@@ -3,14 +3,28 @@ import { Cable } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { DeviceControlPanel } from "@/components/device-control-panel";
 import { DeviceManagementPanel } from "@/components/device-management-panel";
+import { NodePanel } from "@/components/node-panel";
 import { PageHeader } from "@/components/page-header";
-import { getDevices, getManagedDevices } from "@/lib/api";
-import type { ManagedDevice } from "@/lib/types";
+import { getDevices, getManagedDevices, getNodes } from "@/lib/api";
+import type { Device, ManagedDevice, NodeSummary } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function DevicesPage() {
-  const devices = await getDevices();
+  let nodes: NodeSummary[] = [];
+  try {
+    nodes = await getNodes();
+  } catch {
+    nodes = [];
+  }
+
+  let devices: Device[] = [];
+  try {
+    devices = await getDevices();
+  } catch {
+    devices = [];
+  }
+
   let managedDevices: ManagedDevice[] = [];
   let managementError: string | null = null;
   try {
@@ -23,7 +37,7 @@ export default async function DevicesPage() {
     <AppShell>
       <PageHeader
         title="设备"
-        description="真实硬件绑定、负载标记、手动下线和策略控制演示集中在这里管理。"
+        description="先看接入的传感器节点及其传感器；下方是设备管理与控制框架（接入真实可控设备后启用）。"
         action={
           <Link
             href="/hardware"
@@ -34,8 +48,11 @@ export default async function DevicesPage() {
           </Link>
         }
       />
-      <DeviceManagementPanel initialDevices={managedDevices} error={managementError} />
-      <DeviceControlPanel devices={devices} />
+      <div className="space-y-6">
+        <NodePanel nodes={nodes} />
+        <DeviceManagementPanel initialDevices={managedDevices} error={managementError} />
+        <DeviceControlPanel devices={devices} />
+      </div>
     </AppShell>
   );
 }

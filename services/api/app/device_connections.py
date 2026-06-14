@@ -5,6 +5,7 @@ from app.database import (
     delete_device_connection_db,
     delete_device_registry_device_db,
     get_device_registry_db,
+    latest_readings_by_node_db,
     list_device_registry_db,
     list_device_connections_db,
     record_device_heartbeat_db,
@@ -21,10 +22,17 @@ from app.models import (
     DeviceRegistrationRequest,
     DeviceState,
     ManagedDevice,
+    Metric,
+    NodeSensor,
+    NodeSummary,
     RiskLevel,
     SensorIngestRequest,
 )
 from app.time_utils import now
+
+# 节点/传感器新鲜度阈值（秒）。ESP32 默认 60s 采样、测试配置 15s，留足余量。
+NODE_STALE_AFTER_SECONDS = 120
+NODE_OFFLINE_AFTER_SECONDS = 180
 
 
 def register_device_connection(request: DeviceRegistrationRequest) -> DeviceConnectionRecord:
@@ -99,6 +107,72 @@ def record_ingest_connection(request: SensorIngestRequest, *, transport: str) ->
 
 def list_connections(limit: int = 500) -> list[DeviceConnectionRecord]:
     return list_device_connections_db(limit=limit)
+
+
+def list_nodes() -> list[NodeSummary]:
+    """真实接入节点（device_connections）+ 每传感器最新读数，给前端"节点→传感器"视图。
+
+    传感器集合 = 节点声明的能力 metrics ∪ 实际上报过的 metrics；每个传感器标注
+    fresh/stale/silent，让用户一眼看清"哪些节点、节点上有哪些传感器、各自状态"。
+    """
+    if not database_url():
+        return []
+    connections = list_device_connections_db(limit=500)
+    latest = latest_readings_by_node_db()
+    current = now()
+    nodes: list[NodeSummary] = []
+    for connection in connections:
+        reported = {reading.metric: reading for reading in latest.get(connection.device_id, [])}
+        declared: set[Metric] = set()
+        for capability in connection.capabilities:
+            declared.update(capability.metrics)
+        metrics = sorted(declared | set(reported), key=lambda metric: metric.value)
+
+        sensors: list[NodeSensor] = []
+        reporting = 0
+        for metric in metrics:
+            reading = reported.get(metric)
+            if reading is None:
+                sensors.append(NodeSensor(metric=metric, status="silent"))
+                continue
+            age = (current - reading.timestamp).total_seconds()
+            fresh = age <= NODE_STALE_AFTER_SECONDS
+            if fresh:
+                reporting += 1
+            sensors.append(
+                NodeSensor(
+                    metric=metric,
+                    value=reading.value,
+                    unit=reading.unit,
+                    quality=reading.quality,
+                    last_reading_at=reading.timestamp,
+                    age_seconds=round(age, 1),
+                    status="fresh" if fresh else "stale",
+                )
+            )
+
+        node_age = (current - connection.last_seen_at).total_seconds() if connection.last_seen_at else None
+        online = node_age is not None and node_age <= NODE_OFFLINE_AFTER_SECONDS
+        nodes.append(
+            NodeSummary(
+                device_id=connection.device_id,
+                display_name=connection.display_name,
+                device_type=connection.device_type,
+                transport=connection.transport,
+                online=online,
+                online_state=DeviceState.online if online else DeviceState.offline,
+                last_seen_at=connection.last_seen_at,
+                age_seconds=round(node_age, 1) if node_age is not None else None,
+                firmware_version=connection.firmware_version,
+                location=connection.location,
+                sensor_count=len(sensors),
+                reporting_count=reporting,
+                sensors=sensors,
+            )
+        )
+
+    nodes.sort(key=lambda node: (not node.online, node.age_seconds if node.age_seconds is not None else 1e12))
+    return nodes
 
 
 def list_managed_devices(limit: int = 500) -> list[ManagedDevice]:

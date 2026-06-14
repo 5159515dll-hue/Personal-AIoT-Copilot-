@@ -73,7 +73,8 @@ def list_devices(source: DeviceSource = "auto") -> list[Device]:
                 raise DeviceRegistryUnavailable("未配置 DATABASE_URL，无法访问设备注册表。")
         else:
             try:
-                devices = list_device_registry_db(seed_devices=get_device_catalog())
+                # 不再用 mock 目录播种注册表：注册表只反映真实接入/注册过的设备。
+                devices = list_device_registry_db(seed_devices=[])
                 return _overlay_saved_states(devices)
             except RuntimeError as exc:
                 if source == "database":
@@ -91,7 +92,7 @@ def get_device(device_id: str, source: DeviceSource = "auto") -> Device | None:
                 raise DeviceRegistryUnavailable("未配置 DATABASE_URL，无法访问设备注册表。")
         else:
             try:
-                device = get_device_registry_db(device_id, seed_devices=get_device_catalog())
+                device = get_device_registry_db(device_id, seed_devices=[])
                 if device is None:
                     return None
                 return _overlay_saved_states([device])[0]

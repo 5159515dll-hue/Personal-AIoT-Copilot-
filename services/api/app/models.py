@@ -73,6 +73,36 @@ class DeviceCapability(BaseModel):
     description: str | None = Field(default=None, max_length=160)
 
 
+class NodeSensor(BaseModel):
+    """节点上的单个传感器（按 metric 聚合最新读数）。status: fresh=最近上报 / stale=读数过旧 / silent=声明过但当前无读数。"""
+
+    metric: Metric
+    value: float | None = None
+    unit: str | None = None
+    quality: Literal["ok", "stale", "anomaly"] | None = None
+    last_reading_at: datetime | None = None
+    age_seconds: float | None = None
+    status: Literal["fresh", "stale", "silent"] = "silent"
+
+
+class NodeSummary(BaseModel):
+    """一个真实接入节点（如 ESP32）及其传感器一览，用于前端节点视图。"""
+
+    device_id: str
+    display_name: str
+    device_type: str
+    transport: str
+    online: bool = False
+    online_state: DeviceState = DeviceState.unknown
+    last_seen_at: datetime | None = None
+    age_seconds: float | None = None
+    firmware_version: str | None = None
+    location: str | None = None
+    sensor_count: int = 0
+    reporting_count: int = 0
+    sensors: list[NodeSensor] = Field(default_factory=list)
+
+
 class SensorIngestRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=80)
     readings: list[SensorValueInput] = Field(min_length=1, max_length=64)

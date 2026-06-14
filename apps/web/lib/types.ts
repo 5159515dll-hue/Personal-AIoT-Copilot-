@@ -397,6 +397,32 @@ export type RuleEvaluation = {
 
 export type TelemetrySource = "mock" | "database";
 
+export type NodeSensor = {
+  metric: string;
+  value: number | null;
+  unit: string | null;
+  quality: "ok" | "stale" | "anomaly" | null;
+  last_reading_at: string | null;
+  age_seconds: number | null;
+  status: "fresh" | "stale" | "silent";
+};
+
+export type NodeSummary = {
+  device_id: string;
+  display_name: string;
+  device_type: string;
+  transport: string;
+  online: boolean;
+  online_state: "online" | "offline" | "unknown";
+  last_seen_at: string | null;
+  age_seconds: number | null;
+  firmware_version: string | null;
+  location: string | null;
+  sensor_count: number;
+  reporting_count: number;
+  sensors: NodeSensor[];
+};
+
 export type AuditLog = {
   id: string;
   timestamp: string;

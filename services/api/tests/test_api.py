@@ -415,6 +415,55 @@ def test_companion_safety_evaluation_reports_missing_file(monkeypatch, tmp_path)
     assert payload["metrics"][0]["status"] == "missing"
 
 
+def test_list_nodes_empty_without_database(monkeypatch) -> None:
+    from app import device_connections as dc_module
+
+    monkeypatch.setattr(dc_module, "database_url", lambda: None)
+    assert dc_module.list_nodes() == []
+
+
+def test_list_nodes_aggregates_sensors_fresh_stale_silent(monkeypatch) -> None:
+    from datetime import timedelta
+
+    from app import device_connections as dc_module
+    from app.models import DeviceCapability, DeviceConnectionRecord, Metric
+
+    moment = now()
+    connection = DeviceConnectionRecord(
+        device_id="room_node_01",
+        display_name="房间传感器节点",
+        device_type="esp32_sensor_node",
+        transport="mqtt",
+        protocol_version="aiot.v1",
+        location="书桌",
+        capabilities=[
+            DeviceCapability(kind="telemetry", metrics=[Metric.temperature, Metric.co2, Metric.humidity])
+        ],
+        online_state=DeviceState.online,
+        last_seen_at=moment,
+        updated_at=moment,
+    )
+    readings = {
+        "room_node_01": [
+            SensorReading(metric=Metric.temperature, value=25.0, unit="℃", timestamp=moment, device_id="room_node_01", quality="ok"),
+            SensorReading(metric=Metric.co2, value=900.0, unit="ppm", timestamp=moment - timedelta(seconds=600), device_id="room_node_01", quality="ok"),
+        ]
+    }
+    monkeypatch.setattr(dc_module, "database_url", lambda: "postgresql://example")
+    monkeypatch.setattr(dc_module, "list_device_connections_db", lambda limit=500: [connection])
+    monkeypatch.setattr(dc_module, "latest_readings_by_node_db", lambda: readings)
+
+    nodes = dc_module.list_nodes()
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node.device_id == "room_node_01" and node.online is True
+    by_metric = {sensor.metric: sensor for sensor in node.sensors}
+    assert by_metric[Metric.temperature].status == "fresh"
+    assert by_metric[Metric.co2].status == "stale"  # 600s 旧 > 120s 阈值
+    assert by_metric[Metric.humidity].status == "silent"  # 声明过但无读数
+    assert node.reporting_count == 1 and node.sensor_count == 3
+
+
 def test_telemetry_status_reports_unconfigured_database(monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     response = client.get("/api/telemetry/status")

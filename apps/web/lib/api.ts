@@ -1,6 +1,7 @@
 import type {
   CompanionSafetyEvaluationReport,
   AnomalyEvent,
+  NodeSummary,
   AuditLog,
   AuditLogQuery,
   AutomationRule,
@@ -185,6 +186,10 @@ export async function getDevices(): Promise<Device[]> {
 
 export async function getManagedDevices(): Promise<ManagedDevice[]> {
   return request<ManagedDevice[]>("/api/devices/management");
+}
+
+export async function getNodes(): Promise<NodeSummary[]> {
+  return request<NodeSummary[]>("/api/nodes");
 }
 
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {

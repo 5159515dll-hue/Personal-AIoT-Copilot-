@@ -15,6 +15,7 @@ from app.routes import (
     ingest,
     media_assets,
     model_providers,
+    nodes,
     room,
     rules,
     sensors,
@@ -62,6 +63,7 @@ app.include_router(anomalies.router)
 app.include_router(sensors.router)
 app.include_router(spaces.router)
 app.include_router(devices.router)
+app.include_router(nodes.router)
 app.include_router(device_connections.router)
 app.include_router(device_events.router)
 app.include_router(emotion.router)
