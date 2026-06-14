@@ -6,6 +6,7 @@ import { CompanionVoicePanel } from "@/components/companion-voice-panel";
 import { EmotionTimelinePanel } from "@/components/emotion-timeline-panel";
 import { PageHeader } from "@/components/page-header";
 import {
+  getCompanionChat,
   getCompanionMemory,
   getCompanionVoice,
   getCurrentSpace,
@@ -14,7 +15,7 @@ import {
   listCompanionCharacters
 } from "@/lib/api";
 import type { CompanionVoiceConfig } from "@/lib/api";
-import type { CompanionPersona, DeviceEvent, EmotionState, MemorySnapshot, RoomSpace } from "@/lib/types";
+import type { ChatMessage, CompanionPersona, DeviceEvent, EmotionState, MemorySnapshot, RoomSpace } from "@/lib/types";
 
 const DEFAULT_PERSONA: CompanionPersona = {
   id: "xiaonuan",
@@ -36,16 +37,18 @@ export default async function EmotionPage() {
   let characters: CompanionPersona[] = [DEFAULT_PERSONA];
   let memory: MemorySnapshot = EMPTY_MEMORY;
   let voice: CompanionVoiceConfig = { current: "", configured: false, voices: [] };
+  let chat: ChatMessage[] = [];
   let error: string | null = null;
 
   try {
     space = await getCurrentSpace();
-    [state, events, characters, memory, voice] = await Promise.all([
+    [state, events, characters, memory, voice, chat] = await Promise.all([
       getEmotionState(space.id),
       getDeviceEvents({ event_type: "emotion_detected", limit: 50 }),
       listCompanionCharacters(),
       getCompanionMemory(),
-      getCompanionVoice()
+      getCompanionVoice(),
+      getCompanionChat()
     ]);
   } catch (loadError) {
     error = loadError instanceof Error ? loadError.message : "情绪数据暂不可用";
@@ -66,6 +69,7 @@ export default async function EmotionPage() {
           spaceId={spaceId}
           initialPersona={activePersona}
           hasEmotionState={Boolean(state)}
+          initialHistory={chat}
         />
         <div className="grid gap-6 lg:grid-cols-2">
           <CompanionCharacterManager characters={characters} />

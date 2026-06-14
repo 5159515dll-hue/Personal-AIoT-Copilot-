@@ -51,7 +51,8 @@ from app.live_stream import clear as clear_live_frames, get_frame as get_live_fr
 from app.media_store import _assert_space_allows_stream
 from app.companion_voice import get_voice, set_voice
 from app.volc_tts import VOICE_CATALOG, is_configured as tts_configured
-from app.models import CompanionVoiceUpdate
+from app.chat_log import clear as clear_chat, delete_message as delete_chat_message, list_messages as list_chat, record_turn
+from app.models import ChatClearResponse, ChatMessage, CompanionVoiceUpdate
 import asyncio
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
@@ -104,6 +105,10 @@ async def companion_reply(payload: CompanionReplyRequest):
         language=meta.get("language"),
         emotion=state.primary_emotion,
     )
+    try:
+        record_turn(payload.message, reply, source="browser", gesture=meta.get("gesture"))
+    except Exception:  # noqa: BLE001 - 记录失败不影响对话
+        pass
     return CompanionReplyResponse(
         reply=reply,
         primary_emotion=state.primary_emotion,
@@ -255,6 +260,41 @@ def update_companion_voice(payload: CompanionVoiceUpdate) -> dict:
         parameters={"voice": voice},
     )
     return {"current": voice}
+
+
+@router.get("/chat", response_model=list[ChatMessage])
+def companion_chat_history(limit: int = 200) -> list[ChatMessage]:
+    """当前角色的聊天记录（浏览器 + 语音对话，按时间正序）。"""
+    return list_chat(limit=limit)
+
+
+@router.delete("/chat", response_model=ChatClearResponse)
+def clear_companion_chat() -> ChatClearResponse:
+    """清空当前角色的全部聊天记录。"""
+    removed = clear_chat()
+    record_audit(
+        actor="user",
+        action="clear_companion_chat",
+        result="success",
+        details=f"清空聊天记录 {removed} 条。",
+        parameters={"removed": removed},
+    )
+    return ChatClearResponse(cleared=removed)
+
+
+@router.delete("/chat/{message_id}")
+def delete_companion_chat_message(message_id: str) -> dict:
+    """删除单条聊天记录。"""
+    if not delete_chat_message(message_id):
+        raise HTTPException(status_code=404, detail="聊天记录不存在。")
+    record_audit(
+        actor="user",
+        action="delete_companion_chat_message",
+        result="success",
+        details=f"删除聊天记录 {message_id}。",
+        parameters={"message_id": message_id},
+    )
+    return {"deleted": message_id}
 
 
 @router.get("/persona", response_model=CompanionPersona)

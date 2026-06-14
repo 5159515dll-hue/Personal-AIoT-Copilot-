@@ -19,6 +19,7 @@ from app import media_store as media_store_module
 from app import emotion_fusion as emotion_fusion_module
 from app import companion_persona as companion_persona_module
 from app import companion_voice as companion_voice_module
+from app import chat_log as chat_log_module
 from app import memory as memory_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
@@ -85,6 +86,7 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
     monkeypatch.setattr(companion_persona_module.persona_store, "path", tmp_path / "companion_persona.json")
     monkeypatch.setattr(companion_voice_module.voice_store, "path", tmp_path / "companion_voice.json")
+    monkeypatch.setattr(chat_log_module.chat_store, "path", tmp_path / "companion_chat.json")
     monkeypatch.setattr(memory_module.episode_store, "path", tmp_path / "memory_episodes.json")
     monkeypatch.setattr(memory_module.profile_store, "path", tmp_path / "memory_profile.json")
     emotion_fusion_module.reset_emotion_state()
@@ -2956,3 +2958,20 @@ def test_companion_voice_get_and_set() -> None:
     fallback = client.post("/api/companion/voice", json={"voice": "nope_invalid"})
     assert fallback.status_code == 200
     assert fallback.json()["current"] != "nope_invalid"
+
+
+def test_companion_chat_history_record_and_delete() -> None:
+    """聊天记录：浏览器对话落库 + 单条删除 + 清空 + 404。"""
+    assert client.get("/api/companion/chat").json() == []
+    client.post("/api/companion/reply", json={"space_id": "space_study_001", "primary_emotion": "happy", "message": "你好小暖记录测试"})
+    hist = client.get("/api/companion/chat").json()
+    assert len(hist) >= 2
+    assert any(m["role"] == "user" and "记录测试" in m["text"] for m in hist)
+    assert any(m["role"] == "assistant" for m in hist)
+    mid = hist[0]["id"]
+    assert client.delete(f"/api/companion/chat/{mid}").status_code == 200
+    assert all(m["id"] != mid for m in client.get("/api/companion/chat").json())
+    cleared = client.delete("/api/companion/chat")
+    assert cleared.status_code == 200 and cleared.json()["cleared"] >= 1
+    assert client.get("/api/companion/chat").json() == []
+    assert client.delete("/api/companion/chat/nope_xyz").status_code == 404

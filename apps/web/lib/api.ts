@@ -47,6 +47,7 @@ import type {
   CompanionPersonaUpdate,
   CompanionCharacterCreate,
   CompanionReplyResponse,
+  ChatMessage,
   MemorySnapshot,
   MemoryClearResponse,
   EmotionLabel,
@@ -235,6 +236,18 @@ export async function setCompanionVoice(voice: string): Promise<{ current: strin
     method: "POST",
     body: JSON.stringify({ voice })
   });
+}
+
+export async function getCompanionChat(limit = 200): Promise<ChatMessage[]> {
+  return request<ChatMessage[]>(`/api/companion/chat?limit=${limit}`);
+}
+
+export async function clearCompanionChat(): Promise<{ cleared: number }> {
+  return request<{ cleared: number }>("/api/companion/chat", { method: "DELETE" });
+}
+
+export async function deleteCompanionChatMessage(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/api/companion/chat/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {

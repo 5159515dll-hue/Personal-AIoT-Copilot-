@@ -18,6 +18,7 @@ import re as _re
 from starlette.concurrency import run_in_threadpool
 
 from app.companion import generate_companion_reply, stream_companion_reply
+from app.chat_log import record_turn as record_chat_turn
 from app.companion_voice import get_voice as get_companion_voice
 from app.emotion_fusion import get_last_state
 from app.ingestion import readings_from_request
@@ -349,8 +350,10 @@ async def device_companion_voice_stream(device_id: str, request: Request, payloa
 
     async def gen():
         buffer = ""
+        full = ""
         async for delta in stream_companion_reply(state, payload.language, payload.message):
             buffer += delta
+            full += delta
             while True:
                 match = _re.search(r"[。！？!?\n；;，,]", buffer)
                 if not match:
@@ -366,6 +369,10 @@ async def device_companion_voice_stream(device_id: str, request: Request, payloa
             mp3 = await run_in_threadpool(tts_synthesize, tail, voice)
             if mp3:
                 yield mp3
+        try:
+            record_chat_turn(payload.message, full, source="voice")
+        except Exception:  # noqa: BLE001 - 记录失败不影响回话
+            pass
 
     return StreamingResponse(
         gen(),

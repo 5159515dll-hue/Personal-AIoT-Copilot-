@@ -637,6 +637,22 @@ class DeviceTtsRequest(BaseModel):
     voice: str | None = Field(default=None, max_length=80)
 
 
+class ChatMessage(BaseModel):
+    """一条聊天记录（按角色 character_id 归档；浏览器/语音对话都记）。"""
+
+    id: str
+    character_id: str
+    role: Literal["user", "assistant"]
+    text: str
+    source: Literal["browser", "voice"] = "browser"
+    gesture: str | None = None
+    created_at: datetime
+
+
+class ChatClearResponse(BaseModel):
+    cleared: int
+
+
 class CompanionGestureRequest(BaseModel):
     """请求执行一个情绪驱动的原地手势（经策略门控）。"""
 
