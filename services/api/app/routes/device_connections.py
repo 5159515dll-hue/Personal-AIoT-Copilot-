@@ -17,7 +17,7 @@ import re as _re
 
 from starlette.concurrency import run_in_threadpool
 
-from app.companion import generate_companion_reply, response_strategy, stream_companion_reply, _split_gesture
+from app.companion import action_command_reply, generate_companion_reply, response_strategy, stream_companion_reply, _split_gesture
 from app.chat_log import record_turn as record_chat_turn
 from app.companion_voice import get_voice as get_companion_voice
 from app.emotion_fusion import get_last_state
@@ -367,7 +367,8 @@ async def device_companion_voice_stream(device_id: str, request: Request, payloa
         primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language=payload.language or "zh"
     )
     voice = get_companion_voice()
-    gesture = _voice_gesture(payload.message, state.primary_emotion)
+    cmd_gesture, cmd_ack = action_command_reply(payload.message)
+    gesture = cmd_gesture or _voice_gesture(payload.message, state.primary_emotion)
     record_audit(
         actor="system",
         action="companion_voice_reply",
@@ -377,6 +378,16 @@ async def device_companion_voice_stream(device_id: str, request: Request, payloa
     )
 
     async def gen():
+        # 简短明确的"做动作"指令：合成一句匹配的应答，不走大模型（边做边说、不答非所问）。
+        if cmd_ack:
+            mp3 = await run_in_threadpool(tts_synthesize, cmd_ack, voice)
+            if mp3:
+                yield mp3
+            try:
+                record_chat_turn(payload.message, cmd_ack, source="voice", gesture=gesture)
+            except Exception:  # noqa: BLE001
+                pass
+            return
         buffer = ""
         full = ""
         async for delta in stream_companion_reply(state, payload.language, payload.message):

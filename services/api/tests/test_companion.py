@@ -152,3 +152,14 @@ def test_unconfirmed_gesture_requires_confirmation() -> None:
     decision = assess_companion_gesture(gesture="nod", confirmed=False)
     assert decision.result == PolicyResult.requires_confirmation
     assert decision.requires_confirmation is True
+
+
+def test_action_command_reply_matches_action() -> None:
+    """简短动作指令 → (手势, 匹配应答)；闲聊/顺带提到 → (None, None)。"""
+    from app.companion import action_command_reply
+    g, ack = action_command_reply("前进一步")
+    assert g == "step_forward" and "往前" in ack
+    assert action_command_reply("举起左手")[0] == "raise_left_hand"
+    assert action_command_reply("后退一步")[0] == "step_back"
+    assert action_command_reply("我今天有点累想跟你聊聊心事呢")[0] is None
+    assert action_command_reply("我左手被门夹了好疼啊")[0] is None

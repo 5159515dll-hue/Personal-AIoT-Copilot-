@@ -2975,3 +2975,14 @@ def test_companion_chat_history_record_and_delete() -> None:
     assert cleared.status_code == 200 and cleared.json()["cleared"] >= 1
     assert client.get("/api/companion/chat").json() == []
     assert client.delete("/api/companion/chat/nope_xyz").status_code == 404
+
+
+def test_companion_reply_action_command_acknowledges() -> None:
+    """说"前进一步"：返回 step_forward + 一句匹配的应答（不走大模型、不答非所问）。"""
+    resp = client.post("/api/companion/reply", json={"space_id": "space_study_001", "primary_emotion": "neutral", "message": "前进一步"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gesture"] == "step_forward"
+    assert body["model_used"] is False
+    assert body["model_status"] == "action_command"
+    assert "走" in body["reply"]

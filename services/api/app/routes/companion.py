@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
 from app.companion import (
+    action_command_reply,
     generate_companion_reply,
     reply_language,
     response_strategy,
@@ -97,26 +98,35 @@ async def companion_reply(payload: CompanionReplyRequest):
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-    reply, usage, meta = await generate_companion_reply(state, payload.language, payload.message)
-    # 下发陪伴指令到机器人（Step 1：手势；Step 2 起含 text 做 TTS）。容错，不影响回复。
+    # 简短明确的"做动作"指令：边做边说一句匹配的话（确定性，不走神），不走共情大模型。
+    cmd_gesture, cmd_ack = action_command_reply(payload.message)
+    if cmd_gesture:
+        lang = reply_language(payload.language or state.language)
+        reply, gesture, tone, language = cmd_ack, cmd_gesture, "配合动作", lang
+        model_used, model_status = False, "action_command"
+    else:
+        reply, usage, meta = await generate_companion_reply(state, payload.language, payload.message)
+        gesture, tone, language = meta["gesture"], meta["tone"], meta["language"]
+        model_used, model_status = usage.used, usage.status
+    # 下发陪伴指令到机器人（手势 + text 做 TTS）。容错，不影响回复。
     publish_companion_command(
-        gesture=meta.get("gesture"),
+        gesture=gesture,
         text=reply,
-        language=meta.get("language"),
+        language=language,
         emotion=state.primary_emotion,
     )
     try:
-        record_turn(payload.message, reply, source="browser", gesture=meta.get("gesture"))
+        record_turn(payload.message, reply, source="browser", gesture=gesture)
     except Exception:  # noqa: BLE001 - 记录失败不影响对话
         pass
     return CompanionReplyResponse(
         reply=reply,
         primary_emotion=state.primary_emotion,
-        language=meta["language"],
-        tone=meta["tone"],
-        gesture=meta["gesture"],
-        model_used=usage.used,
-        model_status=usage.status,
+        language=language,
+        tone=tone,
+        gesture=gesture,
+        model_used=model_used,
+        model_status=model_status,
     )
 
 
