@@ -27,7 +27,11 @@ const GESTURE_LABEL: Record<string, string> = {
   lean_back: "后仰",
   reach_out: "伸手",
   idle_nod: "轻点头",
-  wave: "招手"
+  wave: "招手",
+  raise_left_hand: "举左手",
+  raise_right_hand: "举右手",
+  step_forward: "前进一步",
+  step_back: "后退一步"
 };
 
 export function CompanionConsole({

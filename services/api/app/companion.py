@@ -143,13 +143,14 @@ def _messages(
     context.append("请按你的人格风格，用 2-3 句温柔的话回应。")
     context.append(
         "回应之后另起一行，用「动作: X」标注一个肢体动作让机器人配合做出来"
-        "（X 只能从 nod、tilt_head、reach_out、wave、lean_back、idle_nod 里选一个）。"
+        "（X 只能从 nod、tilt_head、reach_out、wave、lean_back、idle_nod、raise_left_hand、"
+        "raise_right_hand、step_forward、step_back 里选一个）。"
         "优先级：如果用户在话里——哪怕只是随口提一句——让你做某个动作，就由你判断意图并选最接近的那个，"
-        "让机器人真的配合做出来：举手/挥手/打招呼→wave，伸手/抱抱/安慰/握手→reach_out，"
-        "点头/同意/明白→nod，歪头/疑惑/好奇/在听→tilt_head，往后靠/放松/坐稳→lean_back；"
-        "没有明确动作请求时，就选最贴合当前情绪和这句回应的动作。"
-        "你只能做这些原地小动作、不能走动；若用户要你走路/跑/转圈等做不到的动作，"
-        "就温柔说明你只能在原地比划一下，并给一个最接近的安全动作。"
+        "让机器人真的配合做出来：举手/挥手/打招呼→wave，举左手→raise_left_hand，举右手→raise_right_hand，"
+        "伸手/抱抱/安慰/握手→reach_out，点头/同意/明白→nod，歪头/疑惑/好奇/在听→tilt_head，"
+        "往后靠/放松/坐稳→lean_back，前进/向前/往前一步→step_forward，后退/向后/往后退一步→step_back；"
+        "没有明确动作请求时，就选最贴合当前情绪和这句回应的原地动作（别随便走动）。"
+        "前进/后退只走一步；你不能连续走/跑/转圈/跳，用户要这些就温柔说明并给最接近的安全动作。"
     )
     return [
         {"role": "system", "content": system},

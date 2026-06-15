@@ -48,7 +48,8 @@ def test_messages_prioritizes_user_action_requests() -> None:
     user = _messages(state, "zh", "你能举起你的双手吗", persona)[-1]["content"]
     assert "动作" in user and "由你判断意图" in user
     assert "wave" in user and "reach_out" in user  # 安全集内可选
-    assert "不能走动" in user  # 越界动作温柔拒绝
+    assert "step_forward" in user  # 前进一步已可控
+    assert "不能连续走" in user  # 仍不允许连续走/跑/转圈
 
 
 def test_tool_context_pulls_environment_on_intent() -> None:
@@ -129,10 +130,17 @@ def test_safe_companion_gestures_allowed() -> None:
 
 
 def test_walking_or_unknown_gestures_denied() -> None:
-    for gesture in ("walk_forward", "step_forward", "navigate", "run", "move"):
+    # 连续走/跑/转圈/跳/导航 仍拒绝（不在安全集）
+    for gesture in ("walk_forward", "navigate", "run", "move", "jump"):
         decision = assess_companion_gesture(gesture=gesture)
         assert decision.result == PolicyResult.denied
         assert decision.risk_level.value == "high"
+
+
+def test_single_step_and_hand_gestures_allowed() -> None:
+    """前进一步/后退一步（校准后单步）+ 举左右手 已纳入安全集，可被控制。"""
+    for gesture in ("step_forward", "step_back", "raise_left_hand", "raise_right_hand"):
+        assert assess_companion_gesture(gesture=gesture).result == PolicyResult.allowed
 
 
 def test_injection_in_gesture_intent_denied() -> None:
