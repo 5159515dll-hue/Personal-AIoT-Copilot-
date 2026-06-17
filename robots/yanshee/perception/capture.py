@@ -12,11 +12,10 @@
 ⚠️ 未硬件实测：FER/SER/ASR 与门控均为可插拔桩（标 TODO）。在真机上接 yanapi/真实模型后替换。
 无 yanapi 环境下可用桩数据跑通上报链路（沿用 bridge 的"无硬件降级"思路）。
 """
-from __future__ import annotations
-
 import os
 import sys
 import time
+from typing import Optional
 
 import requests
 
@@ -40,7 +39,7 @@ try:
     YanAPI.yan_api_init(config.ROBOT_IP)
     _YANAPI = True
 except Exception as exc:  # noqa: BLE001
-    print(f"[warn] yanapi 不可用（{exc!r}）：以桩数据跑通上报链路。")
+    print("[warn] yanapi 不可用（{!r}）：以桩数据跑通上报链路。".format(exc))
     YanAPI = None  # type: ignore
     _YANAPI = False
 
@@ -56,7 +55,7 @@ def main() -> None:
     else:
         print("[warn] 既无设备令牌也无内部令牌，/api/emotion/ingest 会返回 401。")
 
-    print(f"边缘情绪采集启动：space={SPACE_ID} device={DEVICE_ID} -> {API_BASE_URL}")
+    print("边缘情绪采集启动：space={} device={} -> {}".format(SPACE_ID, DEVICE_ID, API_BASE_URL))
     while True:
         if person_present() and voice_active():
             payload = capture_window()
@@ -81,7 +80,7 @@ def voice_active() -> bool:
 def capture_window() -> dict:
     """采 1–2s 窗口，产出上报 payload；原始帧/音频用完即弃，不写文件。"""
     transcript = capture_transcript()  # 本地 ASR（桩）
-    payload: dict = {"space_id": SPACE_ID, "device_id": DEVICE_ID}
+    payload = {"space_id": SPACE_ID, "device_id": DEVICE_ID}
     if transcript:
         payload["transcript"] = transcript
     face = capture_face_reading()
@@ -93,7 +92,7 @@ def capture_window() -> dict:
     return payload
 
 
-def capture_transcript() -> str | None:
+def capture_transcript() -> Optional[str]:
     """本地 ASR 听写：官方 YanAPI `sync_do_voice_iat_value()`（中/英；蒙语 ASR 见 M4/M7）。
     原文只过境服务器、不落盘。无 yanapi 或静默时返回 None。"""
     if not _YANAPI:
@@ -101,7 +100,7 @@ def capture_transcript() -> str | None:
     try:
         result = YanAPI.sync_do_voice_iat_value()
     except Exception as exc:  # noqa: BLE001
-        print(f"[warn] 听写失败：{exc!r}")
+        print("[warn] 听写失败：{!r}".format(exc))
         return None
     # 官方返回可能是 str 或 {'data': {'text': ...}}；函数名确定，仅对返回结构做轻量容错。
     if isinstance(result, str):
@@ -114,14 +113,14 @@ def capture_transcript() -> str | None:
     return None
 
 
-def capture_face_reading() -> dict | None:
+def capture_face_reading() -> Optional[dict]:
     """视觉表情情绪(FER) → 7 类分布。v0 桩返回 None。Yanshee 无内置情绪 API：
     用 YanAPI.get_vision_photo() 取一帧，再交外部 FER 模型；产出 {"distribution": {...}, "confidence": x}。"""
     # TODO: frame = YanAPI.get_vision_photo(); 外部 FER → 分布。原始帧不落盘。
     return None
 
 
-def capture_voice_reading() -> dict | None:
+def capture_voice_reading() -> Optional[dict]:
     """语音韵律情绪(SER) → 7 类分布。v0 桩返回 None。Yanshee 无内置 SER：
     取音频窗（IAT 同源音频）→ 外部韵律/SER 模型 → 分布。"""
     # TODO: 取音频窗 → 外部 SER → {"distribution": {...}, "confidence": x}。原始音频不落盘。
@@ -134,13 +133,13 @@ def post_ingest(session: requests.Session, headers: dict, payload: dict) -> None
         return
     try:
         resp = session.post(
-            f"{API_BASE_URL}/api/emotion/ingest", json=payload, headers=headers, timeout=8
+            "{}/api/emotion/ingest".format(API_BASE_URL), json=payload, headers=headers, timeout=8
         )
         resp.raise_for_status()
         body = resp.json()
-        print(f"ingest -> {body['state']['primary_emotion']} (recorded={body['event_recorded']})")
+        print("ingest -> {} (recorded={})".format(body['state']['primary_emotion'], body['event_recorded']))
     except requests.RequestException as exc:
-        print(f"[error] /api/emotion/ingest 失败：{exc!r}")
+        print("[error] /api/emotion/ingest 失败：{!r}".format(exc))
 
 
 if __name__ == "__main__":

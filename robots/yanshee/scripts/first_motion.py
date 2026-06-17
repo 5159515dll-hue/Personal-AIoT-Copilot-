@@ -12,10 +12,9 @@
     python first_motion.py              # 播放 get_motion_list() 的第一个动作
     python first_motion.py <动作名>     # 播放指定动作（名字须来自 get_motion_list()）
 """
-from __future__ import annotations
-
 import os
 import sys
+from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -32,12 +31,12 @@ def main() -> None:
         sys.exit("未安装 yanapi。请把脚本 scp 到机器人上运行，或 pip install yanapi。")
 
     ip = config.ROBOT_IP
-    print(f"连接机器人 {ip} …")
+    print("连接机器人 {} …".format(ip))
     YanAPI.yan_api_init(ip)
 
     motions = list_motions(YanAPI)
     if motions:
-        print(f"机器人内置动作（{len(motions)} 个）：{', '.join(motions[:20])}"
+        print("机器人内置动作（{} 个）：{}".format(len(motions), ', '.join(motions[:20]))
               + (" …" if len(motions) > 20 else ""))
     else:
         print("get_motion_list() 未返回动作清单。")
@@ -49,7 +48,7 @@ def main() -> None:
     else:
         sys.exit("未能确定动作名。请先用 connect_check.py 看 get_motion_list()，再指定：python first_motion.py <动作名>")
 
-    print(f"\n⚠️  即将播放动作：{target}  —— 确认机器人周围安全后，按回车继续（Ctrl+C 取消）")
+    print("\n⚠️  即将播放动作：{}  —— 确认机器人周围安全后，按回车继续（Ctrl+C 取消）".format(target))
     try:
         input()
     except KeyboardInterrupt:
@@ -60,13 +59,13 @@ def main() -> None:
     print("完成。")
 
 
-def list_motions(api) -> list[str]:
+def list_motions(api) -> List[str]:
     """get_motion_list() 返回内置动作清单。结构按官方为 {'data': {'name': [...]}}，
     这里对返回结构做轻量容错（函数名是确定的，只是不同固件 data 包裹略有差异）。"""
     try:
         res = api.get_motion_list()
     except Exception as exc:  # noqa: BLE001
-        print(f"  get_motion_list() 出错：{exc!r}")
+        print("  get_motion_list() 出错：{!r}".format(exc))
         return []
     if isinstance(res, dict):
         data = res.get("data", res)
@@ -82,10 +81,10 @@ def list_motions(api) -> list[str]:
 def play_motion(api, name: str) -> None:
     """sync_play_motion(name, direction, speed, repeat) 同步播放到动作结束。"""
     try:
-        print(f"  sync_play_motion(name={name!r}, direction='', speed='normal', repeat=1) …")
+        print("  sync_play_motion(name={!r}, direction='', speed='normal', repeat=1) …".format(name))
         api.sync_play_motion(name=name, direction="", speed="normal", repeat=1)
     except Exception as exc:  # noqa: BLE001
-        print(f"  播放出错：{exc!r}（确认动作名来自 get_motion_list()）")
+        print("  播放出错：{!r}（确认动作名来自 get_motion_list()）".format(exc))
 
 
 def say(api, text: str) -> None:

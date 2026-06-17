@@ -13,8 +13,6 @@
     cp ../config.example.py ../config.py   # 首次：填好 ROBOT_IP
     python connect_check.py
 """
-from __future__ import annotations
-
 import json
 import os
 import socket
@@ -42,13 +40,13 @@ CANDIDATE_PORTS = {
 
 
 def probe_ports(ip: str) -> None:
-    print(f"== 端口探测 {ip} ==")
+    print("== 端口探测 {} ==".format(ip))
     any_open = False
     for port, label in CANDIDATE_PORTS.items():
         state = "open" if _tcp_open(ip, port) else "closed/filtered"
         if state == "open":
             any_open = True
-        print(f"  {port:<5} {label:<28} {state}")
+        print("  {:<5} {:<28} {}".format(port, label, state))
     if not any_open:
         print("  ⚠️ 没有探测到任何开放端口：确认机器人已开机、和本机在同一 WiFi、IP 正确。")
     print()
@@ -79,21 +77,21 @@ def inspect_yanapi(ip: str) -> None:
 
     try:
         YanAPI.yan_api_init(ip)
-        print(f"  YanAPI.yan_api_init('{ip}') 调用成功。")
+        print("  YanAPI.yan_api_init('{}') 调用成功。".format(ip))
     except Exception as exc:  # noqa: BLE001 - 第一步需要看到任何失败原因
-        print(f"  ⚠️ yan_api_init 失败：{exc!r}")
+        print("  ⚠️ yan_api_init 失败：{!r}".format(exc))
         print("     仍继续打印 API 列表供参考。")
 
     funcs = sorted(name for name in dir(YanAPI) if not name.startswith("_") and callable(getattr(YanAPI, name)))
-    print(f"\n  机器人上 yanapi 暴露的函数（{len(funcs)} 个，后续开发以此为准）：")
+    print("\n  机器人上 yanapi 暴露的函数（{} 个，后续开发以此为准）：".format(len(funcs)))
     for i in range(0, len(funcs), 3):
-        print("    " + "  ".join(f"{name:<28}" for name in funcs[i : i + 3]))
+        print("    " + "  ".join("{:<28}".format(name) for name in funcs[i : i + 3]))
 
     print("\n  尝试读取基础信息（官方 YanAPI 真实函数名）：")
     for fname in ("get_robot_version_info", "get_robot_battery_info", "get_motion_list", "get_sensors_list"):
         result = _safe_call(YanAPI, fname)
         if result is not _MISSING:
-            print(f"    {fname}() -> {json.dumps(result, ensure_ascii=False)[:300]}")
+            print("    {}() -> {}".format(fname, json.dumps(result, ensure_ascii=False)[:300]))
 
 
 _MISSING = object()
@@ -112,7 +110,7 @@ def _safe_call(api, func_name: str, *args, **kwargs):
 
 def main() -> None:
     ip = config.ROBOT_IP
-    print(f"目标机器人 IP：{ip}\n")
+    print("目标机器人 IP：{}\n".format(ip))
     probe_ports(ip)
     inspect_yanapi(ip)
 
