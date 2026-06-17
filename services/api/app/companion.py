@@ -305,7 +305,12 @@ def extract_sse_content_delta(line: str) -> str | None:
     choices = obj.get("choices")
     if not isinstance(choices, list) or not choices:
         return None
-    delta = choices[0].get("delta") or {}
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return None
     content = delta.get("content")  # 忽略 reasoning_content（思考），只取正文
     return content if isinstance(content, str) and content else None
 

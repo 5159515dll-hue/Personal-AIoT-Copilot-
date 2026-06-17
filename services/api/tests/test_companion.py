@@ -122,6 +122,15 @@ def test_extract_sse_content_delta_takes_content_skips_reasoning() -> None:
     assert extract_sse_content_delta("data: not-json") is None
 
 
+def test_extract_sse_content_delta_tolerates_malformed_choices() -> None:
+    # choices[0] / delta 不是 dict 时应安全返回 None，而非抛 AttributeError
+    assert extract_sse_content_delta('data: {"choices":[]}') is None
+    assert extract_sse_content_delta('data: {"choices":["oops"]}') is None
+    assert extract_sse_content_delta('data: {"choices":[[1,2]]}') is None
+    assert extract_sse_content_delta('data: {"choices":[{"delta":"oops"}]}') is None
+    assert extract_sse_content_delta('data: {"choices":[{}]}') is None
+
+
 def test_safe_companion_gestures_allowed() -> None:
     for gesture in SAFE_COMPANION_GESTURES:
         decision = assess_companion_gesture(gesture=gesture)

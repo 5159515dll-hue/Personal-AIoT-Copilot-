@@ -85,7 +85,8 @@ def synthesize(text: str, voice: str | None = None, sample_rate: int = 24000) ->
             "X-Api-Request-Id": str(uuid.uuid4()),
         },
     )
-    raw = urllib.request.urlopen(req, timeout=20).read()
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        raw = resp.read()
     out = bytearray()
     for line in raw.split(b"\n"):
         line = line.strip()

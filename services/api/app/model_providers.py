@@ -534,7 +534,12 @@ async def _openai_agent_completion(client: httpx.AsyncClient, config: ModelConfi
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ValueError("响应缺少 choices")
-    message = choices[0].get("message", {})
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise ValueError("响应 choices 格式异常")
+    message = first.get("message", {})
+    if not isinstance(message, dict):
+        raise ValueError("响应 message 格式异常")
     content = message.get("content")
     if isinstance(content, str):
         return content
