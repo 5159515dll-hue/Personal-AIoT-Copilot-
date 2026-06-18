@@ -2579,6 +2579,8 @@ def test_companion_reply_falls_back_to_template_without_model() -> None:
     body = resp.json()
     assert body["primary_emotion"] == "sad"
     assert body["gesture"] == "tilt_head"
+    assert "gesture_dispatched" in body  # 手势下发状态如实透出（测试环境无 broker → False）
+    assert body["gesture_dispatched"] is False
     assert body["language"] == "zh"
     assert body["model_used"] is False
     assert body["model_status"] == "not_configured"

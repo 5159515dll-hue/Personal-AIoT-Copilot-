@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Heart, Send, Trash2 } from "lucide-react";
 import {
   clearCompanionChat,
@@ -52,8 +52,15 @@ export function CompanionConsole({
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
 
   const canTalk = Boolean(emotion) || hasEmotionState || Boolean(message.trim());
+
+  // 新消息到达后自动滚到底，长对话不必手动下拉。
+  useEffect(() => {
+    const el = historyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [history]);
 
   async function talk() {
     setLoading(true);
@@ -64,6 +71,7 @@ export function CompanionConsole({
       if (emotion) body.primary_emotion = emotion;
       setReply(await postCompanionReply(body));
       setMessage("");
+      setEmotion("");
       try {
         setHistory(await getCompanionChat());
       } catch {
@@ -132,7 +140,8 @@ export function CompanionConsole({
           <select
             value={emotion}
             onChange={(event) => setEmotion(event.target.value as EmotionLabel | "")}
-            className="focus-ring mt-1 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink"
+            disabled={loading}
+            className="focus-ring mt-1 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink disabled:opacity-60"
           >
             <option value="">{hasEmotionState ? "用当前感知到的情绪" : "请选择一个情绪"}</option>
             {EMOTIONS.map((item) => (
@@ -151,7 +160,8 @@ export function CompanionConsole({
               if (event.key === "Enter" && canTalk && !loading) void talk();
             }}
             placeholder="我今天有点累…"
-            className="focus-ring mt-1 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink"
+            disabled={loading}
+            className="focus-ring mt-1 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink disabled:opacity-60"
           />
         </label>
         <button
@@ -170,7 +180,7 @@ export function CompanionConsole({
       )}
       {error && <p className="mt-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
 
-      <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
+      <div ref={historyRef} className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
         {history.length === 0 ? (
           <p className="rounded-lg bg-slate-50 p-3 text-xs leading-6 text-muted">
             还没有聊天记录。和小暖聊一句（或用语音对话）就会记录在这里，可随时删除单条或清空。
@@ -207,6 +217,17 @@ export function CompanionConsole({
       {reply && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
           <span className="rounded-md bg-rose-50 px-2 py-1 font-semibold text-rose-600">动作：{GESTURE_LABEL[reply.gesture] ?? reply.gesture}</span>
+          {reply.gesture_dispatched === false && (
+            <span
+              className="rounded-md bg-amber-50 px-2 py-1 font-semibold text-amber-700"
+              title="机器人指令通道(MQTT)不可达，本次动作与朗读未下发到机器人"
+            >
+              ⚠ 未下发到机器人
+            </span>
+          )}
+          {reply.gesture_dispatched === true && (
+            <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">已下发机器人</span>
+          )}
           <span className="rounded-md bg-slate-50 px-2 py-1">基调：{reply.tone}</span>
           <span className="rounded-md bg-slate-50 px-2 py-1">{reply.model_used ? "豆包生成" : "模板兜底"}</span>
         </div>

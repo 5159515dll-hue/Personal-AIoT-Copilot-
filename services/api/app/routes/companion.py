@@ -108,8 +108,8 @@ async def companion_reply(payload: CompanionReplyRequest):
         reply, usage, meta = await generate_companion_reply(state, payload.language, payload.message)
         gesture, tone, language = meta["gesture"], meta["tone"], meta["language"]
         model_used, model_status = usage.used, usage.status
-    # 下发陪伴指令到机器人（手势 + text 做 TTS）。容错，不影响回复。
-    publish_companion_command(
+    # 下发陪伴指令到机器人（手势 + text 做 TTS）。容错，不影响回复；下发结果如实透出给前端。
+    gesture_dispatched = publish_companion_command(
         gesture=gesture,
         text=reply,
         language=language,
@@ -125,6 +125,7 @@ async def companion_reply(payload: CompanionReplyRequest):
         language=language,
         tone=tone,
         gesture=gesture,
+        gesture_dispatched=gesture_dispatched,
         model_used=model_used,
         model_status=model_status,
     )

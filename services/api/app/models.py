@@ -597,6 +597,7 @@ class CompanionReplyResponse(BaseModel):
     language: EmotionLanguage
     tone: str
     gesture: str
+    gesture_dispatched: bool = False  # 手势/朗读指令是否已发往机器人(MQTT)；False=指令通道不可达，机器人不会动
     model_used: bool
     model_status: str
 
