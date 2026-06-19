@@ -29,6 +29,13 @@ GESTURE_MOTION_MAP = getattr(
     {"nod": None, "tilt_head": None, "wave": None, "reach_out": None, "lean_back": None, "idle_nod": None},
 )
 
+# 走路用内置平衡已调好的动作（平滑库只做上半身、不动腿）。前进/后退一步。
+WALK_MOTIONS = {
+    "step_forward": "OneStepForward",
+    "step_back": "OneStepBackward",
+    "step_backward": "OneStepBackward",
+}
+
 
 def _motion_names(api):
     """get_motion_list() 的真实动作名清单。
@@ -56,7 +63,10 @@ def _motion_names(api):
 
 
 def play_gesture(gesture):
-    """播放一个抽象手势对应的机器人动作。成功返回 True。"""
+    """播放一个抽象手势对应的机器人动作。成功返回 True。
+
+    优先用平滑动作库 companion_motions（拟人、缓动、自动归位）；库里没有的（如走路 step_forward/
+    step_back）回退到内置动作 sync_play_motion。"""
     try:
         import YanAPI
     except ImportError:
@@ -64,7 +74,19 @@ def play_gesture(gesture):
         return False
     YanAPI.yan_api_init(config.ROBOT_IP)
 
-    motion = GESTURE_MOTION_MAP.get(gesture)
+    # 1) 平滑动作库优先（手臂/头的拟人动作；内部自动回正）
+    try:
+        import companion_motions
+        if companion_motions.has(gesture):
+            hold = max(0, getattr(config, "RESET_AFTER_SECONDS", 3))
+            companion_motions.play(gesture, hold_seconds=hold)
+            print("已播放平滑手势 {0}".format(gesture))
+            return True
+    except Exception as exc:
+        print("平滑动作库出错，回退内置：{0!r}".format(exc))
+
+    # 2) 回退：内置动作（走路等平衡动作）
+    motion = WALK_MOTIONS.get(gesture) or GESTURE_MOTION_MAP.get(gesture)
     if not motion:
         print("手势「{0}」未映射到机器人动作；请先 --list 查真实名再填 GESTURE_MOTION_MAP。".format(gesture))
         return False

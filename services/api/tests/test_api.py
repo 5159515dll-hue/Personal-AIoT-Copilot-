@@ -18,6 +18,8 @@ from app import device_rate_limit as device_rate_limit_module
 from app import media_store as media_store_module
 from app import emotion_fusion as emotion_fusion_module
 from app import companion_persona as companion_persona_module
+from app import companion_voice as companion_voice_module
+from app import chat_log as chat_log_module
 from app import memory as memory_module
 from app import model_providers as model_provider_module
 from app import room_state as room_state_module
@@ -83,6 +85,8 @@ def isolate_json_stores(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(rule_store_module.rule_store, "path", tmp_path / "automation_rules.json")
     monkeypatch.setattr(space_store_module.space_store, "path", tmp_path / "room_spaces.json")
     monkeypatch.setattr(companion_persona_module.persona_store, "path", tmp_path / "companion_persona.json")
+    monkeypatch.setattr(companion_voice_module.voice_store, "path", tmp_path / "companion_voice.json")
+    monkeypatch.setattr(chat_log_module.chat_store, "path", tmp_path / "companion_chat.json")
     monkeypatch.setattr(memory_module.episode_store, "path", tmp_path / "memory_episodes.json")
     monkeypatch.setattr(memory_module.profile_store, "path", tmp_path / "memory_profile.json")
     emotion_fusion_module.reset_emotion_state()
@@ -2575,6 +2579,8 @@ def test_companion_reply_falls_back_to_template_without_model() -> None:
     body = resp.json()
     assert body["primary_emotion"] == "sad"
     assert body["gesture"] == "tilt_head"
+    assert "gesture_dispatched" in body  # 手势下发状态如实透出（测试环境无 broker → False）
+    assert body["gesture_dispatched"] is False
     assert body["language"] == "zh"
     assert body["model_used"] is False
     assert body["model_status"] == "not_configured"
@@ -2584,6 +2590,21 @@ def test_companion_reply_falls_back_to_template_without_model() -> None:
 def test_companion_reply_404_without_state_or_explicit_emotion() -> None:
     resp = client.post("/api/companion/reply", json={"space_id": "space_unknown_xyz"})
     assert resp.status_code == 404
+
+
+def test_device_companion_voice_reply(monkeypatch) -> None:
+    """Step 3：机器人语音输入端点用设备令牌鉴权，无情绪状态时按 neutral 兜底生成回复。"""
+    monkeypatch.setenv("AIOT_INTERNAL_API_TOKEN", "test-internal-token")
+    resp = client.post(
+        "/api/device-connections/yanshee_robot_01/companion-voice",
+        headers={INTERNAL_API_TOKEN_HEADER: "test-internal-token"},
+        json={"space_id": "space_study_001", "message": "你好呀小暖"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["reply"]) > 0
+    assert "gesture" in body
+    assert body["language"] == "zh"
 
 
 def test_companion_reply_uses_last_emotion_state_from_ingest() -> None:
@@ -2829,3 +2850,141 @@ def test_companion_reply_writes_and_recalls_and_clears_memory() -> None:
     after = client.get("/api/companion/memory").json()
     assert after["profile"] is None
     assert after["episodes"] == []
+
+
+def _enable_study_realtime() -> None:
+    space = client.get("/api/spaces/current").json()
+    space["perception"].update(
+        {
+            "camera": "local_only",
+            "privacy_mode": "local_only",
+            "media_policy": {
+                "allow_realtime_stream": True,
+                "allow_event_media": True,
+                "media_retention_days": 7,
+                "event_retention_days": 30,
+            },
+        }
+    )
+    resp = client.patch("/api/spaces/space_study_001", json={"perception": space["perception"]})
+    assert resp.status_code == 200
+
+
+def test_companion_vision_live_frame_flow() -> None:
+    from app import live_stream
+
+    live_stream.clear("space_study_001")
+    _enable_study_realtime()
+
+    # 无帧 → 404；status=false
+    assert client.get("/api/companion/vision/live/frame?space_id=space_study_001").status_code == 404
+    assert client.get("/api/companion/vision/live/status?space_id=space_study_001").json()["live"] is False
+
+    # 注入一帧 → 200 image/jpeg，原样返回字节
+    jpeg = b"\xff\xd8\xff\xe0fake-jpeg-body\xff\xd9"
+    live_stream.set_frame("space_study_001", jpeg)
+    frame_resp = client.get("/api/companion/vision/live/frame?space_id=space_study_001")
+    assert frame_resp.status_code == 200
+    assert frame_resp.headers["content-type"] == "image/jpeg"
+    assert frame_resp.content == jpeg
+    assert client.get("/api/companion/vision/live/status?space_id=space_study_001").json()["live"] is True
+
+    # start：空间已允许实时流 → 200（无 broker 时 publish 容错为 False，但接口照常 200）
+    start_resp = client.post("/api/companion/vision/live/start", json={"space_id": "space_study_001"})
+    assert start_resp.status_code == 200
+    assert "requested" in start_resp.json()
+
+    # 不存在的空间 → 404（门控 KeyError）
+    assert client.post("/api/companion/vision/live/start", json={"space_id": "space_nope_999"}).status_code == 404
+
+    # stop：清空缓冲 → 之后取帧 404
+    stop_resp = client.post("/api/companion/vision/live/stop", json={"space_id": "space_study_001"})
+    assert stop_resp.status_code == 200
+    assert client.get("/api/companion/vision/live/frame?space_id=space_study_001").status_code == 404
+
+
+def test_vision_live_ingest_with_internal_token(monkeypatch) -> None:
+    from app import live_stream
+
+    live_stream.clear("space_study_001")
+    _enable_study_realtime()
+    monkeypatch.setenv("AIOT_INTERNAL_API_TOKEN", "test-internal-token")
+
+    jpeg = b"\xff\xd8\xff\xe0pushed-frame\xff\xd9"
+    ingest = client.post(
+        "/api/device-connections/yanshee_robot_01/vision-live?space_id=space_study_001",
+        headers={INTERNAL_API_TOKEN_HEADER: "test-internal-token", "Content-Type": "image/jpeg"},
+        content=jpeg,
+    )
+    assert ingest.status_code == 200
+    assert ingest.json()["bytes"] == len(jpeg)
+
+    frame_resp = client.get("/api/companion/vision/live/frame?space_id=space_study_001")
+    assert frame_resp.status_code == 200
+    assert frame_resp.content == jpeg
+    live_stream.clear("space_study_001")
+
+
+def test_live_stream_scan_extracts_latest_frame() -> None:
+    """publish() 无订阅者时也会从字节流里扫出最新完整 JPEG，供 /frame 快照。"""
+    from app import live_stream
+
+    live_stream.clear("space_scan_test")
+    jpeg = b"\xff\xd8\xff\xe0HELLO\xff\xd9"
+    live_stream.publish("space_scan_test", b"--boundary garbage" + jpeg + b"\r\n--tail")
+    assert live_stream.get_frame("space_scan_test") == jpeg
+    live_stream.clear("space_scan_test")
+
+
+def test_live_stream_endpoint_returns_multipart(monkeypatch) -> None:
+    """直播流端点返回 multipart/x-mixed-replace；无数据时按空闲超时优雅结束。"""
+    from app import live_stream
+
+    monkeypatch.setattr(live_stream, "STREAM_IDLE_TIMEOUT", 0.2)
+    resp = client.get("/api/companion/vision/live/stream?space_id=space_study_001")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("multipart/x-mixed-replace")
+    assert "boundary=" in resp.headers["content-type"]
+
+
+def test_companion_voice_get_and_set() -> None:
+    """音色：列表 + 当前 + 切换；非法 voice 回退到合法默认。"""
+    body = client.get("/api/companion/voice").json()
+    assert len(body["voices"]) >= 1
+    assert "current" in body and "configured" in body
+    target = body["voices"][-1]["voice_type"]
+    setres = client.post("/api/companion/voice", json={"voice": target})
+    assert setres.status_code == 200
+    assert setres.json()["current"] == target
+    assert client.get("/api/companion/voice").json()["current"] == target
+    fallback = client.post("/api/companion/voice", json={"voice": "nope_invalid"})
+    assert fallback.status_code == 200
+    assert fallback.json()["current"] != "nope_invalid"
+
+
+def test_companion_chat_history_record_and_delete() -> None:
+    """聊天记录：浏览器对话落库 + 单条删除 + 清空 + 404。"""
+    assert client.get("/api/companion/chat").json() == []
+    client.post("/api/companion/reply", json={"space_id": "space_study_001", "primary_emotion": "happy", "message": "你好小暖记录测试"})
+    hist = client.get("/api/companion/chat").json()
+    assert len(hist) >= 2
+    assert any(m["role"] == "user" and "记录测试" in m["text"] for m in hist)
+    assert any(m["role"] == "assistant" for m in hist)
+    mid = hist[0]["id"]
+    assert client.delete(f"/api/companion/chat/{mid}").status_code == 200
+    assert all(m["id"] != mid for m in client.get("/api/companion/chat").json())
+    cleared = client.delete("/api/companion/chat")
+    assert cleared.status_code == 200 and cleared.json()["cleared"] >= 1
+    assert client.get("/api/companion/chat").json() == []
+    assert client.delete("/api/companion/chat/nope_xyz").status_code == 404
+
+
+def test_companion_reply_action_command_acknowledges() -> None:
+    """说"前进一步"：返回 step_forward + 一句匹配的应答（不走大模型、不答非所问）。"""
+    resp = client.post("/api/companion/reply", json={"space_id": "space_study_001", "primary_emotion": "neutral", "message": "前进一步"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gesture"] == "step_forward"
+    assert body["model_used"] is False
+    assert body["model_status"] == "action_command"
+    assert "走" in body["reply"]

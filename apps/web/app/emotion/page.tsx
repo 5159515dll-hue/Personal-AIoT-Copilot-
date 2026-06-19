@@ -2,16 +2,20 @@ import { AppShell } from "@/components/app-shell";
 import { CompanionCharacterManager } from "@/components/companion-character-manager";
 import { CompanionConsole } from "@/components/companion-console";
 import { CompanionMemoryPanel } from "@/components/companion-memory-panel";
+import { CompanionVoicePanel } from "@/components/companion-voice-panel";
 import { EmotionTimelinePanel } from "@/components/emotion-timeline-panel";
 import { PageHeader } from "@/components/page-header";
 import {
+  getCompanionChat,
   getCompanionMemory,
+  getCompanionVoice,
   getCurrentSpace,
   getDeviceEvents,
   getEmotionState,
   listCompanionCharacters
 } from "@/lib/api";
-import type { CompanionPersona, DeviceEvent, EmotionState, MemorySnapshot, RoomSpace } from "@/lib/types";
+import type { CompanionVoiceConfig } from "@/lib/api";
+import type { ChatMessage, CompanionPersona, DeviceEvent, EmotionState, MemorySnapshot, RoomSpace } from "@/lib/types";
 
 const DEFAULT_PERSONA: CompanionPersona = {
   id: "xiaonuan",
@@ -32,15 +36,19 @@ export default async function EmotionPage() {
   let events: DeviceEvent[] = [];
   let characters: CompanionPersona[] = [DEFAULT_PERSONA];
   let memory: MemorySnapshot = EMPTY_MEMORY;
+  let voice: CompanionVoiceConfig = { current: "", configured: false, voices: [] };
+  let chat: ChatMessage[] = [];
   let error: string | null = null;
 
   try {
     space = await getCurrentSpace();
-    [state, events, characters, memory] = await Promise.all([
+    [state, events, characters, memory, voice, chat] = await Promise.all([
       getEmotionState(space.id),
       getDeviceEvents({ event_type: "emotion_detected", limit: 50 }),
       listCompanionCharacters(),
-      getCompanionMemory()
+      getCompanionMemory(),
+      getCompanionVoice(),
+      getCompanionChat()
     ]);
   } catch (loadError) {
     error = loadError instanceof Error ? loadError.message : "情绪数据暂不可用";
@@ -61,11 +69,13 @@ export default async function EmotionPage() {
           spaceId={spaceId}
           initialPersona={activePersona}
           hasEmotionState={Boolean(state)}
+          initialHistory={chat}
         />
         <div className="grid gap-6 lg:grid-cols-2">
           <CompanionCharacterManager characters={characters} />
-          <CompanionMemoryPanel memory={memory} characterName={activePersona.name} />
+          <CompanionVoicePanel current={voice.current} configured={voice.configured} voices={voice.voices} />
         </div>
+        <CompanionMemoryPanel memory={memory} characterName={activePersona.name} />
         <EmotionTimelinePanel
           spaceName={space?.name ?? "当前空间"}
           state={state}

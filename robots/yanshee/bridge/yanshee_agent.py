@@ -14,14 +14,12 @@
 
 未安装 yanapi 时仍可运行：会以"无硬件读数"降级上报，便于单独验证平台推送链路。
 """
-from __future__ import annotations
-
 import os
 import sys
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -50,7 +48,7 @@ try:
     YanAPI.yan_api_init(ROBOT_IP)
     _YANAPI = True
 except Exception as exc:  # noqa: BLE001
-    print(f"[warn] yanapi 不可用（{exc!r}）：以无硬件读数降级运行。")
+    print("[warn] yanapi 不可用（{!r}）：以无硬件读数降级运行。".format(exc))
     YanAPI = None  # type: ignore
     _YANAPI = False
 
@@ -83,7 +81,7 @@ def main() -> None:
         time.sleep(1)
 
 
-def register(session: requests.Session, headers: dict[str, str]) -> None:
+def register(session: requests.Session, headers: Dict[str, str]) -> None:
     payload = {
         "device_id": DEVICE_ID,
         "display_name": DEVICE_NAME,
@@ -115,14 +113,14 @@ def register(session: requests.Session, headers: dict[str, str]) -> None:
     post_json(session, "/api/device-connections/register", payload, headers)
 
 
-def heartbeat(session: requests.Session, headers: dict[str, str], sequence: int) -> None:
+def heartbeat(session: requests.Session, headers: Dict[str, str], sequence: int) -> None:
     payload = {
         "status": "online",
         "transport": "http",
         "protocol_version": "aiot.v1",
         "firmware_version": FIRMWARE_VERSION,
         "uptime_seconds": int(time.monotonic()),
-        "message_id": f"{DEVICE_ID}-hb-{sequence}",
+        "message_id": "{}-hb-{}".format(DEVICE_ID, sequence),
         "sequence": sequence,
         "sent_at": utc_now(),
         "metrics": {"yanapi": _YANAPI},
@@ -130,33 +128,33 @@ def heartbeat(session: requests.Session, headers: dict[str, str], sequence: int)
     battery = read_battery_percent()
     if battery is not None:
         payload["battery_percent"] = battery
-    post_json(session, f"/api/device-connections/{DEVICE_ID}/heartbeat", payload, headers)
+    post_json(session, "/api/device-connections/{}/heartbeat".format(DEVICE_ID), payload, headers)
 
 
-def telemetry(session: requests.Session, headers: dict[str, str], sequence: int) -> None:
+def telemetry(session: requests.Session, headers: Dict[str, str], sequence: int) -> None:
     readings = build_readings()
     if not readings:
         return  # 没有任何可上报读数时跳过，避免发空遥测
     payload = {
         "protocol_version": "aiot.v1",
-        "message_id": f"{DEVICE_ID}-tel-{sequence}",
+        "message_id": "{}-tel-{}".format(DEVICE_ID, sequence),
         "sequence": sequence,
         "sent_at": utc_now(),
         "firmware_version": FIRMWARE_VERSION,
         "readings": readings,
         "metadata": {"sample_id": uuid.uuid4().hex[:10]},
     }
-    post_json(session, f"/api/device-connections/{DEVICE_ID}/telemetry", payload, headers)
+    post_json(session, "/api/device-connections/{}/telemetry".format(DEVICE_ID), payload, headers)
 
 
-def build_readings() -> list[dict[str, Any]]:
+def build_readings() -> List[Dict[str, Any]]:
     # Metric 枚举只含 6 个环境量(temperature/humidity/co2/light/presence/noise)，机器人没有这些读数：
     # 电量经心跳 battery_percent 字段上报；姿态/IMU 需扩展 Metric 枚举或改用设备事件，v0 不经 telemetry。
     # 故返回空，telemetry() 会自动跳过。日后给机器人挂真实环境传感器时，在此按合法 Metric 组装 readings。
     return []
 
 
-def read_battery_percent() -> float | None:
+def read_battery_percent() -> Optional[float]:
     if not _YANAPI:
         return None
     info = _safe_call("get_robot_battery_info")
@@ -181,13 +179,13 @@ def _safe_call(func_name: str):
         return None
 
 
-def post_json(session: requests.Session, path: str, payload: dict[str, Any], headers: dict[str, str]) -> None:
+def post_json(session: requests.Session, path: str, payload: Dict[str, Any], headers: Dict[str, str]) -> None:
     try:
-        response = session.post(f"{API_BASE_URL}{path}", json=payload, headers=headers, timeout=8)
+        response = session.post("{}{}".format(API_BASE_URL, path), json=payload, headers=headers, timeout=8)
         response.raise_for_status()
-        print(f"{path} -> {response.json()}")
+        print("{} -> {}".format(path, response.json()))
     except requests.RequestException as exc:
-        print(f"[error] POST {path} 失败：{exc!r}")
+        print("[error] POST {} 失败：{!r}".format(path, exc))
 
 
 def utc_now() -> str:

@@ -43,15 +43,24 @@ def main() -> int:
         if error or request is None:
             LOGGER.warning("丢弃非法 MQTT 消息 topic=%s error=%s", message.topic, error)
             return
-        readings = readings_from_request(request)
-        stored = insert_sensor_readings_idempotent(
-            readings,
-            source="mqtt",
-            device_id=request.device_id,
-            message_id=request.message_id,
-            sequence=request.sequence,
-            protocol_version=request.protocol_version,
-        )
+        try:
+            readings = readings_from_request(request)
+            stored = insert_sensor_readings_idempotent(
+                readings,
+                source="mqtt",
+                device_id=request.device_id,
+                message_id=request.message_id,
+                sequence=request.sequence,
+                protocol_version=request.protocol_version,
+            )
+        except Exception as exc:  # noqa: BLE001 - 单条遥测写入失败不能拖垮 ingestor 进程
+            LOGGER.error(
+                "MQTT 遥测写入失败（已丢弃该条，进程继续） topic=%s device_id=%s error=%s",
+                message.topic,
+                getattr(request, "device_id", "?"),
+                exc,
+            )
+            return
         try:
             record_ingest_connection(request, transport="mqtt")
         except Exception as exc:

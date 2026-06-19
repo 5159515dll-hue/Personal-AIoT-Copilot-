@@ -6,8 +6,6 @@
 用法：
     python read_sensors.py
 """
-from __future__ import annotations
-
 import json
 import os
 import sys
@@ -22,7 +20,7 @@ except ModuleNotFoundError:
 _MISSING = object()
 
 # 数据项 -> 官方 YanAPI 真实函数名（YanAPI 2.0.0 接口文档核实）。
-READOUTS: dict[str, str] = {
+READOUTS = {
     "battery": "get_robot_battery_info",
     "sensors_list": "get_sensors_list",
     "gyro/IMU": "get_sensors_gyro",
@@ -43,17 +41,17 @@ def main() -> None:
         sys.exit("未安装 yanapi。请把脚本 scp 到机器人上运行，或 pip install yanapi。")
 
     ip = config.ROBOT_IP
-    print(f"连接机器人 {ip} …\n")
+    print("连接机器人 {} …\n".format(ip))
     YanAPI.yan_api_init(ip)
 
-    snapshot: dict[str, object] = {}
+    snapshot = {}
     for label, func_name in READOUTS.items():
         result = _safe_call(YanAPI, func_name)
         if result is _MISSING:
-            print(f"{label:<14}: （此 yanapi 版本无 {func_name}）")
+            print("{:<14}: （此 yanapi 版本无 {}）".format(label, func_name))
         else:
             snapshot[label] = result
-            print(f"{label:<14}: [{func_name}] {json.dumps(result, ensure_ascii=False)[:200]}")
+            print("{:<14}: [{}] {}".format(label, func_name, json.dumps(result, ensure_ascii=False)[:200]))
 
     print("\n== JSON 快照（可作为平台遥测来源） ==")
     print(json.dumps(snapshot, ensure_ascii=False, indent=2))

@@ -60,3 +60,25 @@ GESTURE_MOTION_MAP = {
 # 结束动作：每次手势后保持几秒再回到初始姿态（避免手举着不放）。设 RESET_MOTION=None 可关闭。
 RESET_MOTION = os.getenv("AIOT_RESET_MOTION", "Reset")
 RESET_AFTER_SECONDS = int(os.getenv("AIOT_RESET_AFTER_SECONDS", "5"))
+
+# ——实时画面（真·MJPEG 流式中继，30fps）——
+# 用树莓派官方 raspivid 直驱 CSI 摄像头出 MJPEG（YanAPI 流被限在 ~10fps，绕不过），
+# agent 包成 multipart 经一条长连接 chunked POST 推到服务器，浏览器 <img> 直接渲染。
+# 直播期间 raspivid 独占摄像头（YanAPI 拍照/人脸暂不可同时用），停播即释放。
+LIVE_WIDTH = int(os.getenv("AIOT_LIVE_WIDTH", "640"))
+LIVE_HEIGHT = int(os.getenv("AIOT_LIVE_HEIGHT", "480"))
+LIVE_FPS = int(os.getenv("AIOT_LIVE_FPS", "30"))
+LIVE_IDLE_TIMEOUT = float(os.getenv("AIOT_LIVE_IDLE_TIMEOUT", "60"))  # 浏览器停发心跳后自动停的秒数
+# 注：本机 raspivid 不支持 -q（MJPEG 质量），帧约 40-50KB；若上行带宽不足想省流量，
+# 把 AIOT_LIVE_WIDTH/HEIGHT 调小（如 480x360）即可，帧率不变。
+
+# ——语音对话（Step 3：唤醒触发，不再一直听）——
+# 喊两次唤醒词 → 听写 → 服务器流式回复（大模型→逐句火山TTS）→ mpg123 边收边播（≤3s 开口）。
+# 浏览器输入照常保留。设 AIOT_VOICE_INPUT=0 关闭语音对话。
+VOICE_INPUT_ENABLED = os.getenv("AIOT_VOICE_INPUT", "1") not in ("0", "false", "False", "")
+WAKE_WORDS = ["小暖", "小暖小暖", "你好小暖", "小暖在吗"]   # 离线命令词唤醒
+WAKE_HITS = int(os.getenv("AIOT_WAKE_HITS", "1"))            # 喊到几次才唤醒（识别一轮约数秒，设 1 最灵；"小暖小暖"本身已含两次名字）
+WAKE_WINDOW = float(os.getenv("AIOT_WAKE_WINDOW", "12"))      # 计数窗口秒数（设 >1 命中时用）
+MAX_CONV_TURNS = int(os.getenv("AIOT_MAX_CONV_TURNS", "5"))   # 唤醒后最多连续对话轮数
+CONV_IDLE_TIMEOUT = float(os.getenv("AIOT_CONV_IDLE_TIMEOUT", "10"))  # 唤醒后这么多秒没有效声音就退出，等下次唤醒
+WAKE_GREETING = os.getenv("AIOT_WAKE_GREETING", "你好呀，我是小暖")     # 唤醒后机器人先说这句（自然音色），设空字符串可关

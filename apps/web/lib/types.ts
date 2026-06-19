@@ -474,8 +474,19 @@ export type CompanionReplyResponse = {
   language: EmotionLanguage;
   tone: string;
   gesture: string;
+  gesture_dispatched?: boolean;
   model_used: boolean;
   model_status: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  character_id: string;
+  role: "user" | "assistant";
+  text: string;
+  source: "browser" | "voice";
+  gesture: string | null;
+  created_at: string;
 };
 
 export type CompanionArchetype = "gentle_healing" | "lively_playful" | "quiet_companion";

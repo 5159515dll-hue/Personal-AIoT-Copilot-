@@ -1,10 +1,10 @@
-# 机器人侧陪伴 agent systemd 单元（companion-v2 Step 1）。
+# 机器人侧陪伴 agent systemd 单元（companion-v2：手势/朗读/语音/视觉）。
 # 部署：cp 到机器人 /etc/systemd/system/，然后：
 #   sudo systemctl daemon-reload && sudo systemctl enable --now aiot-companion-agent
 # 前置：~/aiot-robot/ 下有 companion_agent.py / companion_gesture.py / config.py，
 #       且已 pip3 install paho-mqtt（树莓派为 Python 3.5）。
 [Unit]
-Description=AIoT Companion Yanshee Agent (Step 1: MQTT gesture)
+Description=AIoT Companion Yanshee Agent (gesture + TTS + voice + vision)
 After=network-online.target
 Wants=network-online.target
 

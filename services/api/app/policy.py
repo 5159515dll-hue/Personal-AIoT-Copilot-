@@ -152,10 +152,12 @@ def validate_rule(rule: AutomationRuleCreate) -> PolicyDecision:
     )
 
 
-# 情感陪伴：原地安全手势集（plan §5/§6）。机器人是物理执行器，只有这些温柔的原地表达动作
-# 可被情绪回应触发；走路/移动/导航等已搁置，不在此集内。
+# 情感陪伴：安全手势集（plan §5/§6）。机器人是物理执行器，只有这些温柔动作可被回应触发。
+# 原地表达手势 + 经用户明确要求/校准后可控的"前进一步/后退一步"（单步、内置平衡动作）。
+# 仍不允许连续行走/跑/转圈/导航。
 SAFE_COMPANION_GESTURES = frozenset(
-    {"nod", "tilt_head", "lean_back", "reach_out", "idle_nod", "wave"}
+    {"nod", "tilt_head", "lean_back", "reach_out", "idle_nod", "wave",
+     "raise_left_hand", "raise_right_hand", "step_forward", "step_back"}
 )
 
 

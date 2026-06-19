@@ -1,6 +1,7 @@
 import hmac
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.audit import record_audit
 from app.auth import INTERNAL_API_TOKEN_HEADER, internal_api_token
@@ -12,9 +13,21 @@ from app.device_connections import (
     record_ingest_connection,
     register_device_connection,
 )
+import re as _re
+
+from starlette.concurrency import run_in_threadpool
+
+from app.companion import action_command_reply, generate_companion_reply, response_strategy, stream_companion_reply, _split_gesture
+from app.chat_log import record_turn as record_chat_turn
+from app.companion_voice import get_voice as get_companion_voice
+from app.emotion_fusion import get_last_state
 from app.ingestion import readings_from_request
-from app.media_store import record_device_event, save_media_asset
+from app.live_stream import publish as publish_live_stream, set_frame as set_live_frame
+from app.media_store import _assert_space_allows_stream, record_device_event, save_media_asset
+from app.volc_tts import split_sentences as tts_split, synthesize as tts_synthesize
 from app.models import (
+    DeviceCompanionVoiceRequest,
+    DeviceTtsRequest,
     DeviceEventCreate,
     DeviceEventIngestResponse,
     DeviceConnectionRecord,
@@ -23,6 +36,7 @@ from app.models import (
     DeviceRegistrationRequest,
     DeviceTelemetryRequest,
     DeviceTelemetryResponse,
+    EmotionState,
     MediaAssetUploadResponse,
     SensorIngestRequest,
 )
@@ -235,6 +249,203 @@ async def upload_device_media(
         },
     )
     return MediaAssetUploadResponse(asset=asset, audit_log_id=audit.id)
+
+
+@router.post("/{device_id}/vision-live")
+async def ingest_vision_live(
+    device_id: str,
+    request: Request,
+    space_id: str = Query(...),
+) -> dict:
+    """机器人直播帧入口：逐帧 JPEG 出站推送，服务端只在内存留最新一帧供浏览器轮询。
+
+    与媒体上传同源门控：空间须 camera=local_only 且允许实时流，否则 403。直播帧不落库。
+    """
+    _require_device_ingest_auth(request, device_id)
+    try:
+        _assert_space_allows_stream(space_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    data = await request.body()
+    set_live_frame(space_id, data)
+    return {"ok": True, "bytes": len(data)}
+
+
+@router.post("/{device_id}/vision-live-stream")
+async def ingest_vision_live_stream(
+    device_id: str,
+    request: Request,
+    space_id: str = Query(...),
+) -> dict:
+    """机器人直播流入口（真·流式）：一条长连接 chunked 推 multipart MJPEG，服务端扇出给浏览器。
+
+    nginx 该路径须 `proxy_request_buffering off`（否则会缓冲整条无限请求体导致永不转发）。
+    """
+    _require_device_ingest_auth(request, device_id)
+    try:
+        _assert_space_allows_stream(space_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        async for chunk in request.stream():
+            if chunk:
+                publish_live_stream(space_id, chunk)
+    except Exception:  # noqa: BLE001 - 机器人断开/网络抖动正常结束
+        pass
+    return {"ok": True}
+
+
+@router.post("/{device_id}/companion-voice")
+async def device_companion_voice(
+    device_id: str,
+    request: Request,
+    payload: DeviceCompanionVoiceRequest,
+) -> dict:
+    """机器人语音输入（Step 3）：把识别文本生成陪伴回复返回给机器人本机朗读。
+
+    用设备令牌鉴权（机器人已有），不经 MQTT 广播（避免与机器人自身朗读重复）；浏览器输入路径
+    （/api/companion/reply）不受影响、照常保留。情绪取该空间最近状态，无则按 neutral 兜底。
+    """
+    _require_device_ingest_auth(request, device_id)
+    state = get_last_state(payload.space_id) or EmotionState(
+        primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language=payload.language or "zh"
+    )
+    reply, _usage, meta = await generate_companion_reply(state, payload.language, payload.message)
+    record_audit(
+        actor="system",
+        action="companion_voice_reply",
+        result="success",
+        details=f"机器人语音对话：{payload.message[:40]}",
+        parameters={"device_id": device_id, "space_id": payload.space_id, "message": payload.message},
+    )
+    return {
+        "reply": reply,
+        "gesture": meta.get("gesture"),
+        "language": meta.get("language"),
+        "tone": meta.get("tone"),
+    }
+
+
+# 语音对话的内容驱动手势：用户话里明确提到的动作优先，否则按情绪。结果与网页聊天一致地配合动作。
+_VOICE_GESTURE_KEYWORDS = [
+    (("前进", "向前走", "往前走", "前进一步", "向前一步", "往前一步", "走一步"), "step_forward"),
+    (("后退", "向后退", "往后退", "后退一步", "向后一步", "往后一步", "退一步"), "step_back"),
+    (("左手", "左臂", "举左手", "抬左手"), "raise_left_hand"),
+    (("右手", "右臂", "举右手", "抬右手"), "raise_right_hand"),
+    (("举手", "举起手", "挥手", "招手", "打招呼", "你好呀", "再见", "拜拜"), "wave"),
+    (("抱抱", "拥抱", "抱一下", "抱我"), "reach_out"),
+    (("伸手", "握手", "击掌", "过来"), "reach_out"),
+    (("点头", "同意", "对的", "好的"), "nod"),
+    (("歪头", "疑惑", "为什么"), "tilt_head"),
+    (("后仰", "往后靠", "靠一下", "累了"), "lean_back"),
+]
+
+
+def _voice_gesture(message: str | None, emotion: str) -> str:
+    msg = message or ""
+    for keywords, gesture in _VOICE_GESTURE_KEYWORDS:
+        if any(k in msg for k in keywords):
+            return gesture
+    return response_strategy(emotion).get("gesture", "idle_nod")
+
+
+_GESTURE_LINE_RE = _re.compile(r"^\s*(?:动作|action)\s*[:：]", _re.IGNORECASE)
+
+
+@router.post("/{device_id}/companion-voice-stream")
+async def device_companion_voice_stream(device_id: str, request: Request, payload: DeviceCompanionVoiceRequest):
+    """机器人语音对话（流式，为"说完话 3s 内回话"）：识别文本 → 大模型流式回复 → 逐句火山 TTS
+    → 流式 MP3，机器人 mpg123 边收边播。手势经响应头 X-Companion-Gesture 下发，机器人收到即并行做动作
+    （与网页聊天一致地配合动作）。不经 MQTT 广播。
+    """
+    _require_device_ingest_auth(request, device_id)
+    state = get_last_state(payload.space_id) or EmotionState(
+        primary_emotion="neutral", valence=0.0, arousal=0.3, confidence=0.5, language=payload.language or "zh"
+    )
+    voice = get_companion_voice()
+    cmd_gesture, cmd_ack = action_command_reply(payload.message)
+    gesture = cmd_gesture or _voice_gesture(payload.message, state.primary_emotion)
+    record_audit(
+        actor="system",
+        action="companion_voice_reply",
+        result="success",
+        details=f"机器人语音对话（流式）：{payload.message[:40]}",
+        parameters={"device_id": device_id, "space_id": payload.space_id, "message": payload.message},
+    )
+
+    async def gen():
+        # 简短明确的"做动作"指令：合成一句匹配的应答，不走大模型（边做边说、不答非所问）。
+        if cmd_ack:
+            mp3 = await run_in_threadpool(tts_synthesize, cmd_ack, voice)
+            if mp3:
+                yield mp3
+            try:
+                record_chat_turn(payload.message, cmd_ack, source="voice", gesture=gesture)
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        buffer = ""
+        full = ""
+        async for delta in stream_companion_reply(state, payload.language, payload.message):
+            buffer += delta
+            full += delta
+            while True:
+                match = _re.search(r"[。！？!?\n；;，,]", buffer)
+                if not match:
+                    break
+                sentence = buffer[: match.end()].strip()
+                buffer = buffer[match.end():]
+                # 跳过模型末尾的「动作: X」标签行，别念出来（手势已走响应头）
+                if len(sentence) >= 2 and not _GESTURE_LINE_RE.match(sentence):
+                    mp3 = await run_in_threadpool(tts_synthesize, sentence, voice)
+                    if mp3:
+                        yield mp3
+        tail = buffer.strip()
+        if tail and not _GESTURE_LINE_RE.match(tail):
+            mp3 = await run_in_threadpool(tts_synthesize, tail, voice)
+            if mp3:
+                yield mp3
+        try:
+            clean, _proposed = _split_gesture(full)   # 落库去掉动作标签
+            record_chat_turn(payload.message, clean, source="voice", gesture=gesture)
+        except Exception:  # noqa: BLE001 - 记录失败不影响回话
+            pass
+
+    return StreamingResponse(
+        gen(),
+        media_type="audio/mpeg",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store", "X-Companion-Gesture": gesture},
+    )
+
+
+@router.post("/{device_id}/tts-stream")
+async def device_tts_stream(device_id: str, request: Request, payload: DeviceTtsRequest):
+    """把文本合成为自然语音（火山 TTS），流式返回 MP3 给机器人 mpg123 播放。
+
+    按句合成、逐句下发 → 机器人第一句就能开口，压低"开口延迟"。当前音色取服务端设置（可在前端切换）。
+    """
+    _require_device_ingest_auth(request, device_id)
+    voice = payload.voice or get_companion_voice()
+    sentences = tts_split(payload.text) or [payload.text]
+
+    def gen():
+        for sentence in sentences:
+            try:
+                mp3 = tts_synthesize(sentence, voice)
+            except Exception:  # noqa: BLE001 - 单句失败跳过，不中断整段
+                mp3 = b""
+            if mp3:
+                yield mp3
+
+    return StreamingResponse(
+        gen(),
+        media_type="audio/mpeg",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+    )
 
 
 def _require_device_ingest_auth(request: Request, device_id: str) -> None:

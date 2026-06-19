@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Eye, FileVideo2, Plus, Radio, Trash2 } from "lucide-react";
-import { createStream, deleteMediaAsset, deleteStream, updateStream } from "@/lib/api";
+import {
+  captureCompanionPhoto,
+  companionLiveStreamUrl,
+  createStream,
+  deleteMediaAsset,
+  deleteStream,
+  getMediaAssets,
+  startCompanionLive,
+  stopCompanionLive,
+  updateStream
+} from "@/lib/api";
 import type { DeviceEvent, MediaAsset, RoomSpace, StreamSource, StreamSourceCreate } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 
@@ -44,8 +54,14 @@ export function VisualMediaPanel({
   });
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(error ?? null);
+  const [liveOn, setLiveOn] = useState(false);
+  const [liveWaiting, setLiveWaiting] = useState(true);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveNonce, setLiveNonce] = useState(0);
 
   const selectedSpace = initialSpaces.find((space) => space.id === spaceId) ?? activeSpace;
+  const realtimeAllowed =
+    selectedSpace?.perception.camera === "local_only" && !!selectedSpace?.perception.media_policy.allow_realtime_stream;
   const filteredEvents = useMemo(() => events.filter((event) => !spaceId || event.space_id === spaceId), [events, spaceId]);
   const filteredAssets = useMemo(() => assets.filter((asset) => !spaceId || asset.space_id === spaceId), [assets, spaceId]);
   const filteredStreams = useMemo(() => streams.filter((stream) => !spaceId || stream.space_id === spaceId), [streams, spaceId]);
@@ -132,6 +148,69 @@ export function VisualMediaPanel({
     }
   }
 
+  async function capturePhoto() {
+    if (!spaceId) {
+      setMessage("请先选择空间。");
+      return;
+    }
+    setPending("capture");
+    setMessage("已请求机器人拍照，约 3–5 秒后照片会出现…");
+    try {
+      await captureCompanionPhoto(spaceId);
+      await new Promise((resolve) => setTimeout(resolve, 4500));
+      setAssets(await getMediaAssets({ space_id: spaceId, limit: 80 }));
+      setMessage("已刷新媒体库（若没看到照片，请确认机器人在线后再点一次）。");
+    } catch (captureError) {
+      setMessage(captureError instanceof Error ? captureError.message : "拍照请求失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function startLive() {
+    if (!spaceId) {
+      setMessage("请先选择空间。");
+      return;
+    }
+    setLiveError(null);
+    setPending("live");
+    try {
+      await startCompanionLive(spaceId);
+      setLiveWaiting(true);
+      setLiveNonce(Date.now());   // 每次开始都换 URL，强制 <img> 重新建立流连接
+      setLiveOn(true);
+    } catch (startError) {
+      setLiveError(startError instanceof Error ? startError.message : "开始实时画面失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function stopLive() {
+    setLiveOn(false);
+    try {
+      await stopCompanionLive(spaceId);
+    } catch {
+      /* 浏览器侧已停止显示；机器人侧由看门狗兜底自动停。 */
+    }
+  }
+
+  // 切换空间时先停掉当前直播（避免对着旧空间继续推流）。
+  useEffect(() => {
+    setLiveOn(false);
+  }, [spaceId]);
+
+  // 直播期间周期性 keepalive：让机器人看门狗知道还有人在看（关页面/停止后自动停推）。
+  useEffect(() => {
+    if (!liveOn || !spaceId) {
+      return;
+    }
+    const keepalive = window.setInterval(() => {
+      void startCompanionLive(spaceId).catch(() => undefined);
+    }, 25000);
+    return () => window.clearInterval(keepalive);
+  }, [liveOn, spaceId]);
+
   return (
     <div className="space-y-5">
       <section className="rounded-lg border border-line bg-white p-4 shadow-sm">
@@ -169,6 +248,70 @@ export function VisualMediaPanel({
             <PolicyItem label="事件媒体" value={selectedSpace.perception.media_policy.allow_event_media ? "允许" : "关闭"} />
             <PolicyItem label="实时流" value={selectedSpace.perception.media_policy.allow_realtime_stream ? "允许" : "关闭"} />
             <PolicyItem label="保留策略" value={`${selectedSpace.perception.media_policy.media_retention_days} 天媒体 / ${selectedSpace.perception.media_policy.event_retention_days} 天事件`} />
+          </div>
+        )}
+        {selectedSpace && (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void capturePhoto()}
+                disabled={pending === "capture"}
+                className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-teal-600 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Camera size={15} aria-hidden />
+                {pending === "capture" ? "拍照中…" : "机器人拍照"}
+              </button>
+              {liveOn ? (
+                <button
+                  type="button"
+                  onClick={() => void stopLive()}
+                  className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-rose-600 px-3 text-sm font-semibold text-white"
+                >
+                  <Radio size={15} aria-hidden />
+                  停止实时
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void startLive()}
+                  disabled={!realtimeAllowed || pending === "live"}
+                  title={realtimeAllowed ? undefined : "该空间未开启本地摄像头或未允许实时流（请在房间设置里启用）"}
+                  className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-indigo-600 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Eye size={15} aria-hidden />
+                  {pending === "live" ? "开启中…" : "开始实时"}
+                </button>
+              )}
+            </div>
+            {!realtimeAllowed && (
+              <p className="text-xs leading-5 text-muted">
+                实时画面需先在房间设置里把该空间的摄像头设为「仅本地处理」并允许实时流。
+              </p>
+            )}
+            {liveError && <p className="text-xs leading-5 text-red-600">{liveError}</p>}
+            {liveOn && (
+              <div className="overflow-hidden rounded-xl border border-line bg-slate-900">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`${companionLiveStreamUrl(spaceId)}&t=${liveNonce}`}
+                  alt="机器人实时画面"
+                  className="block w-full max-w-xl"
+                  onLoad={() => setLiveWaiting(false)}
+                  onError={() => setLiveWaiting(true)}
+                />
+                <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-300">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full ${liveWaiting ? "bg-amber-400" : "bg-emerald-400"}`}
+                      aria-hidden
+                    />
+                    {liveWaiting ? "连接机器人画面…（约 2-3 秒）" : "实时中 · 机器人摄像头"}
+                  </span>
+                  <span>30 fps · MJPEG 流</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
         {message && <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{message}</p>}

@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.companion import (
+    action_command_reply,
     generate_companion_reply,
     reply_language,
     response_strategy,
@@ -38,13 +39,22 @@ from app.models import (
     CompanionPersonaUpdate,
     CompanionReplyRequest,
     CompanionReplyResponse,
+    CompanionVisionCaptureRequest,
     EmotionState,
     MemoryClearResponse,
     MemorySnapshot,
     PolicyResult,
 )
 from app.yanshee_control import plan_companion_gesture
-from app.companion_mqtt import publish_companion_command
+from app.companion_mqtt import publish_companion_command, publish_vision_capture, publish_vision_live
+from app import live_stream
+from app.live_stream import clear as clear_live_frames, get_frame as get_live_frame
+from app.media_store import _assert_space_allows_stream
+from app.companion_voice import get_voice, set_voice
+from app.volc_tts import VOICE_CATALOG, is_configured as tts_configured
+from app.chat_log import clear as clear_chat, delete_message as delete_chat_message, list_messages as list_chat, record_turn
+from app.models import ChatClearResponse, ChatMessage, CompanionVoiceUpdate
+import asyncio
 
 router = APIRouter(prefix="/api/companion", tags=["companion"])
 
@@ -88,22 +98,36 @@ async def companion_reply(payload: CompanionReplyRequest):
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-    reply, usage, meta = await generate_companion_reply(state, payload.language, payload.message)
-    # 下发陪伴指令到机器人（Step 1：手势；Step 2 起含 text 做 TTS）。容错，不影响回复。
-    publish_companion_command(
-        gesture=meta.get("gesture"),
+    # 简短明确的"做动作"指令：边做边说一句匹配的话（确定性，不走神），不走共情大模型。
+    cmd_gesture, cmd_ack = action_command_reply(payload.message)
+    if cmd_gesture:
+        lang = reply_language(payload.language or state.language)
+        reply, gesture, tone, language = cmd_ack, cmd_gesture, "配合动作", lang
+        model_used, model_status = False, "action_command"
+    else:
+        reply, usage, meta = await generate_companion_reply(state, payload.language, payload.message)
+        gesture, tone, language = meta["gesture"], meta["tone"], meta["language"]
+        model_used, model_status = usage.used, usage.status
+    # 下发陪伴指令到机器人（手势 + text 做 TTS）。容错，不影响回复；下发结果如实透出给前端。
+    gesture_dispatched = publish_companion_command(
+        gesture=gesture,
         text=reply,
-        language=meta.get("language"),
+        language=language,
         emotion=state.primary_emotion,
     )
+    try:
+        record_turn(payload.message, reply, source="browser", gesture=gesture)
+    except Exception:  # noqa: BLE001 - 记录失败不影响对话
+        pass
     return CompanionReplyResponse(
         reply=reply,
         primary_emotion=state.primary_emotion,
-        language=meta["language"],
-        tone=meta["tone"],
-        gesture=meta["gesture"],
-        model_used=usage.used,
-        model_status=usage.status,
+        language=language,
+        tone=tone,
+        gesture=gesture,
+        gesture_dispatched=gesture_dispatched,
+        model_used=model_used,
+        model_status=model_status,
     )
 
 
@@ -134,6 +158,154 @@ def companion_gesture(payload: CompanionGestureRequest) -> CompanionGestureRespo
         reason=decision.reason,
         audit_log_id=audit.id,
     )
+
+
+@router.post("/vision/capture")
+def companion_vision_capture(payload: CompanionVisionCaptureRequest) -> dict:
+    """请求机器人拍一张照片并上传到媒体库（出现在 /vision）。"""
+    requested = publish_vision_capture(space_id=payload.space_id, zone=payload.zone)
+    record_audit(
+        actor="user",
+        action="companion_vision_capture",
+        result="success" if requested else "blocked",
+        details=f"已请求机器人拍照（空间 {payload.space_id}）。",
+        parameters=payload.model_dump(mode="json"),
+    )
+    return {"requested": requested}
+
+
+@router.post("/vision/live/start")
+def companion_vision_live_start(payload: CompanionVisionCaptureRequest) -> dict:
+    """开始实时画面：校验空间允许实时流后，下发直播开始指令；浏览器随后轮询 live/frame。"""
+    try:
+        _assert_space_allows_stream(payload.space_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    requested = publish_vision_live(space_id=payload.space_id, action="live_start")
+    record_audit(
+        actor="user",
+        action="companion_vision_live_start",
+        result="success" if requested else "blocked",
+        details=f"已请求机器人开始实时画面（空间 {payload.space_id}）。",
+        parameters=payload.model_dump(mode="json"),
+    )
+    return {"requested": requested}
+
+
+@router.post("/vision/live/stop")
+def companion_vision_live_stop(payload: CompanionVisionCaptureRequest) -> dict:
+    """停止实时画面：下发停止指令并清空服务端缓冲帧。"""
+    requested = publish_vision_live(space_id=payload.space_id, action="live_stop")
+    clear_live_frames(payload.space_id)
+    record_audit(
+        actor="user",
+        action="companion_vision_live_stop",
+        result="success",
+        details=f"已请求机器人停止实时画面（空间 {payload.space_id}）。",
+        parameters=payload.model_dump(mode="json"),
+    )
+    return {"requested": requested}
+
+
+@router.get("/vision/live/frame")
+def companion_vision_live_frame(space_id: str) -> Response:
+    """返回该空间最新一帧 JPEG（浏览器 <img> 轮询）。无帧或已超时返回 404。"""
+    frame = get_live_frame(space_id)
+    if frame is None:
+        raise HTTPException(status_code=404, detail="暂无实时画面（机器人未在推流或已超时）。")
+    return Response(content=frame, media_type="image/jpeg", headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/vision/live/status")
+def companion_vision_live_status(space_id: str) -> dict:
+    """前端用来判断是否已有画面（区分"未推流/正在连接"）。"""
+    return {"live": get_live_frame(space_id) is not None}
+
+
+@router.get("/vision/live/stream")
+async def companion_vision_live_stream(space_id: str):
+    """浏览器 <img> 直连的 MJPEG 流（multipart/x-mixed-replace）：满帧率、单连接、不轮询。
+
+    X-Accel-Buffering: no → nginx 不缓冲该响应（无需为响应侧改 nginx 配置）。
+    连续 STREAM_IDLE_TIMEOUT 秒无新数据（机器人停推/离线）则结束，浏览器连接随之关闭。
+    """
+    queue = live_stream.subscribe(space_id)
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(queue.get(), timeout=live_stream.STREAM_IDLE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    break
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            live_stream.unsubscribe(space_id, queue)
+
+    return StreamingResponse(
+        gen(),
+        media_type="multipart/x-mixed-replace; boundary=" + live_stream.LIVE_BOUNDARY,
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/voice")
+def companion_voice_options() -> dict:
+    """可选音色列表 + 当前音色（用户在前端切换）。"""
+    return {"current": get_voice(), "configured": tts_configured(), "voices": VOICE_CATALOG}
+
+
+@router.post("/voice")
+def update_companion_voice(payload: CompanionVoiceUpdate) -> dict:
+    """切换机器人朗读音色（服务端火山 TTS voice_type）。"""
+    voice = set_voice(payload.voice)
+    record_audit(
+        actor="user",
+        action="set_companion_voice",
+        result="success",
+        details=f"切换机器人音色为 {voice}。",
+        parameters={"voice": voice},
+    )
+    return {"current": voice}
+
+
+@router.get("/chat", response_model=list[ChatMessage])
+def companion_chat_history(limit: int = 200) -> list[ChatMessage]:
+    """当前角色的聊天记录（浏览器 + 语音对话，按时间正序）。"""
+    return list_chat(limit=limit)
+
+
+@router.delete("/chat", response_model=ChatClearResponse)
+def clear_companion_chat() -> ChatClearResponse:
+    """清空当前角色的全部聊天记录。"""
+    removed = clear_chat()
+    record_audit(
+        actor="user",
+        action="clear_companion_chat",
+        result="success",
+        details=f"清空聊天记录 {removed} 条。",
+        parameters={"removed": removed},
+    )
+    return ChatClearResponse(cleared=removed)
+
+
+@router.delete("/chat/{message_id}")
+def delete_companion_chat_message(message_id: str) -> dict:
+    """删除单条聊天记录。"""
+    if not delete_chat_message(message_id):
+        raise HTTPException(status_code=404, detail="聊天记录不存在。")
+    record_audit(
+        actor="user",
+        action="delete_companion_chat_message",
+        result="success",
+        details=f"删除聊天记录 {message_id}。",
+        parameters={"message_id": message_id},
+    )
+    return {"deleted": message_id}
 
 
 @router.get("/persona", response_model=CompanionPersona)

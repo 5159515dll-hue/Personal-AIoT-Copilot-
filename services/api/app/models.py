@@ -597,8 +597,61 @@ class CompanionReplyResponse(BaseModel):
     language: EmotionLanguage
     tone: str
     gesture: str
+    gesture_dispatched: bool = False  # 手势/朗读指令是否已发往机器人(MQTT)；False=指令通道不可达，机器人不会动
     model_used: bool
     model_status: str
+
+
+class CompanionVisionCaptureRequest(BaseModel):
+    space_id: str = Field(min_length=1, max_length=80)
+    zone: str | None = Field(default=None, max_length=40)
+
+
+class DeviceCompanionVoiceRequest(BaseModel):
+    """机器人侧语音输入（Step 3）：识别出的文本送来生成陪伴回复，由机器人本机朗读，不经 MQTT 广播。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=500)
+    language: str | None = Field(default=None, max_length=8)
+
+
+class CompanionVoiceSetting(BaseModel):
+    """陪伴朗读音色设置（服务端火山 TTS 的 voice_type）。"""
+
+    voice: str = Field(default="zh_female_vv_uranus_bigtts", max_length=80)
+
+
+class CompanionVoiceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voice: str = Field(min_length=1, max_length=80)
+
+
+class DeviceTtsRequest(BaseModel):
+    """机器人请求把一段文本合成为语音（设备令牌鉴权，返回流式 MP3）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=600)
+    voice: str | None = Field(default=None, max_length=80)
+
+
+class ChatMessage(BaseModel):
+    """一条聊天记录（按角色 character_id 归档；浏览器/语音对话都记）。"""
+
+    id: str
+    character_id: str
+    role: Literal["user", "assistant"]
+    text: str
+    source: Literal["browser", "voice"] = "browser"
+    gesture: str | None = None
+    created_at: datetime
+
+
+class ChatClearResponse(BaseModel):
+    cleared: int
 
 
 class CompanionGestureRequest(BaseModel):

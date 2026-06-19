@@ -48,7 +48,8 @@ def test_messages_prioritizes_user_action_requests() -> None:
     user = _messages(state, "zh", "你能举起你的双手吗", persona)[-1]["content"]
     assert "动作" in user and "由你判断意图" in user
     assert "wave" in user and "reach_out" in user  # 安全集内可选
-    assert "不能走动" in user  # 越界动作温柔拒绝
+    assert "step_forward" in user  # 前进一步已可控
+    assert "不能连续走" in user  # 仍不允许连续走/跑/转圈
 
 
 def test_tool_context_pulls_environment_on_intent() -> None:
@@ -121,6 +122,15 @@ def test_extract_sse_content_delta_takes_content_skips_reasoning() -> None:
     assert extract_sse_content_delta("data: not-json") is None
 
 
+def test_extract_sse_content_delta_tolerates_malformed_choices() -> None:
+    # choices[0] / delta 不是 dict 时应安全返回 None，而非抛 AttributeError
+    assert extract_sse_content_delta('data: {"choices":[]}') is None
+    assert extract_sse_content_delta('data: {"choices":["oops"]}') is None
+    assert extract_sse_content_delta('data: {"choices":[[1,2]]}') is None
+    assert extract_sse_content_delta('data: {"choices":[{"delta":"oops"}]}') is None
+    assert extract_sse_content_delta('data: {"choices":[{}]}') is None
+
+
 def test_safe_companion_gestures_allowed() -> None:
     for gesture in SAFE_COMPANION_GESTURES:
         decision = assess_companion_gesture(gesture=gesture)
@@ -129,10 +139,17 @@ def test_safe_companion_gestures_allowed() -> None:
 
 
 def test_walking_or_unknown_gestures_denied() -> None:
-    for gesture in ("walk_forward", "step_forward", "navigate", "run", "move"):
+    # 连续走/跑/转圈/跳/导航 仍拒绝（不在安全集）
+    for gesture in ("walk_forward", "navigate", "run", "move", "jump"):
         decision = assess_companion_gesture(gesture=gesture)
         assert decision.result == PolicyResult.denied
         assert decision.risk_level.value == "high"
+
+
+def test_single_step_and_hand_gestures_allowed() -> None:
+    """前进一步/后退一步（校准后单步）+ 举左右手 已纳入安全集，可被控制。"""
+    for gesture in ("step_forward", "step_back", "raise_left_hand", "raise_right_hand"):
+        assert assess_companion_gesture(gesture=gesture).result == PolicyResult.allowed
 
 
 def test_injection_in_gesture_intent_denied() -> None:
@@ -144,3 +161,14 @@ def test_unconfirmed_gesture_requires_confirmation() -> None:
     decision = assess_companion_gesture(gesture="nod", confirmed=False)
     assert decision.result == PolicyResult.requires_confirmation
     assert decision.requires_confirmation is True
+
+
+def test_action_command_reply_matches_action() -> None:
+    """简短动作指令 → (手势, 匹配应答)；闲聊/顺带提到 → (None, None)。"""
+    from app.companion import action_command_reply
+    g, ack = action_command_reply("前进一步")
+    assert g == "step_forward" and "往前" in ack
+    assert action_command_reply("举起左手")[0] == "raise_left_hand"
+    assert action_command_reply("后退一步")[0] == "step_back"
+    assert action_command_reply("我今天有点累想跟你聊聊心事呢")[0] is None
+    assert action_command_reply("我左手被门夹了好疼啊")[0] is None

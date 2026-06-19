@@ -58,7 +58,12 @@ def _build_system_prompt(language: str, persona: CompanionPersona) -> str:
     who = f"你是「{persona.name}」，一只桌面情感陪伴机器人"
     if persona.companion_for:
         who += f"，主要陪伴{persona.companion_for}"
-    return f"{who}，像一个温暖的小伙伴，不是助手或客服。语气：{tone_zh}。\n{_RULES_ZH}"
+    embodiment = (
+        "你有真实的身体，能挥手、举左右手、点头、抱抱、前进或后退一小步。"
+        "当用户让你做某个动作时，你就一边真的做出来、一边用一句简短自然、贴合这个动作的话回应"
+        "（比如让你前进一步，就说『好呀，我往前走一步～』），千万别答非所问或岔开话题。"
+    )
+    return f"{who}，像一个温暖的小伙伴，不是助手或客服。{embodiment}语气：{tone_zh}。\n{_RULES_ZH}"
 
 # 情绪 → 回应策略（确定性，温柔治愈基调）。gesture 对齐 M6 安全手势集。
 _STRATEGY: dict[str, dict[str, str]] = {
@@ -120,6 +125,34 @@ def _split_gesture(content: str) -> tuple[str, str | None]:
     return (clean or content), gesture
 
 
+# 明确的"做动作"指令 → (手势, 一句匹配的应答)。用户简短明确地让机器人做动作时，机器人应当
+# 边做边用一句贴合该动作的话应答（确定性、不走神），而不是交给共情模型答非所问。
+# 关键词用够明确的短语（避免"我左手疼"误触发）；配合长度门槛只认简短指令。
+_ACTION_COMMANDS = [
+    (("前进", "往前走", "向前走", "往前一步", "向前一步", "走一步", "走一下"), "step_forward", "好呀，我往前走一步咯～"),
+    (("后退", "往后退", "向后退", "往后一步", "向后一步", "退一步", "退一下"), "step_back", "好的，我往后退一步～"),
+    (("举左手", "举起左手", "抬左手", "抬起左手", "左手举"), "raise_left_hand", "我把左手举起来啦～"),
+    (("举右手", "举起右手", "抬右手", "抬起右手", "右手举"), "raise_right_hand", "我把右手举起来咯～"),
+    (("挥手", "招手", "挥挥手", "打招呼"), "wave", "你好呀～很高兴见到你！"),
+    (("抱抱", "抱一下", "抱我", "拥抱"), "reach_out", "来，我抱抱你～"),
+    (("点点头", "点个头"), "nod", "嗯嗯，我懂的～"),
+    (("歪头", "歪歪头"), "tilt_head", "嗯？怎么啦～"),
+    (("举手", "举个手"), "wave", "我举手啦～"),
+]
+
+
+def action_command_reply(message: str | None) -> tuple[str | None, str | None]:
+    """若用户消息是简短明确的"做动作"指令，返回 (手势, 一句匹配的应答)；否则 (None, None)。
+    长句多半是闲聊里顺带提到（不当指令，交给共情模型 + 内容/情绪手势）。"""
+    msg = (message or "").strip()
+    if not msg or len(msg) > 14:
+        return None, None
+    for keywords, gesture, ack in _ACTION_COMMANDS:
+        if any(k in msg for k in keywords):
+            return gesture, ack
+    return None, None
+
+
 def _messages(
     state: EmotionState,
     language: str,
@@ -143,13 +176,14 @@ def _messages(
     context.append("请按你的人格风格，用 2-3 句温柔的话回应。")
     context.append(
         "回应之后另起一行，用「动作: X」标注一个肢体动作让机器人配合做出来"
-        "（X 只能从 nod、tilt_head、reach_out、wave、lean_back、idle_nod 里选一个）。"
+        "（X 只能从 nod、tilt_head、reach_out、wave、lean_back、idle_nod、raise_left_hand、"
+        "raise_right_hand、step_forward、step_back 里选一个）。"
         "优先级：如果用户在话里——哪怕只是随口提一句——让你做某个动作，就由你判断意图并选最接近的那个，"
-        "让机器人真的配合做出来：举手/挥手/打招呼→wave，伸手/抱抱/安慰/握手→reach_out，"
-        "点头/同意/明白→nod，歪头/疑惑/好奇/在听→tilt_head，往后靠/放松/坐稳→lean_back；"
-        "没有明确动作请求时，就选最贴合当前情绪和这句回应的动作。"
-        "你只能做这些原地小动作、不能走动；若用户要你走路/跑/转圈等做不到的动作，"
-        "就温柔说明你只能在原地比划一下，并给一个最接近的安全动作。"
+        "让机器人真的配合做出来：举手/挥手/打招呼→wave，举左手→raise_left_hand，举右手→raise_right_hand，"
+        "伸手/抱抱/安慰/握手→reach_out，点头/同意/明白→nod，歪头/疑惑/好奇/在听→tilt_head，"
+        "往后靠/放松/坐稳→lean_back，前进/向前/往前一步→step_forward，后退/向后/往后退一步→step_back；"
+        "没有明确动作请求时，就选最贴合当前情绪和这句回应的原地动作（别随便走动）。"
+        "前进/后退只走一步；你不能连续走/跑/转圈/跳，用户要这些就温柔说明并给最接近的安全动作。"
     )
     return [
         {"role": "system", "content": system},
@@ -271,7 +305,12 @@ def extract_sse_content_delta(line: str) -> str | None:
     choices = obj.get("choices")
     if not isinstance(choices, list) or not choices:
         return None
-    delta = choices[0].get("delta") or {}
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return None
     content = delta.get("content")  # 忽略 reasoning_content（思考），只取正文
     return content if isinstance(content, str) and content else None
 

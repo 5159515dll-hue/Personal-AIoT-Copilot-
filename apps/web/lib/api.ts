@@ -47,6 +47,7 @@ import type {
   CompanionPersonaUpdate,
   CompanionCharacterCreate,
   CompanionReplyResponse,
+  ChatMessage,
   MemorySnapshot,
   MemoryClearResponse,
   EmotionLabel,
@@ -190,6 +191,63 @@ export async function getManagedDevices(): Promise<ManagedDevice[]> {
 
 export async function getNodes(): Promise<NodeSummary[]> {
   return request<NodeSummary[]>("/api/nodes");
+}
+
+export async function captureCompanionPhoto(spaceId: string, zone?: string): Promise<{ requested: boolean }> {
+  return request<{ requested: boolean }>("/api/companion/vision/capture", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId, zone: zone || null })
+  });
+}
+
+export async function startCompanionLive(spaceId: string): Promise<{ requested: boolean }> {
+  return request<{ requested: boolean }>("/api/companion/vision/live/start", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId })
+  });
+}
+
+export async function stopCompanionLive(spaceId: string): Promise<{ requested: boolean }> {
+  return request<{ requested: boolean }>("/api/companion/vision/live/stop", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId })
+  });
+}
+
+// 直播单帧快照（轮询兜底/缩略），不走 request()。
+export function companionLiveFrameUrl(spaceId: string): string {
+  return `/api/companion/vision/live/frame?space_id=${encodeURIComponent(spaceId)}`;
+}
+
+// 实时画面：浏览器 <img> 直连的 MJPEG 流（multipart/x-mixed-replace），满帧率、单连接。
+export function companionLiveStreamUrl(spaceId: string): string {
+  return `/api/companion/vision/live/stream?space_id=${encodeURIComponent(spaceId)}`;
+}
+
+export type CompanionVoiceOption = { voice_type: string; name: string };
+export type CompanionVoiceConfig = { current: string; configured: boolean; voices: CompanionVoiceOption[] };
+
+export async function getCompanionVoice(): Promise<CompanionVoiceConfig> {
+  return request<CompanionVoiceConfig>("/api/companion/voice");
+}
+
+export async function setCompanionVoice(voice: string): Promise<{ current: string }> {
+  return request<{ current: string }>("/api/companion/voice", {
+    method: "POST",
+    body: JSON.stringify({ voice })
+  });
+}
+
+export async function getCompanionChat(limit = 200): Promise<ChatMessage[]> {
+  return request<ChatMessage[]>(`/api/companion/chat?limit=${limit}`);
+}
+
+export async function clearCompanionChat(): Promise<{ cleared: number }> {
+  return request<{ cleared: number }>("/api/companion/chat", { method: "DELETE" });
+}
+
+export async function deleteCompanionChatMessage(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/api/companion/chat/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function createDeviceManagement(payload: DeviceManagementCreate): Promise<DeviceManagementResponse> {
